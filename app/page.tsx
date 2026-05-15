@@ -57,6 +57,14 @@ export default function Home() {
   const [overrideReason, setOverrideReason] = useState("");
   const [showCreateGame, setShowCreateGame] = useState(true);
   const [showCreateDrawing, setShowCreateDrawing] = useState(true);
+  const [showPrintableReport, setShowPrintableReport] = useState(false);
+  const [reportFilters, setReportFilters] = useState({
+  fromDate: "",
+  toDate: "",
+  state: "",
+  game: "",
+  status: "",
+});
   const [mockBetForm, setMockBetForm] = useState({
   drawingId: "",
   numbers: "",
@@ -134,6 +142,7 @@ useEffect(() => {
     games.map((game: any, index: number) =>
       index === editingGameIndex ? form : game
     )
+    
   );
 
   setEditingGameIndex(null);
@@ -192,7 +201,16 @@ useEffect(() => {
     [name]: value,
   });
   }
+function handleReportFilterChange(
+  e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
+) {
+  const { name, value } = e.target;
 
+  setReportFilters((prev) => ({
+    ...prev,
+    [name]: value,
+  }));
+}
   function handleDrawingSubmit(event: React.FormEvent) {
   event.preventDefault();
 
@@ -894,32 +912,72 @@ function reopenDrawing(index: number) {
 }
 function getDashboardMetrics() {
   const totalGames = games.length;
-  const totalDrawings = drawings.length;
+  const filteredDrawings = drawings.filter((drawing: any) => {
+  const drawingDate = drawing.drawDate;
 
-  const openDrawings = drawings.filter(
+  if (
+    reportFilters.fromDate &&
+    drawingDate < reportFilters.fromDate
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.toDate &&
+    drawingDate > reportFilters.toDate
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.state &&
+    drawing.game.state !== reportFilters.state
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.game &&
+    drawing.game.name !== reportFilters.game
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.status &&
+    drawing.status !== reportFilters.status
+  ) {
+    return false;
+  }
+
+  return true;
+});
+  const totalDrawings = filteredDrawings.length;
+
+  const openDrawings = filteredDrawings.filter(
     (drawing: any) => getDrawingStatus(drawing) === "open"
   ).length;
 
-  const closedDrawings = drawings.filter(
+  const closedDrawings = filteredDrawings.filter(
     (drawing: any) => getDrawingStatus(drawing) === "closed"
   ).length;
 
-  const settledDrawings = drawings.filter(
+  const settledDrawings = filteredDrawings.filter(
     (drawing: any) => drawing.status === "settled"
   ).length;
 
-  const totalHandle = drawings.reduce(
+  const totalHandle = filteredDrawings.reduce(
     (sum: number, drawing: any) => sum + Number(drawing.totalHandle || 0),
     0
   );
 
-  const totalPotentialPayout = drawings.reduce(
+  const totalPotentialPayout = filteredDrawings.reduce(
     (sum: number, drawing: any) =>
       sum + Number(drawing.totalPotentialPayout || 0),
     0
   );
 
-  const actualPayout = drawings.reduce(
+  const actualPayout = filteredDrawings.reduce(
     (sum: number, drawing: any) => sum + Number(drawing.actualPayout || 0),
     0
   );
@@ -939,7 +997,11 @@ function getDashboardMetrics() {
   };
 }
 const metrics = getDashboardMetrics();
-  return (
+function printReport() {
+  window.print();
+}  
+return (
+  
     <main className="min-h-screen bg-gray-100 p-8 text-gray-900">
       <div className="mx-auto max-w-5xl">
         <h1 className="mb-2 text-3xl font-bold">Lottery Admin Dashboard</h1>
@@ -952,6 +1014,83 @@ const metrics = getDashboardMetrics();
   }).format(currentTime)}
   )
 </p>
+<section className="mt-6 rounded-xl bg-white p-4 shadow">
+  <h2 className="mb-4 text-xl font-semibold">Reporting Filters</h2>
+
+  <div className="grid gap-4 md:grid-cols-5">
+    <label className="grid gap-1">
+      <span className="text-sm font-medium">From Date</span>
+      <input
+        type="date"
+        name="fromDate"
+        value={reportFilters.fromDate}
+        onChange={handleReportFilterChange}
+        className="rounded border p-2 text-gray-900"
+      />
+    </label>
+
+    <label className="grid gap-1">
+      <span className="text-sm font-medium">To Date</span>
+      <input
+        type="date"
+        name="toDate"
+        value={reportFilters.toDate}
+        onChange={handleReportFilterChange}
+        className="rounded border p-2 text-gray-900"
+      />
+    </label>
+
+    <label className="grid gap-1">
+      <span className="text-sm font-medium">State</span>
+      <select
+        name="state"
+        value={reportFilters.state}
+        onChange={handleReportFilterChange}
+        className="rounded border p-2 text-gray-900"
+      >
+        <option value="">All States</option>
+        {states.map((state) => (
+          <option key={state.code} value={state.code}>
+            {state.name}
+          </option>
+        ))}
+      </select>
+    </label>
+
+    <label className="grid gap-1">
+      <span className="text-sm font-medium">Game</span>
+      <select
+        name="game"
+        value={reportFilters.game}
+        onChange={handleReportFilterChange}
+        className="rounded border p-2 text-gray-900"
+      >
+        <option value="">All Games</option>
+        {games.map((game: any, index: number) => (
+          <option key={index} value={game.name}>
+            {game.state} — {game.name}
+          </option>
+        ))}
+      </select>
+    </label>
+
+    <label className="grid gap-1">
+      <span className="text-sm font-medium">Status</span>
+      <select
+        name="status"
+        value={reportFilters.status}
+        onChange={handleReportFilterChange}
+        className="rounded border p-2 text-gray-900"
+      >
+        <option value="">All Statuses</option>
+        <option value="scheduled">Scheduled</option>
+        <option value="open">Open</option>
+        <option value="closed">Closed</option>
+        <option value="settled">Settled</option>
+      </select>
+    </label>
+  </div>
+</section>
 <section className="mt-6 grid gap-4 md:grid-cols-4">
   <div className="rounded-xl bg-white p-4 shadow">
     <p className="text-sm text-gray-500">Total Games</p>
@@ -1011,7 +1150,63 @@ const metrics = getDashboardMetrics();
     </p>
   </div>
 </section>
-<section className="mt-12 rounded-xl bg-white p-6 shadow">
+<section className="mt-6 rounded-xl bg-white p-6 shadow">
+  <div className="mb-4 flex items-center justify-between">
+  <button
+    onClick={() => setShowPrintableReport(!showPrintableReport)}
+    className="text-left text-xl font-semibold"
+  >
+    {showPrintableReport ? "▼" : "▶"} Printable Report
+  </button>
+
+    <button
+      onClick={printReport}
+      className="rounded bg-slate-700 px-4 py-2 font-semibold text-white hover:bg-slate-800"
+    >
+      Print Report
+    </button>
+	  </div>
+	
+{showPrintableReport && (
+<>
+	  <div className="text-sm text-gray-700">
+	    <p>
+	      <span className="font-semibold">Report Period:</span>{" "}
+      {reportFilters.fromDate || "Beginning"} to{" "}
+      {reportFilters.toDate || "Today"}
+    </p>
+
+    <p>
+      <span className="font-semibold">State:</span>{" "}
+      {reportFilters.state || "All"}
+    </p>
+
+    <p>
+      <span className="font-semibold">Game:</span>{" "}
+      {reportFilters.game || "All"}
+    </p>
+
+    <p>
+      <span className="font-semibold">Status:</span>{" "}
+      {reportFilters.status || "All"}
+    </p>
+  </div>
+
+  <div className="mt-4 grid gap-2 text-sm">
+    <p>Total Games: {metrics.totalGames}</p>
+    <p>Total Drawings: {metrics.totalDrawings}</p>
+    <p>Open Drawings: {metrics.openDrawings}</p>
+    <p>Closed Drawings: {metrics.closedDrawings}</p>
+    <p>Settled Drawings: {metrics.settledDrawings}</p>
+    <p>Total Handle: {formatMoney(metrics.totalHandle)}</p>
+    <p>Potential Payout: {formatMoney(metrics.totalPotentialPayout)}</p>
+	    <p>Actual Payout: {formatMoney(metrics.actualPayout)}</p>
+	    <p>House Result: {formatMoney(metrics.houseResult)}</p>
+	  </div>
+</>
+)}
+</section>
+<section className="mt-8 rounded-xl bg-white p-6 shadow">
   <button
     onClick={() => setShowCreateGame(!showCreateGame)}
     className="mb-4 flex w-full items-center justify-between text-left text-xl font-semibold text-gray-900"
@@ -1816,7 +2011,10 @@ const metrics = getDashboardMetrics();
 ))}
 </div>
 
-<div className="mt-3 border-t pt-2">
+<div
+  className="mt-3 border-t pt-2"
+  onClick={(e) => e.stopPropagation()}
+>
   <p className="text-sm font-semibold text-gray-700">
     Enter Result:
   </p>
