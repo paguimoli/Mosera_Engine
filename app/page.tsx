@@ -55,6 +55,8 @@ export default function Home() {
   const [expandedDrawingIds, setExpandedDrawingIds] = useState<string[]>([]);  
   const [editingGameIndex, setEditingGameIndex] = useState<number | null>(null);
   const [overrideReason, setOverrideReason] = useState("");
+  const [showCreateGame, setShowCreateGame] = useState(true);
+  const [showCreateDrawing, setShowCreateDrawing] = useState(true);
   const [mockBetForm, setMockBetForm] = useState({
   drawingId: "",
   numbers: "",
@@ -890,6 +892,53 @@ function reopenDrawing(index: number) {
 
   alert("Drawing reopened. You can now correct results and settle again.");
 }
+function getDashboardMetrics() {
+  const totalGames = games.length;
+  const totalDrawings = drawings.length;
+
+  const openDrawings = drawings.filter(
+    (drawing: any) => getDrawingStatus(drawing) === "open"
+  ).length;
+
+  const closedDrawings = drawings.filter(
+    (drawing: any) => getDrawingStatus(drawing) === "closed"
+  ).length;
+
+  const settledDrawings = drawings.filter(
+    (drawing: any) => drawing.status === "settled"
+  ).length;
+
+  const totalHandle = drawings.reduce(
+    (sum: number, drawing: any) => sum + Number(drawing.totalHandle || 0),
+    0
+  );
+
+  const totalPotentialPayout = drawings.reduce(
+    (sum: number, drawing: any) =>
+      sum + Number(drawing.totalPotentialPayout || 0),
+    0
+  );
+
+  const actualPayout = drawings.reduce(
+    (sum: number, drawing: any) => sum + Number(drawing.actualPayout || 0),
+    0
+  );
+
+  const houseResult = totalHandle - actualPayout;
+
+  return {
+    totalGames,
+    totalDrawings,
+    openDrawings,
+    closedDrawings,
+    settledDrawings,
+    totalHandle,
+    totalPotentialPayout,
+    actualPayout,
+    houseResult,
+  };
+}
+const metrics = getDashboardMetrics();
   return (
     <main className="min-h-screen bg-gray-100 p-8 text-gray-900">
       <div className="mx-auto max-w-5xl">
@@ -903,11 +952,74 @@ function reopenDrawing(index: number) {
   }).format(currentTime)}
   )
 </p>
+<section className="mt-6 grid gap-4 md:grid-cols-4">
+  <div className="rounded-xl bg-white p-4 shadow">
+    <p className="text-sm text-gray-500">Total Games</p>
+    <p className="text-2xl font-bold">{metrics.totalGames}</p>
+  </div>
 
-        <section className="rounded-xl bg-white p-6 shadow">
-          <h2 className="mb-4 text-xl font-semibold">Create Lottery Game</h2>
+  <div className="rounded-xl bg-white p-4 shadow">
+    <p className="text-sm text-gray-500">Total Drawings</p>
+    <p className="text-2xl font-bold">{metrics.totalDrawings}</p>
+  </div>
 
-          <form onSubmit={handleSubmit} className="grid gap-4">
+  <div className="rounded-xl bg-white p-4 shadow">
+    <p className="text-sm text-gray-500">Open Drawings</p>
+    <p className="text-2xl font-bold text-green-600">
+      {metrics.openDrawings}
+    </p>
+  </div>
+
+  <div className="rounded-xl bg-white p-4 shadow">
+    <p className="text-sm text-gray-500">Closed Drawings</p>
+    <p className="text-2xl font-bold text-red-600">
+      {metrics.closedDrawings}
+    </p>
+  </div>
+
+  <div className="rounded-xl bg-white p-4 shadow">
+    <p className="text-sm text-gray-500">Settled Drawings</p>
+    <p className="text-2xl font-bold text-black">
+      {metrics.settledDrawings}
+    </p>
+  </div>
+
+  <div className="rounded-xl bg-white p-4 shadow">
+    <p className="text-sm text-gray-500">Total Handle</p>
+    <p className="text-2xl font-bold">
+      {formatMoney(metrics.totalHandle)}
+    </p>
+  </div>
+
+  <div className="rounded-xl bg-white p-4 shadow">
+    <p className="text-sm text-gray-500">Potential Payout</p>
+    <p className="text-2xl font-bold text-orange-600">
+      {formatMoney(metrics.totalPotentialPayout)}
+    </p>
+  </div>
+
+  <div className="rounded-xl bg-white p-4 shadow">
+    <p className="text-sm text-gray-500">House Result</p>
+    <p
+      className={`text-2xl font-bold ${
+        metrics.houseResult >= 0
+          ? "text-green-700"
+          : "text-red-700"
+      }`}
+    >
+      {formatMoney(metrics.houseResult)}
+    </p>
+  </div>
+<section className="mt-12 rounded-xl bg-white p-6 shadow">
+  <button
+    onClick={() => setShowCreateGame(!showCreateGame)}
+    className="mb-4 flex w-full items-center justify-between text-left text-xl font-semibold text-gray-900"
+  >
+    <span>{showCreateGame ? "▼" : "▶"} Create Lottery Game</span>
+  </button>
+
+  {showCreateGame && (
+    <form onSubmit={handleSubmit} className="grid gap-4">
   <div className="grid gap-4 md:grid-cols-2">
     <label className="grid gap-1">
       <span className="font-medium">State</span>
@@ -1217,11 +1329,13 @@ function reopenDrawing(index: number) {
   </label>
 </div>
 
-  <button className="rounded bg-blue-600 px-4 py-2 font-semibold text-white">
-    {editingGameIndex !== null ? "Update Game" : "Save Game"}
-  </button>
-</form>
-        </section>
+        <button className="rounded bg-blue-600 px-4 py-2 font-semibold text-white">
+        {editingGameIndex !== null ? "Update Game" : "Save Game"}
+      </button>
+    </form>
+  )}
+</section>
+
 
         <section className="mt-8 rounded-xl bg-white p-6 shadow">
   <h2 className="mb-4 text-xl font-semibold">Created Games</h2>
@@ -1237,7 +1351,7 @@ function reopenDrawing(index: number) {
         <option value="">All Recurring Games</option>
         {games.map((game: any, index: number) => (
           <option key={index} value={index}>
-            {game.state} — {game.name}{" "}
+            {game.state} — {game.name}{" "}({game.status || "active"})
 
           </option>
         ))}
@@ -1408,9 +1522,17 @@ function reopenDrawing(index: number) {
 </section>
 
         <section className="mt-8 rounded-xl bg-white p-6 shadow">
-          <h2 className="mb-4 text-xl font-semibold">Create Drawing</h2>
+          <button
+  onClick={() => setShowCreateDrawing(!showCreateDrawing)}
+  className="mb-4 flex w-full items-center justify-between text-left text-xl font-semibold"
+>
+  <span> {showCreateDrawing ? "▼" : "▶"} Create Drawing</span>
+</button>
 
-          {games.length === 0 ? (
+
+          {showCreateDrawing && (
+  <>
+    {games.length === 0 ? (
   <p className="text-gray-500">
     Create a lottery game first before adding drawings.
   </p>
@@ -1567,12 +1689,14 @@ function reopenDrawing(index: number) {
       </label>
     </div>
 
-    <button className="rounded bg-green-600 px-4 py-2 font-semibold text-white">
+        <button className="rounded bg-green-600 px-4 py-2 font-semibold text-white">
       Save Drawing
     </button>
-  </form>
+    </form>
+  )}
+</>
 )}
-        </section>
+</section>
 
         <section className="mt-8 rounded-xl bg-white p-6 shadow">
   <h2 className="mb-4 text-xl font-semibold">Created Drawings</h2>
@@ -1689,6 +1813,7 @@ function reopenDrawing(index: number) {
                         
                      
 ))}
+</div>
 
 <div className="mt-3 border-t pt-2">
   <p className="text-sm font-semibold text-gray-700">
@@ -1805,7 +1930,6 @@ function reopenDrawing(index: number) {
 )}
   </div>
 )}
-                    </div>
                   </>
                 )}
               </>
