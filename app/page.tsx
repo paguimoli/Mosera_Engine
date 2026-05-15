@@ -1010,6 +1010,7 @@ const metrics = getDashboardMetrics();
       {formatMoney(metrics.houseResult)}
     </p>
   </div>
+</section>
 <section className="mt-12 rounded-xl bg-white p-6 shadow">
   <button
     onClick={() => setShowCreateGame(!showCreateGame)}
