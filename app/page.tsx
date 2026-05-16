@@ -54,10 +54,14 @@ export default function Home() {
   const [expandedGameIds, setExpandedGameIds] = useState<number[]>([]);
   const [expandedDrawingIds, setExpandedDrawingIds] = useState<string[]>([]);  
   const [editingGameIndex, setEditingGameIndex] = useState<number | null>(null);
+  const [editingDrawingIndex, setEditingDrawingIndex] = useState<number | null>(null);
   const [overrideReason, setOverrideReason] = useState("");
   const [showCreateGame, setShowCreateGame] = useState(true);
   const [showCreateDrawing, setShowCreateDrawing] = useState(true);
   const [showPrintableReport, setShowPrintableReport] = useState(false);
+  const [showInactiveGames, setShowInactiveGames] = useState(true);
+  const [showInactiveDrawings, setShowInactiveDrawings] = useState(true);
+  const [activeTab, setActiveTab] = useState("dashboard");
   const [reportFilters, setReportFilters] = useState({
   fromDate: "",
   toDate: "",
@@ -230,26 +234,44 @@ const drawingId = `${selectedGame.state}-${selectedGame.name
   .replace(/\s+/g, "-")
   .toUpperCase()}-${drawingForm.drawDate}-${Date.now()}`;
 
+const drawingPayload = {
+  ...drawingForm,
+  status: calculatedStatus,
+  game: selectedGame,
+};
 
+if (editingDrawingIndex !== null) {
+  setDrawings(
+    drawings.map((drawing: any, index: number) =>
+      index === editingDrawingIndex
+        ? {
+            ...drawing,
+            ...drawingPayload,
+          }
+        : drawing
+    )
+  );
+
+  setEditingDrawingIndex(null);
+} else {
   setDrawings([
-  ...drawings,
-  {
-    id: drawingId,
-    ...drawingForm,
-    status: calculatedStatus,
-    game: selectedGame,
-    totalHandle: 0,
-    totalPotentialPayout: 0,
-    worstCaseLiability: 0,
-    housePosition: 0,
-    winningNumbers: "",
-    winningBonus: "",
-    resultSource: "",
-    settledAt: "",
-    bets: [],
-  },
+    ...drawings,
+    {
+      id: drawingId,
+      ...drawingPayload,
+      totalHandle: 0,
+      totalPotentialPayout: 0,
+      worstCaseLiability: 0,
+      housePosition: 0,
+      winningNumbers: "",
+      winningBonus: "",
+      resultSource: "",
+      settledAt: "",
+      bets: [],
+    },
 
   ]);
+}
 
     setDrawingForm({
       gameIndex: "",
@@ -692,6 +714,18 @@ function archiveGame(index: number) {
   );
 }
 
+function restoreGame(index: number) {
+  const confirmed = confirm("Restore this archived game?");
+
+  if (!confirmed) return;
+
+  setGames(
+    games.map((game: any, gameIndex: number) =>
+      gameIndex === index ? { ...game, status: "active" } : game
+    )
+  );
+}
+
 function deleteGame(index: number) {
   const gameToDelete = games[index];
 
@@ -1000,6 +1034,882 @@ const metrics = getDashboardMetrics();
 function printReport() {
   window.print();
 }  
+function exportReportToCSV() {
+  const filteredDrawings = drawings.filter((drawing: any) => {
+  const drawingDate = drawing.drawDate;
+
+  if (
+    reportFilters.fromDate &&
+    drawingDate < reportFilters.fromDate
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.toDate &&
+    drawingDate > reportFilters.toDate
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.state &&
+    drawing.game.state !== reportFilters.state
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.game &&
+    drawing.game.name !== reportFilters.game
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.status &&
+    drawing.status !== reportFilters.status
+  ) {
+    return false;
+  }
+
+  return true;
+});
+
+  const drawingRows = filteredDrawings.map((drawing: any) => [
+    drawing.id,
+    drawing.game.state,
+    drawing.game.name,
+    drawing.drawDate,
+    drawing.drawTime,
+    drawing.status === "settled" ? "settled" : getDrawingStatus(drawing),
+    formatMoney(drawing.totalHandle),
+    formatMoney(drawing.totalPotentialPayout),
+    formatMoney(drawing.actualPayout),
+    formatMoney(drawing.housePosition),
+  ]);
+
+  const rows = [
+    ["Metric", "Value"],
+    ["Total Games", metrics.totalGames],
+    ["Total Drawings", metrics.totalDrawings],
+    ["Open Drawings", metrics.openDrawings],
+    ["Closed Drawings", metrics.closedDrawings],
+    ["Settled Drawings", metrics.settledDrawings],
+    ["Total Handle", formatMoney(metrics.totalHandle)],
+    ["Potential Payout", formatMoney(metrics.totalPotentialPayout)],
+    ["Actual Payout", formatMoney(metrics.actualPayout)],
+    ["House Result", formatMoney(metrics.houseResult)],
+    [],
+    [
+      "ID",
+      "State",
+      "Game",
+      "Date",
+      "Draw Time",
+      "Status",
+      "Handle",
+      "Potential Payout",
+      "Actual Payout",
+      "House Result",
+    ],
+    ...drawingRows,
+  ];
+
+  const csvContent = rows
+    .map((row) =>
+      row
+        .map((value) => `"${String(value).replace(/"/g, '""')}"`)
+        .join(",")
+    )
+    .join("\n");
+
+  const blob = new Blob([csvContent], {
+    type: "text/csv;charset=utf-8;",
+  });
+
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "lottery-report.csv";
+  link.click();
+
+  URL.revokeObjectURL(url);
+}
+function exportTicketAuditCSV() {
+  const filteredDrawings = drawings.filter((drawing: any) => {
+  const drawingDate = drawing.drawDate;
+
+  if (
+    reportFilters.fromDate &&
+    drawingDate < reportFilters.fromDate
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.toDate &&
+    drawingDate > reportFilters.toDate
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.state &&
+    drawing.game.state !== reportFilters.state
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.game &&
+    drawing.game.name !== reportFilters.game
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.status &&
+    drawing.status !== reportFilters.status
+  ) {
+    return false;
+  }
+
+  return true;
+});
+
+  const rows = [
+    [
+      "Bet ID",
+      "Drawing ID",
+      "State",
+      "Game",
+      "Draw Date",
+      "Draw Time",
+      "Bet Numbers",
+      "Bet Type",
+      "Bet Amount",
+      "Potential Payout",
+      "Bet Status",
+      "Winning Numbers",
+      "Result Source",
+    ],
+    ...filteredDrawings.flatMap((drawing: any) =>
+      (drawing.bets || []).map((bet: any) => [
+        bet.id,
+        drawing.id,
+        drawing.game.state,
+        drawing.game.name,
+        drawing.drawDate,
+        drawing.drawTime,
+        bet.numbers,
+        bet.betType,
+        formatMoney(bet.amount),
+        formatMoney(bet.potentialPayout),
+        bet.status,
+        drawing.winningNumbers || "",
+        drawing.resultSource || "",
+      ])
+    ),
+  ];
+
+  const csvContent = rows
+    .map((row) =>
+      row
+        .map((value) => `"${String(value).replace(/"/g, '""')}"`)
+        .join(",")
+    )
+    .join("\n");
+
+  const blob = new Blob([csvContent], {
+    type: "text/csv;charset=utf-8;",
+  });
+
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "lottery-ticket-audit.csv";
+  link.click();
+
+  URL.revokeObjectURL(url);
+}
+function exportSettlementSummaryCSV() {
+  const filteredDrawings = drawings.filter((drawing: any) => {
+  const drawingDate = drawing.drawDate;
+
+  if (
+    reportFilters.fromDate &&
+    drawingDate < reportFilters.fromDate
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.toDate &&
+    drawingDate > reportFilters.toDate
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.state &&
+    drawing.game.state !== reportFilters.state
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.game &&
+    drawing.game.name !== reportFilters.game
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.status &&
+    drawing.status !== reportFilters.status
+  ) {
+    return false;
+  }
+
+  return true;
+});
+
+  const rows = [
+    [
+      "Drawing ID",
+      "State",
+      "Game",
+      "Draw Date",
+      "Draw Time",
+      "Winning Numbers",
+      "Result Source",
+      "Total Handle",
+      "Actual Payout",
+      "House Result",
+      "Winner Count",
+      "Loser Count",
+      "Reopened",
+      "Override Reason",
+      "Settled At",
+    ],
+    ...filteredDrawings
+      .filter((drawing: any) => drawing.status === "settled")
+      .map((drawing: any) => {
+        const winnerCount = (drawing.bets || []).filter(
+          (bet: any) => bet.status === "winner"
+        ).length;
+        const loserCount = (drawing.bets || []).filter(
+          (bet: any) => bet.status === "loser"
+        ).length;
+
+        return [
+          drawing.id,
+          drawing.game.state,
+          drawing.game.name,
+          drawing.drawDate,
+          drawing.drawTime,
+          drawing.winningNumbers || "",
+          drawing.resultSource || "",
+          formatMoney(drawing.totalHandle),
+          formatMoney(drawing.actualPayout),
+          formatMoney(drawing.housePosition),
+          winnerCount,
+          loserCount,
+          drawing.overrideReason ? "Yes" : "No",
+          drawing.overrideReason || "",
+          drawing.settledAt || "",
+        ];
+      }),
+  ];
+
+  const csvContent = rows
+    .map((row) =>
+      row
+        .map((value) => `"${String(value).replace(/"/g, '""')}"`)
+        .join(",")
+    )
+    .join("\n");
+
+  const blob = new Blob([csvContent], {
+    type: "text/csv;charset=utf-8;",
+  });
+
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "lottery-settlement-summary.csv";
+  link.click();
+
+  URL.revokeObjectURL(url);
+}
+function exportRiskExposureCSV() {
+  const filteredDrawings = drawings.filter((drawing: any) => {
+  const drawingDate = drawing.drawDate;
+
+  if (
+    reportFilters.fromDate &&
+    drawingDate < reportFilters.fromDate
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.toDate &&
+    drawingDate > reportFilters.toDate
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.state &&
+    drawing.game.state !== reportFilters.state
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.game &&
+    drawing.game.name !== reportFilters.game
+  ) {
+    return false;
+  }
+
+  if (
+    reportFilters.status &&
+    drawing.status !== reportFilters.status
+  ) {
+    return false;
+  }
+
+  return true;
+});
+
+  const rows = [
+    [
+      "Drawing ID",
+      "State",
+      "Game",
+      "Draw Date",
+      "Draw Time",
+      "Status",
+      "Max Bet",
+      "Max Total Handle",
+      "Max Total Liability",
+      "Total Handle",
+      "Potential Payout",
+      "Worst Case Liability",
+      "House Position",
+      "Most Exposed Numbers",
+      "Most Exposed Amount",
+    ],
+    ...filteredDrawings.map((drawing: any) => {
+      const mostExposed = getExposureByNumbers(drawing)[0];
+
+      return [
+        drawing.id,
+        drawing.game.state,
+        drawing.game.name,
+        drawing.drawDate,
+        drawing.drawTime,
+        drawing.status === "settled" ? "settled" : getDrawingStatus(drawing),
+        formatMoney(drawing.maxBet),
+        formatMoney(drawing.maxTotalHandle),
+        formatMoney(drawing.maxTotalLiability),
+        formatMoney(drawing.totalHandle),
+        formatMoney(drawing.totalPotentialPayout),
+        formatMoney(drawing.worstCaseLiability),
+        formatMoney(drawing.housePosition),
+        mostExposed?.numbers || "",
+        formatMoney(mostExposed?.payout || 0),
+      ];
+    }),
+  ];
+
+  const csvContent = rows
+    .map((row) =>
+      row
+        .map((value) => `"${String(value).replace(/"/g, '""')}"`)
+        .join(",")
+    )
+    .join("\n");
+
+  const blob = new Blob([csvContent], {
+    type: "text/csv;charset=utf-8;",
+  });
+
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "lottery-risk-exposure.csv";
+  link.click();
+
+  URL.revokeObjectURL(url);
+}
+function deleteDrawing(index: number) {
+  const drawing = drawings[index];
+
+  if (drawing.bets && drawing.bets.length > 0) {
+    alert("Delete blocked. This drawing has bets attached.");
+    return;
+  }
+
+  const confirmed = confirm("Delete this drawing? This cannot be undone.");
+
+  if (!confirmed) return;
+
+  setDrawings(drawings.filter((_: any, drawingIndex: number) => drawingIndex !== index));
+}
+
+function cancelDrawing(index: number) {
+  const confirmed = confirm("Cancel this drawing? Existing bets will remain for audit.");
+
+  if (!confirmed) return;
+
+  setDrawings(
+    drawings.map((drawing: any, drawingIndex: number) =>
+      drawingIndex === index
+        ? { ...drawing, status: "canceled" }
+        : drawing
+    )
+  );
+}
+
+function archiveDrawing(index: number) {
+  const confirmed = confirm("Archive this drawing? It will remain in records.");
+
+  if (!confirmed) return;
+
+  setDrawings(
+    drawings.map((drawing: any, drawingIndex: number) =>
+      drawingIndex === index
+        ? { ...drawing, status: "archived" }
+        : drawing
+    )
+  );
+}
+
+function restoreDrawing(index: number) {
+  const confirmed = confirm("Restore this archived drawing?");
+
+  if (!confirmed) return;
+
+  setDrawings(
+    drawings.map((drawing: any, drawingIndex: number) =>
+      drawingIndex === index
+        ? { ...drawing, status: "scheduled" }
+        : drawing
+    )
+  );
+}
+
+function editDrawing(index: number) {
+  const drawing = drawings[index];
+
+  if (drawing.bets && drawing.bets.length > 0) {
+    alert("Edit blocked. This drawing has bets attached.");
+    return;
+  }
+
+  setEditingDrawingIndex(index);
+
+  const gameIndex = games.findIndex(
+    (game: any) =>
+      game.state === drawing.game.state &&
+      game.name === drawing.game.name
+  );
+
+  setDrawingForm({
+    gameIndex: String(gameIndex),
+    drawDate: drawing.drawDate || "",
+    drawTime: drawing.drawTime || "",
+    cutoffTime: drawing.cutoffTime || "",
+    timeZone: drawing.timeZone || "America/New_York",
+    status: drawing.status || "scheduled",
+    maxBet: drawing.maxBet || "",
+    maxTotalHandle: drawing.maxTotalHandle || "",
+    maxTotalLiability: drawing.maxTotalLiability || "",
+  });
+
+  document
+    .getElementById("create-drawing-section")
+    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function getStatusLabel(status: string) {
+return (status || "active").toUpperCase();
+}
+
+function getGameCardClass(game: any) {
+const status = game.status || "active";
+
+if (status === "disabled" || status === "archived") {
+return "rounded border p-4 cursor-pointer bg-gray-300 opacity-80";
+}
+
+return "rounded border p-4 cursor-pointer bg-white";
+}
+
+function getDrawingCardClass(drawing: any) {
+const status = drawing.status || getDrawingStatus(drawing);
+
+if (
+status === "closed" ||
+status === "settled" ||
+status === "canceled" ||
+status === "archived"
+) {
+return "rounded border p-4 cursor-pointer bg-gray-300 opacity-80";
+}
+
+return "rounded border p-4 cursor-pointer bg-white";
+}
+function drawingHasBets(drawing: any) {
+return drawing.bets && drawing.bets.length > 0;
+}
+
+function canEditDrawing(drawing: any) {
+return !drawingHasBets(drawing) &&
+drawing.status !== "settled" &&
+drawing.status !== "canceled" &&
+drawing.status !== "archived";
+}
+
+function canDeleteDrawing(drawing: any) {
+return !drawingHasBets(drawing) &&
+drawing.status !== "settled" &&
+drawing.status !== "canceled" &&
+drawing.status !== "archived";
+}
+
+function canCancelDrawing(drawing: any) {
+return drawing.status !== "settled" &&
+drawing.status !== "canceled" &&
+drawing.status !== "archived";
+}
+
+function canArchiveDrawing(drawing: any) {
+return drawing.status !== "archived";
+}
+function clearAllLocalData() {
+  const confirmed = confirm("Clear ALL local lottery data? This cannot be undone.");
+
+  if (!confirmed) return;
+
+  localStorage.clear();
+  setGames([]);
+  setDrawings([]);
+  setExpandedDrawingIds([]);
+  setEditingGameIndex(null);
+  setEditingDrawingIndex(null);
+
+  alert("All local demo data cleared.");
+}
+function exportLocalDataJSON() {
+  const backup = {
+    games,
+    drawings,
+  };
+
+  const blob = new Blob([JSON.stringify(backup, null, 2)], {
+    type: "application/json;charset=utf-8;",
+  });
+
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "lottery-local-backup.json";
+  link.click();
+
+  URL.revokeObjectURL(url);
+}
+
+function generateDemoData() {
+  const confirmed = confirm(
+    "Generate demo games, drawings, and bets? This will replace current local data."
+  );
+
+  if (!confirmed) return;
+
+  const demoGames = [
+    {
+      state: "FL",
+      name: "Pick 3 Midday",
+      status: "active",
+      gameType: "pick_n",
+      mainNumbersCount: "3",
+      mainNumbersMin: "0",
+      mainNumbersMax: "9",
+      bonusNumbersCount: "",
+      bonusNumbersMin: "",
+      bonusNumbersMax: "",
+      ticketPrice: "1.00",
+      payoutMultiplier: "500",
+      maxPayout: "5000",
+      defaultMaxBet: "100",
+      defaultMaxTotalHandle: "25000",
+      defaultMaxTotalLiability: "50000",
+      scheduleType: "recurring",
+      recurringFrequency: "daily",
+      defaultDrawTime: "13:30",
+      defaultCutoffTime: "13:15",
+      defaultTimeZone: "America/New_York",
+    },
+    {
+      state: "NY",
+      name: "Pick 4 Evening",
+      status: "active",
+      gameType: "pick_n",
+      mainNumbersCount: "4",
+      mainNumbersMin: "0",
+      mainNumbersMax: "9",
+      bonusNumbersCount: "",
+      bonusNumbersMin: "",
+      bonusNumbersMax: "",
+      ticketPrice: "1.00",
+      payoutMultiplier: "5000",
+      maxPayout: "25000",
+      defaultMaxBet: "50",
+      defaultMaxTotalHandle: "40000",
+      defaultMaxTotalLiability: "100000",
+      scheduleType: "recurring",
+      recurringFrequency: "daily",
+      defaultDrawTime: "19:30",
+      defaultCutoffTime: "19:15",
+      defaultTimeZone: "America/New_York",
+    },
+    {
+      state: "CA",
+      name: "Daily Derby Demo",
+      status: "archived",
+      gameType: "pick_n",
+      mainNumbersCount: "3",
+      mainNumbersMin: "1",
+      mainNumbersMax: "12",
+      bonusNumbersCount: "1",
+      bonusNumbersMin: "1",
+      bonusNumbersMax: "12",
+      ticketPrice: "2.00",
+      payoutMultiplier: "1000",
+      maxPayout: "10000",
+      defaultMaxBet: "25",
+      defaultMaxTotalHandle: "15000",
+      defaultMaxTotalLiability: "30000",
+      scheduleType: "one_time",
+      recurringFrequency: "daily",
+      defaultDrawTime: "18:00",
+      defaultCutoffTime: "17:45",
+      defaultTimeZone: "America/Los_Angeles",
+    },
+  ];
+
+  const demoDrawings = [
+    {
+      id: "FL-PICK-3-MIDDAY-2026-05-16-DEMO",
+      game: demoGames[0],
+      drawDate: "2026-05-16",
+      drawTime: "13:30",
+      cutoffTime: "13:15",
+      timeZone: "America/New_York",
+      status: "scheduled",
+      maxBet: "100",
+      maxTotalHandle: "25000",
+      maxTotalLiability: "50000",
+      totalHandle: 0,
+      totalPotentialPayout: 0,
+      worstCaseLiability: 0,
+      housePosition: 0,
+      winningNumbers: "",
+      winningBonus: "",
+      resultSource: "",
+      settledAt: "",
+      actualPayout: 0,
+      bets: [],
+    },
+    {
+      id: "NY-PICK-4-EVENING-2026-05-15-DEMO",
+      game: demoGames[1],
+      drawDate: "2026-05-15",
+      drawTime: "19:30",
+      cutoffTime: "19:15",
+      timeZone: "America/New_York",
+      status: "closed",
+      maxBet: "50",
+      maxTotalHandle: "40000",
+      maxTotalLiability: "100000",
+      totalHandle: 30,
+      totalPotentialPayout: 60000,
+      worstCaseLiability: 50000,
+      housePosition: -59970,
+      winningNumbers: "",
+      winningBonus: "",
+      resultSource: "",
+      settledAt: "",
+      actualPayout: 0,
+      bets: [
+        {
+          id: "BET-DEMO-1001",
+          drawingId: "NY-PICK-4-EVENING-2026-05-15-DEMO",
+          numbers: "1-2-3-4",
+          betType: "straight",
+          amount: 10,
+          potentialPayout: 25000,
+          placedAt: "2026-05-15T18:20:00.000Z",
+          status: "accepted",
+        },
+        {
+          id: "BET-DEMO-1002",
+          drawingId: "NY-PICK-4-EVENING-2026-05-15-DEMO",
+          numbers: "1-2-3-4",
+          betType: "box",
+          amount: 10,
+          potentialPayout: 25000,
+          placedAt: "2026-05-15T18:35:00.000Z",
+          status: "accepted",
+        },
+        {
+          id: "BET-DEMO-1003",
+          drawingId: "NY-PICK-4-EVENING-2026-05-15-DEMO",
+          numbers: "5-6-7-8",
+          betType: "straight",
+          amount: 10,
+          potentialPayout: 10000,
+          placedAt: "2026-05-15T18:50:00.000Z",
+          status: "accepted",
+        },
+      ],
+    },
+    {
+      id: "FL-PICK-3-MIDDAY-2026-05-14-DEMO",
+      game: demoGames[0],
+      drawDate: "2026-05-14",
+      drawTime: "13:30",
+      cutoffTime: "13:15",
+      timeZone: "America/New_York",
+      status: "settled",
+      maxBet: "100",
+      maxTotalHandle: "25000",
+      maxTotalLiability: "50000",
+      totalHandle: 25,
+      totalPotentialPayout: 12500,
+      worstCaseLiability: 10000,
+      housePosition: -9975,
+      winningNumbers: "4-5-6",
+      winningBonus: "",
+      resultSource: "Florida Lottery",
+      settledAt: "2026-05-14T18:00:00.000Z",
+      actualPayout: 10000,
+      overrideReason: "Corrected result source after operator review.",
+      reopenedAt: "2026-05-14T17:45:00.000Z",
+      bets: [
+        {
+          id: "BET-DEMO-2001",
+          drawingId: "FL-PICK-3-MIDDAY-2026-05-14-DEMO",
+          numbers: "4-5-6",
+          betType: "straight",
+          amount: 20,
+          potentialPayout: 10000,
+          placedAt: "2026-05-14T16:30:00.000Z",
+          status: "winner",
+          settledAt: "2026-05-14T18:00:00.000Z",
+        },
+        {
+          id: "BET-DEMO-2002",
+          drawingId: "FL-PICK-3-MIDDAY-2026-05-14-DEMO",
+          numbers: "1-2-3",
+          betType: "straight",
+          amount: 5,
+          potentialPayout: 2500,
+          placedAt: "2026-05-14T16:45:00.000Z",
+          status: "loser",
+          settledAt: "2026-05-14T18:00:00.000Z",
+        },
+      ],
+    },
+    {
+      id: "CA-DAILY-DERBY-DEMO-2026-05-13-DEMO",
+      game: demoGames[2],
+      drawDate: "2026-05-13",
+      drawTime: "18:00",
+      cutoffTime: "17:45",
+      timeZone: "America/Los_Angeles",
+      status: "archived",
+      maxBet: "25",
+      maxTotalHandle: "15000",
+      maxTotalLiability: "30000",
+      totalHandle: 12,
+      totalPotentialPayout: 6000,
+      worstCaseLiability: 6000,
+      housePosition: 12,
+      winningNumbers: "",
+      winningBonus: "",
+      resultSource: "",
+      settledAt: "",
+      actualPayout: 0,
+      bets: [
+        {
+          id: "BET-DEMO-3001",
+          drawingId: "CA-DAILY-DERBY-DEMO-2026-05-13-DEMO",
+          numbers: "2-4-6",
+          betType: "straight",
+          amount: 6,
+          potentialPayout: 6000,
+          placedAt: "2026-05-13T23:00:00.000Z",
+          status: "accepted",
+        },
+        {
+          id: "BET-DEMO-3002",
+          drawingId: "CA-DAILY-DERBY-DEMO-2026-05-13-DEMO",
+          numbers: "1-3-5",
+          betType: "box",
+          amount: 6,
+          potentialPayout: 1000,
+          placedAt: "2026-05-13T23:15:00.000Z",
+          status: "accepted",
+        },
+      ],
+    },
+  ];
+
+  setGames(demoGames);
+  setDrawings(demoDrawings);
+  setExpandedDrawingIds([]);
+  setExpandedGameIds([]);
+  setEditingGameIndex(null);
+  setEditingDrawingIndex(null);
+}
+
+function importLocalDataJSON(event: React.ChangeEvent<HTMLInputElement>) {
+  const file = event.target.files?.[0];
+
+  if (!file) return;
+
+  const reader = new FileReader();
+
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(String(reader.result));
+
+      if (!Array.isArray(parsed.games) || !Array.isArray(parsed.drawings)) {
+        alert("Invalid backup file.");
+        return;
+      }
+
+      setGames(parsed.games);
+      setDrawings(parsed.drawings);
+      alert("Local data restored.");
+    } catch {
+      alert("Invalid backup file.");
+    }
+  };
+
+  reader.readAsText(file);
+  event.target.value = "";
+}
 return (
   
     <main className="min-h-screen bg-gray-100 p-8 text-gray-900">
@@ -1014,6 +1924,30 @@ return (
   }).format(currentTime)}
   )
 </p>
+<div className="mb-6 flex flex-wrap gap-2">
+  {[
+    { label: "Dashboard", value: "dashboard" },
+    { label: "Games", value: "games" },
+    { label: "Drawings", value: "drawings" },
+    { label: "Reports", value: "reports" },
+    { label: "Mock Betting", value: "mockBetting" },
+    { label: "Utilities", value: "utilities" },
+  ].map((tab) => (
+    <button
+      key={tab.value}
+      onClick={() => setActiveTab(tab.value)}
+      className={`rounded-md px-3 py-1.5 text-sm font-semibold ${
+        activeTab === tab.value
+          ? "bg-blue-700 text-white"
+          : "bg-white text-gray-700 hover:bg-gray-50"
+      }`}
+    >
+      {tab.label}
+    </button>
+  ))}
+</div>
+{activeTab === "dashboard" && (
+<>
 <section className="mt-6 rounded-xl bg-white p-4 shadow">
   <h2 className="mb-4 text-xl font-semibold">Reporting Filters</h2>
 
@@ -1150,6 +2084,10 @@ return (
     </p>
   </div>
 </section>
+  </>
+)}
+{activeTab === "reports" && (
+<>
 <section className="mt-6 rounded-xl bg-white p-6 shadow">
   <div className="mb-4 flex items-center justify-between">
   <button
@@ -1158,14 +2096,43 @@ return (
   >
     {showPrintableReport ? "▼" : "▶"} Printable Report
   </button>
+<div className="flex gap-2">
+  <button
+    onClick={printReport}
+    className="rounded-md bg-slate-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800"
+  >
+    Print Report
+  </button>
 
-    <button
-      onClick={printReport}
-      className="rounded bg-slate-700 px-4 py-2 font-semibold text-white hover:bg-slate-800"
-    >
-      Print Report
-    </button>
-	  </div>
+  <button
+    onClick={exportReportToCSV}
+    className="rounded-md bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-800"
+  >
+    Export CSV
+  </button>
+  <button
+onClick={exportTicketAuditCSV}
+className="rounded-md bg-blue-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-800"
+
+>
+
+Export Ticket Audit </button>
+  <button
+onClick={exportSettlementSummaryCSV}
+className="rounded-md bg-purple-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-purple-800"
+
+>
+
+Export Settlement Summary </button>
+  <button
+onClick={exportRiskExposureCSV}
+className="rounded-md bg-red-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-800"
+
+>
+
+Export Risk Exposure </button>
+</div>
+				  </div>
 	
 {showPrintableReport && (
 <>
@@ -1206,6 +2173,10 @@ return (
 </>
 )}
 </section>
+  </>
+)}
+{activeTab === "games" && (
+<>
 <section className="mt-8 rounded-xl bg-white p-6 shadow">
   <button
     onClick={() => setShowCreateGame(!showCreateGame)}
@@ -1545,12 +2516,14 @@ return (
         className="rounded border p-2 text-gray-900"
       >
         <option value="">All Recurring Games</option>
-        {games.map((game: any, index: number) => (
+        {games.map((game: any, index: number) =>
+          (game.status || "").toLowerCase() === "active" &&
+          game.scheduleType === "recurring" ? (
           <option key={index} value={index}>
-            {game.state} — {game.name}{" "}({game.status || "active"})
+            {game.state} — {game.name}{" "}({getStatusLabel(game.status || "active")})
 
           </option>
-        ))}
+        ) : null)}
       </select>
       <span className="text-sm text-gray-500">
         Choose one game, or leave as all recurring games.
@@ -1574,21 +2547,39 @@ return (
     </div>
   </div>
 
-  {games.length === 0 ? (
-    <p className="text-gray-500">No games created yet.</p>
-  ) : (
-    <div className="space-y-3">
-      {games.map((game: any, index: number) => (
-        <div
+	  {games.length === 0 ? (
+	    <p className="text-gray-500">No games created yet.</p>
+	  ) : (
+	    <>
+	      <label className="mb-3 flex items-center gap-2 text-sm text-gray-700">
+	        <input
+	          type="checkbox"
+	          checked={showInactiveGames}
+	          onChange={(e) => setShowInactiveGames(e.target.checked)}
+	        />
+	        Show inactive games
+	      </label>
+
+	    <div className="space-y-3">
+	      {games.map((game: any, index: number) => {
+	        if (
+	          !showInactiveGames &&
+	          (game.status === "disabled" || game.status === "archived")
+	        ) {
+	          return null;
+	        }
+
+	        return (
+	        <div
   key={index}
-  className="rounded border p-4 cursor-pointer"
+  className={getGameCardClass(game)}
   onClick={() => toggleGameDetails(index)}
 >
           <p className="font-semibold">
   {expandedGameIds.includes(index) ? "▼" : "▶"}{" "}
   {game.state} — {game.name}{" "}
-  <span className="text-xs text-gray-500">
-    ({game.status || "active"})
+  <span className="text-xs font-bold text-gray-700">
+    ({getStatusLabel(game.status || "active")})
   </span>
 </p>
           <p className="text-sm text-gray-600">
@@ -1597,13 +2588,13 @@ return (
   {game.bonusNumbersCount
     ? ` and Bonus ${game.bonusNumbersCount} from ${game.bonusNumbersMin}–${game.bonusNumbersMax}`
     : ""}
-  {" "} | Ticket: ${game.ticketPrice}
+  {" "} | Ticket: {formatMoney(game.ticketPrice)}
 </p>
           {expandedGameIds.includes(index) && (
   <div className="mt-3 border-t pt-3 text-sm text-gray-700 space-y-1">
     <p>
   <span className="font-semibold">Status:</span>{" "}
-  {game.status || "Active"}
+  {getStatusLabel(game.status || "active")}
 </p>
     <p>
       
@@ -1708,16 +2699,36 @@ return (
   >
     Delete
   </button>
+  {game.status === "archived" && (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        restoreGame(index);
+      }}
+      className="rounded bg-green-600 px-3 py-1 text-sm font-semibold text-white hover:bg-green-700"
+    >
+      Restore
+    </button>
+  )}
 </div>
   </div>
 )}
-        </div>
-      ))}
-    </div>
-  )}
-</section>
+	        </div>
+	      );
+	      })}
+	    </div>
+	    </>
+		  )}
+	</section>
+  </>
+)}
+{activeTab === "drawings" && (
+<>
 
-        <section className="mt-8 rounded-xl bg-white p-6 shadow">
+	        <section
+          id="create-drawing-section"
+          className="mt-8 rounded-xl bg-white p-6 shadow"
+        >
           <button
   onClick={() => setShowCreateDrawing(!showCreateDrawing)}
   className="mb-4 flex w-full items-center justify-between text-left text-xl font-semibold"
@@ -1763,11 +2774,12 @@ return (
         required
       >
         <option value="">Select a game</option>
-        {games.map((game, index) => (
+        {games.map((game, index) =>
+          (game.status || "").toLowerCase() === "active" ? (
           <option key={index} value={index}>
             {game.state} — {game.name}
           </option>
-        ))}
+        ) : null)}
       </select>
       <span className="text-sm text-gray-500">
         Choose which configured lottery game this drawing belongs to.
@@ -1886,24 +2898,43 @@ return (
     </div>
 
         <button className="rounded bg-green-600 px-4 py-2 font-semibold text-white">
-      Save Drawing
+      {editingDrawingIndex !== null ? "Update Drawing" : "Save Drawing"}
     </button>
     </form>
   )}
-</>
-)}
-</section>
+	</>
+		  )}
+		</section>
 
-        <section className="mt-8 rounded-xl bg-white p-6 shadow">
+		        <section className="mt-8 rounded-xl bg-white p-6 shadow">
   <h2 className="mb-4 text-xl font-semibold">Created Drawings</h2>
 
-  {drawings.length === 0 ? (
-    <p className="text-gray-500">No drawings created yet.</p>
-  ) : (
-    <div className="space-y-3">
-      {drawings.map((drawing: any, index: number) => {
-        const drawDateTime = new Date(`${drawing.drawDate}T${drawing.drawTime}`);
-        const cutoffDateTime = new Date(`${drawing.drawDate}T${drawing.cutoffTime}`);
+	  {drawings.length === 0 ? (
+	    <p className="text-gray-500">No drawings created yet.</p>
+	  ) : (
+	    <>
+	      <label className="mb-3 flex items-center gap-2 text-sm text-gray-700">
+	        <input
+	          type="checkbox"
+	          checked={showInactiveDrawings}
+	          onChange={(e) => setShowInactiveDrawings(e.target.checked)}
+	        />
+	        Show inactive drawings
+	      </label>
+
+	    <div className="space-y-3">
+	      {drawings.map((drawing: any, index: number) => {
+	        if (
+	          !showInactiveDrawings &&
+	          (drawing.status === "canceled" ||
+	            drawing.status === "archived" ||
+	            drawing.status === "settled")
+	        ) {
+	          return null;
+	        }
+
+	        const drawDateTime = new Date(`${drawing.drawDate}T${drawing.drawTime}`);
+	        const cutoffDateTime = new Date(`${drawing.drawDate}T${drawing.cutoffTime}`);
 
         const drawingTime = new Intl.DateTimeFormat("en-US", {
           timeZone:
@@ -1933,7 +2964,7 @@ return (
         return (
           <div
             key={drawing.id || index}
-            className="rounded border p-4 cursor-pointer"
+            className={getDrawingCardClass(drawing)}
             onClick={() => toggleDrawingDetails(drawing.id)}
           >
             <p className="font-semibold">
@@ -1947,8 +2978,8 @@ return (
               Draw: {drawingTime} (
               {drawing.timeZone.replace("America/", "").replace("_", " ")}) |
               Cutoff: {cutoffTime} |Status:{" "}
-<span className={drawing.status === "settled" ? "font-bold text-black" : ""}>
-  {drawing.status === "settled" ? "SETTLED" : getDrawingStatus(drawing)}
+<span className="font-bold text-black">
+  {getStatusLabel(drawing.status === "settled" ? "settled" : getDrawingStatus(drawing))}
 </span>
               <br />
               Your local draw time: {userLocalDrawTime}
@@ -2127,20 +3158,101 @@ return (
     </button>
   </div>
 )}
-  </div>
+	  </div>
 )}
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  )}
-</section>
+	                  </>
+	                )}
+		                <div className="mt-4 flex gap-2 border-t pt-3">
+		                  <button
+		                    disabled={!canEditDrawing(drawing)}
+		                    onClick={(e) => {
+		                      e.stopPropagation();
+		                      if (!canEditDrawing(drawing)) return;
+		                      editDrawing(index);
+		                    }}
+		                    className={
+		                      canEditDrawing(drawing)
+		                        ? "rounded-md bg-blue-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-800"
+		                        : "rounded-md bg-gray-300 px-3 py-1.5 text-sm font-semibold text-gray-500 cursor-not-allowed"
+		                    }
+		                  >
+		                    Edit Drawing
+		                  </button>
 
-        <section className="mt-8 rounded-xl bg-white p-6 shadow">
+		                  <button
+		                    disabled={!canCancelDrawing(drawing)}
+		                    onClick={(e) => {
+		                      e.stopPropagation();
+		                      if (!canCancelDrawing(drawing)) return;
+		                      cancelDrawing(index);
+		                    }}
+		                    className={
+		                      canCancelDrawing(drawing)
+		                        ? "rounded-md bg-yellow-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-yellow-700"
+		                        : "rounded-md bg-gray-300 px-3 py-1.5 text-sm font-semibold text-gray-500 cursor-not-allowed"
+		                    }
+		                  >
+		                    Cancel Drawing
+		                  </button>
+
+		                  <button
+		                    disabled={!canArchiveDrawing(drawing)}
+		                    onClick={(e) => {
+		                      e.stopPropagation();
+		                      if (!canArchiveDrawing(drawing)) return;
+		                      archiveDrawing(index);
+		                    }}
+		                    className={
+		                      canArchiveDrawing(drawing)
+		                        ? "rounded-md bg-gray-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-gray-800"
+		                        : "rounded-md bg-gray-300 px-3 py-1.5 text-sm font-semibold text-gray-500 cursor-not-allowed"
+		                    }
+		                  >
+		                    Archive Drawing
+		                  </button>
+
+		                  <button
+		                    disabled={!canDeleteDrawing(drawing)}
+		                    onClick={(e) => {
+		                      e.stopPropagation();
+		                      if (!canDeleteDrawing(drawing)) return;
+		                      deleteDrawing(index);
+		                    }}
+		                    className={
+		                      canDeleteDrawing(drawing)
+		                        ? "rounded-md bg-red-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-800"
+		                        : "rounded-md bg-gray-300 px-3 py-1.5 text-sm font-semibold text-gray-500 cursor-not-allowed"
+		                    }
+			                  >
+			                    Delete Drawing
+			                  </button>
+			                  {drawing.status === "archived" && (
+			                    <button
+			                      onClick={(e) => {
+			                        e.stopPropagation();
+			                        restoreDrawing(index);
+			                      }}
+			                      className="rounded-md bg-green-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-green-800"
+			                    >
+			                      Restore Drawing
+			                    </button>
+			                  )}
+		                </div>
+	              </>
+	            )}
+	          </div>
+        );
+	      })}
+	    </div>
+	    </>
+	  )}
+	</section>
+  </>
+)}
+{activeTab === "mockBetting" && (
+<>
+
+	        <section className="mt-8 rounded-xl bg-white p-6 shadow">
   <h2 className="mb-4 text-xl font-semibold">Mock Bet (Admin Test)</h2>
 
   {drawings.length === 0 ? (
@@ -2157,11 +3269,12 @@ return (
           required
         >
           <option value="">Select a drawing</option>
-          {drawings.map((drawing: any, index: number) => (
+          {drawings.map((drawing: any, index: number) =>
+  drawing.status === "scheduled" || drawing.status === "open" ? (
   <option key={drawing.id || index} value={drawing.id}>
     {drawing.id}
   </option>
-))}
+) : null)}
             
         
         </select>
@@ -2215,9 +3328,53 @@ return (
         Submit Mock Bet
       </button>
     </form>
-  )}
-</section>
-      </div>
-    </main>
+	  )}
+		</section>
+  </>
+)}
+{activeTab === "utilities" && (
+<>
+	        <section className="mt-8 rounded-xl bg-white p-6 shadow">
+          <h2 className="mb-4 text-xl font-semibold">Admin Utilities</h2>
+
+	          <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={generateDemoData}
+            className="rounded-md bg-green-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-green-800"
+          >
+            Generate Demo Data
+          </button>
+
+	          <button
+	            onClick={exportLocalDataJSON}
+            className="rounded-md bg-slate-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            Export Local Data JSON
+          </button>
+
+          <label>
+            <span className="inline-block cursor-pointer rounded-md bg-slate-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800">
+              Import Local Data JSON
+            </span>
+            <input
+              type="file"
+              accept="application/json"
+              onChange={importLocalDataJSON}
+              className="hidden"
+            />
+          </label>
+
+          <button
+            onClick={clearAllLocalData}
+            className="rounded-md bg-red-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-800"
+          >
+            Clear All Local Data
+          </button>
+	          </div>
+	        </section>
+  </>
+)}
+	      </div>
+	    </main>
   );
 }
