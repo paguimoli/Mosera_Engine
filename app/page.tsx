@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { supabase } from "@/app/lib/supabaseClient";
 
 const states = [
   { code: "AL", name: "Alabama" },
@@ -52,7 +53,7 @@ export default function Home() {
   const [drawings, setDrawings] = useState<any[]>([]);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [expandedGameIds, setExpandedGameIds] = useState<number[]>([]);
-  const [expandedDrawingIds, setExpandedDrawingIds] = useState<string[]>([]);  
+  const [expandedDrawingIds, setExpandedDrawingIds] = useState<string[]>([]);
   const [editingGameIndex, setEditingGameIndex] = useState<number | null>(null);
   const [editingDrawingIndex, setEditingDrawingIndex] = useState<number | null>(null);
   const [overrideReason, setOverrideReason] = useState("");
@@ -62,6 +63,8 @@ export default function Home() {
   const [showInactiveGames, setShowInactiveGames] = useState(true);
   const [showInactiveDrawings, setShowInactiveDrawings] = useState(true);
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [gamesLoadedFromSupabase, setGamesLoadedFromSupabase] = useState(false);
+  const [drawingsLoadedFromSupabase, setDrawingsLoadedFromSupabase] = useState(false);
   const [reportFilters, setReportFilters] = useState({
   fromDate: "",
   toDate: "",
@@ -98,7 +101,7 @@ export default function Home() {
   defaultMaxBet: "",
   defaultMaxTotalHandle: "",
   defaultMaxTotalLiability: "",
-  
+
 });
 const [selectedGameIndex, setSelectedGameIndex] = useState("");
 
@@ -113,27 +116,108 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
     maxTotalHandle: "",
     maxTotalLiability: "",
   });
+
   useEffect(() => {
-  const savedGames = localStorage.getItem("lotteryGames");
-  const savedDrawings = localStorage.getItem("lotteryDrawings");
+    async function loadGamesFromSupabase() {
+      const { data, error } = await supabase
+        .from("games")
+        .select("*")
+        .order("created_at", { ascending: true });
 
-  if (savedGames) {
-    setGames(JSON.parse(savedGames));
-  }
+      if (error) {
+        console.error("Supabase games load failed:", error);
+        setGamesLoadedFromSupabase(true);
+        return;
+      }
 
-  if (savedDrawings) {
-    setDrawings(JSON.parse(savedDrawings));
-  }
-}, []);
-useEffect(() => {
-  localStorage.setItem("lotteryGames", JSON.stringify(games));
-}, [games]);
+      setGames((data || []).map((row: any) => row.data));
+      setGamesLoadedFromSupabase(true);
+    }
 
-useEffect(() => {
-  localStorage.setItem("lotteryDrawings", JSON.stringify(drawings));
-}, [drawings]);
+    loadGamesFromSupabase();
+  }, []);
 
-  function handleChange(
+  useEffect(() => {
+    if (!gamesLoadedFromSupabase) return;
+
+    async function saveGamesToSupabase() {
+      const { error: deleteError } = await supabase
+        .from("games")
+        .delete()
+        .not("created_at", "is", null);
+
+      if (deleteError) {
+        console.error("Supabase games clear failed:", deleteError);
+        return;
+      }
+
+      if (games.length === 0) {
+        return;
+      }
+
+      const { error: insertError } = await supabase
+        .from("games")
+        .insert(games.map((game: any) => ({ data: game })));
+
+      if (insertError) {
+        console.error("Supabase games save failed:", insertError);
+      }
+    }
+
+    saveGamesToSupabase();
+  }, [games, gamesLoadedFromSupabase]);
+
+  useEffect(() => {
+    async function loadDrawingsFromSupabase() {
+      const { data, error } = await supabase
+        .from("drawings")
+        .select("*")
+        .order("created_at", { ascending: true });
+
+      if (error) {
+        console.error("Supabase drawings load failed:", error);
+        setDrawingsLoadedFromSupabase(true);
+        return;
+      }
+
+      setDrawings((data || []).map((row: any) => row.data));
+      setDrawingsLoadedFromSupabase(true);
+    }
+
+    loadDrawingsFromSupabase();
+  }, []);
+
+  useEffect(() => {
+    if (!drawingsLoadedFromSupabase) return;
+
+    async function saveDrawingsToSupabase() {
+      const { error: deleteError } = await supabase
+        .from("drawings")
+        .delete()
+        .not("created_at", "is", null);
+
+      if (deleteError) {
+        console.error("Supabase drawings clear failed:", deleteError);
+        return;
+      }
+
+      if (drawings.length === 0) {
+        return;
+      }
+
+      const { error: insertError } = await supabase
+        .from("drawings")
+        .insert(drawings.map((drawing: any) => ({ data: drawing })));
+
+      if (insertError) {
+        console.error("Supabase drawings save failed:", insertError);
+      }
+    }
+
+    saveDrawingsToSupabase();
+  }, [drawings, drawingsLoadedFromSupabase]);
+
+	  function handleChange(
     event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) {
     setForm({ ...form, [event.target.name]: event.target.value });
@@ -146,7 +230,7 @@ useEffect(() => {
     games.map((game: any, index: number) =>
       index === editingGameIndex ? form : game
     )
-    
+
   );
 
   setEditingGameIndex(null);
@@ -284,7 +368,7 @@ if (editingDrawingIndex !== null) {
       maxTotalHandle: "",
       maxTotalLiability: "",
     });
-    
+
   }
   function getDrawingStatus(drawing: any) {
   const now = currentTime;
@@ -367,7 +451,7 @@ const newDrawings = targetGames
         resultSource: "",
         settledAt: "",
         bets: [],
-        
+
       };
     })
     .filter(Boolean);
@@ -380,7 +464,7 @@ alert(
     : "No new drawings generated. They may already exist or no recurring game was selected."
 );
 }
-  
+
 function generateNext7Days() {
   const newDrawings: any[] = [];
 
@@ -427,7 +511,7 @@ targetGames
             resultSource: "",
             settledAt: "",
             bets: [],
-            
+
           });
         }
       }
@@ -619,7 +703,7 @@ if (mockBetForm.betType === "straight_box") {
 }
 
       const updatedBets = [...(drawing.bets || []), ...newBets];
-      
+
 
       const exposureMap: Record<string, number> = {};
 
@@ -1033,7 +1117,7 @@ function getDashboardMetrics() {
 const metrics = getDashboardMetrics();
 function printReport() {
   window.print();
-}  
+}
 function exportReportToCSV() {
   const filteredDrawings = drawings.filter((drawing: any) => {
   const drawingDate = drawing.drawDate;
@@ -1911,7 +1995,7 @@ function importLocalDataJSON(event: React.ChangeEvent<HTMLInputElement>) {
   event.target.value = "";
 }
 return (
-  
+
     <main className="min-h-screen bg-gray-100 p-8 text-gray-900">
       <div className="mx-auto max-w-5xl">
         <h1 className="mb-2 text-3xl font-bold">Lottery Admin Dashboard</h1>
@@ -2133,7 +2217,7 @@ className="rounded-md bg-red-700 px-3 py-1.5 text-sm font-semibold text-white ho
 Export Risk Exposure </button>
 </div>
 				  </div>
-	
+
 {showPrintableReport && (
 <>
 	  <div className="text-sm text-gray-700">
@@ -2323,7 +2407,7 @@ Export Risk Exposure </button>
 
   <label className="grid gap-1">
     <span className="font-medium">Ticket Price</span>
-    
+
     <input
       name="ticketPrice"
       value={form.ticketPrice}
@@ -2597,11 +2681,11 @@ Export Risk Exposure </button>
   {getStatusLabel(game.status || "active")}
 </p>
     <p>
-      
+
       <span className="font-semibold">Payout Multiplier:</span>{" "}
       {game.payoutMultiplier}
     </p>
-    
+
     <p>
   <span className="font-semibold">Bonus Count:</span>{" "}
   {game.bonusNumbersCount || "None"}
@@ -2673,7 +2757,7 @@ Export Risk Exposure </button>
       e.stopPropagation();
       disableGame(index);
     }}
-  
+
   className="rounded bg-yellow-500 px-3 py-1 text-sm font-semibold text-white hover:bg-yellow-600"
 
 >
@@ -3037,8 +3121,8 @@ Export Risk Exposure </button>
                         <div key={item.numbers} className="text-xs text-gray-700">
                           {item.numbers} → {formatMoney(item.payout)}
                         </div>
-                        
-                     
+
+
 ))}
 </div>
 
@@ -3110,7 +3194,7 @@ Export Risk Exposure </button>
         key={bet.id}
         className="mt-2 rounded border p-2 text-sm text-gray-800"
       >
-        
+
         <p className="font-semibold">
           #{bet.id} — {bet.status === "winner" ? "WINNER" : "LOSER"}
         </p>
@@ -3119,7 +3203,7 @@ Export Risk Exposure </button>
         <p>Amount: {formatMoney(bet.amount)}</p>
         <p>Potential Payout: {formatMoney(bet.potentialPayout)}</p>
       </div>
-      
+
     ))}
     {drawing.overrideReason && (
   <div className="mt-4 rounded border border-yellow-400 bg-yellow-50 p-3 text-sm text-yellow-900">
@@ -3275,8 +3359,8 @@ Export Risk Exposure </button>
     {drawing.id}
   </option>
 ) : null)}
-            
-        
+
+
         </select>
       </label>
 <label className="grid gap-1">
@@ -3298,7 +3382,7 @@ Export Risk Exposure </button>
 </label>
       <label className="grid gap-1">
         <span className="font-medium">Numbers</span>
-        <input 
+        <input
                 name="numbers"
                 value={mockBetForm.numbers}
                 onChange={handleMockBetChange}
@@ -3322,7 +3406,7 @@ Export Risk Exposure </button>
         />
       </label>
 
-      
+
 
       <button className="rounded bg-orange-600 px-4 py-2 font-semibold text-white transition active:scale-95 active:bg-orange-800 hover:bg-orange-700">
         Submit Mock Bet
