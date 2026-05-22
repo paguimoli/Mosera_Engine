@@ -46,6 +46,7 @@ function getExposureByNumbers(drawing: any) {
     .sort((a, b) => b.payout - a.payout);
 }
 const DEFAULT_TIME_ZONE = "America/New_York";
+const MAX_VISIBLE_BETS = 25;
 
 
 export default function Home() {
@@ -54,6 +55,17 @@ export default function Home() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [expandedGameIds, setExpandedGameIds] = useState<number[]>([]);
   const [expandedDrawingIds, setExpandedDrawingIds] = useState<string[]>([]);
+  const [expandedBetIds, setExpandedBetIds] = useState<string[]>([]);
+  const [expandedBetLists, setExpandedBetLists] = useState<string[]>([]);
+  const [betSearchTerms, setBetSearchTerms] = useState<Record<string, string>>({});
+  const [betStatusFilters, setBetStatusFilters] = useState<Record<string, string>>({});
+  const [betTypeFilters, setBetTypeFilters] = useState<Record<string, string>>({});
+  const [ticketLookupDrawingId, setTicketLookupDrawingId] = useState("");
+  const [ticketLookupTicketId, setTicketLookupTicketId] = useState("");
+  const [ticketLookupNumbers, setTicketLookupNumbers] = useState("");
+  const [ticketLookupBetType, setTicketLookupBetType] = useState("all");
+  const [ticketLookupStatus, setTicketLookupStatus] = useState("all");
+  const [showAllTicketLookupResults, setShowAllTicketLookupResults] = useState(false);
   const [editingGameIndex, setEditingGameIndex] = useState<number | null>(null);
   const [editingDrawingIndex, setEditingDrawingIndex] = useState<number | null>(null);
   const [overrideReason, setOverrideReason] = useState("");
@@ -72,11 +84,15 @@ export default function Home() {
   game: "",
   status: "",
 });
-  const [mockBetForm, setMockBetForm] = useState({
-  drawingId: "",
-  numbers: "",
-  amount: "",
-  betType: "straight"
+	  const [mockBetForm, setMockBetForm] = useState({
+	  drawingId: "",
+	  playerId: "",
+	  playerName: "",
+	  agentId: "",
+	  numbers: "",
+	  amount: "",
+	  betType: "straight",
+  boxStakeMode: "total",
 });
 
   const [form, setForm] = useState({
@@ -234,7 +250,24 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
         return;
       }
 
-      setDrawings((data || []).map((row: any) => row.data));
+      const loadedDrawings = (data || [])
+        .map((row: any) => row.data)
+        .filter((drawing: any) => drawing?.id);
+      const drawingsById = new Map();
+
+      loadedDrawings.forEach((drawing: any) => {
+        drawingsById.set(drawing.id, drawing);
+      });
+
+      if (drawingsById.size !== loadedDrawings.length) {
+        console.warn(
+          "Duplicate drawing IDs detected during Supabase load"
+        );
+      }
+
+      const uniqueDrawings = Array.from(drawingsById.values());
+
+      setDrawings(uniqueDrawings);
       setDrawingsLoadedFromSupabase(true);
     }
 
@@ -289,41 +322,86 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
         return;
       }
 
-      if (drawings.length === 0) {
+	      if (drawings.length === 0) {
+	        return;
+	      }
+
+	      const { data: normalizedGames, error: gamesLookupError } = await supabase
+	        .from("normalized_games")
+	        .select("id,state,name");
+
+	      if (gamesLookupError) {
+	        console.error(
+	          "Supabase normalized_games lookup for drawings failed:",
+	          gamesLookupError
+	        );
+	      }
+
+	      const normalizedGameIdByStateName = new Map();
+
+	      (normalizedGames || []).forEach((game: any) => {
+	        normalizedGameIdByStateName.set(
+	          `${game.state || ""}::${game.name || ""}`,
+	          game.id
+	        );
+	      });
+
+	      const normalizedDrawings = drawings.map((drawing: any) => {
+	        const state = drawing.game?.state || "";
+	        const gameName = drawing.game?.name || "";
+
+	        return {
+	          external_id: String(drawing.id || ""),
+	          game_id:
+	            normalizedGameIdByStateName.get(`${state}::${gameName}`) || null,
+	          state,
+	          game_name: gameName,
+	          draw_date: isValidDateString(drawing.drawDate) ? drawing.drawDate : null,
+	          draw_time: drawing.drawTime || "",
+	          cutoff_time: drawing.cutoffTime || "",
+	          time_zone: drawing.timeZone || "",
+	          status: drawing.status || "scheduled",
+	          max_bet: Number(drawing.maxBet || 0),
+	          max_total_handle: Number(drawing.maxTotalHandle || 0),
+	          max_total_liability: Number(drawing.maxTotalLiability || 0),
+	          total_handle: Number(drawing.totalHandle || 0),
+	          total_potential_payout: Number(drawing.totalPotentialPayout || 0),
+	          worst_case_liability: Number(drawing.worstCaseLiability || 0),
+	          house_position: Number(drawing.housePosition || 0),
+	          winning_numbers: drawing.winningNumbers || "",
+	          winning_bonus: drawing.winningBonus || "",
+	          result_source: drawing.resultSource || "",
+	          actual_payout: Number(drawing.actualPayout || 0),
+	          override_reason: drawing.overrideReason || "",
+	          settled_at: drawing.settledAt || null,
+	          reopened_at: drawing.reopenedAt || null,
+	        };
+	      }).filter((drawing: any) => drawing.external_id !== "");
+
+      const drawingRowsByExternalId = new Map();
+
+      normalizedDrawings.forEach((drawing: any) => {
+        drawingRowsByExternalId.set(drawing.external_id, drawing);
+      });
+
+      const uniqueDrawingRows = Array.from(drawingRowsByExternalId.values()).filter(
+        (drawing: any) => drawing.external_id !== ""
+      );
+
+      if (uniqueDrawingRows.length === 0) {
         return;
       }
 
-      const normalizedDrawings = drawings.map((drawing: any) => ({
-        external_id: drawing.id,
-        state: drawing.game?.state || "",
-        game_name: drawing.game?.name || "",
-        draw_date: isValidDateString(drawing.drawDate) ? drawing.drawDate : null,
-        draw_time: drawing.drawTime || "",
-        cutoff_time: drawing.cutoffTime || "",
-        time_zone: drawing.timeZone || "",
-        status: drawing.status || "scheduled",
-        max_bet: Number(drawing.maxBet || 0),
-        max_total_handle: Number(drawing.maxTotalHandle || 0),
-        max_total_liability: Number(drawing.maxTotalLiability || 0),
-        total_handle: Number(drawing.totalHandle || 0),
-        total_potential_payout: Number(drawing.totalPotentialPayout || 0),
-        worst_case_liability: Number(drawing.worstCaseLiability || 0),
-        house_position: Number(drawing.housePosition || 0),
-        winning_numbers: drawing.winningNumbers || "",
-        winning_bonus: drawing.winningBonus || "",
-        result_source: drawing.resultSource || "",
-        actual_payout: Number(drawing.actualPayout || 0),
-        override_reason: drawing.overrideReason || "",
-        settled_at: drawing.settledAt || null,
-        reopened_at: drawing.reopenedAt || null,
-      }));
-
       const { error: insertError } = await supabase
         .from("normalized_drawings")
-        .insert(normalizedDrawings);
+        .insert(uniqueDrawingRows);
 
       if (insertError) {
-        console.error("Supabase normalized_drawings save failed:", JSON.stringify(insertError, null, 2));
+        console.error(
+          "Supabase normalized_drawings save failed:",
+          JSON.stringify(insertError, null, 2),
+          uniqueDrawingRows
+        );
       }
     }
 
@@ -348,9 +426,9 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
         return;
       }
 
-      const normalizedBets = drawings.flatMap((drawing: any) =>
+      const normalizedRows = drawings.flatMap((drawing: any) =>
         (drawing.bets || []).map((bet: any) => ({
-          external_id: String(bet.id || ""),
+          external_id: String(bet.id || "").trim(),
           drawing_external_id: String(drawing.id || ""),
           state: String(drawing.game?.state || ""),
           game_name: String(drawing.game?.name || ""),
@@ -362,18 +440,40 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
           placed_at: isValidIsoDate(bet.placedAt) ? bet.placedAt : null,
           settled_at: isValidIsoDate(bet.settledAt) ? bet.settledAt : null,
         }))
-      ).filter((bet: any) => bet.external_id !== "");
+      );
 
-      if (normalizedBets.length === 0) {
+      const uniqueMap = new Map();
+
+      normalizedRows.forEach((row: any) => {
+        if (!row.external_id) return;
+        uniqueMap.set(row.external_id, row);
+      });
+
+      const uniqueBetRows = Array.from(uniqueMap.values());
+
+      console.log(
+        "Normalized bet sync count:",
+        normalizedRows.length,
+        "Unique:",
+        uniqueBetRows.length
+      );
+
+      if (uniqueBetRows.length === 0) {
         return;
       }
 
       const { error: insertError } = await supabase
         .from("normalized_bets")
-        .insert(normalizedBets);
+        .upsert(uniqueBetRows, {
+          onConflict: "external_id",
+        });
 
       if (insertError) {
-        console.error("Supabase normalized_bets save failed:", JSON.stringify(insertError, null, 2));
+        console.error(
+          "Supabase normalized_bets save failed:",
+          JSON.stringify(insertError, null, 2),
+          uniqueBetRows.map((row: any) => row.external_id)
+        );
       }
     }
 
@@ -745,6 +845,7 @@ function getAdjustedMultiplier(
 }
 function handleMockBetSubmit(event: React.FormEvent) {
   event.preventDefault();
+  let betAccepted = false;
 
   setDrawings(drawings.map((drawing: any) => {
       if (drawing.id !== mockBetForm.drawingId) {
@@ -790,77 +891,115 @@ if (maxBet > 0 && betAmount > maxBet) {
   alert(`Bet rejected. Max bet for this drawing is ${formatMoney(maxBet)}.`);
   return drawing;
 }
-      const multiplier = Number(drawing.game.payoutMultiplier || 0);
-      const maxPayout = Number(drawing.game.maxPayout || 0);
+	      const multiplier = Number(drawing.game.payoutMultiplier || 0);
+	      const maxPayout = Number(drawing.game.maxPayout || 0);
 
-      const adjustedMultiplier = getAdjustedMultiplier(
-  multiplier,
-  mockBetForm.betType,
-  mockBetForm.numbers
-);
+	      let newBets: any[] = [];
+	      let totalTicketCost = betAmount;
+	      let totalPotentialPayout = 0;
+	      const boxWayCount = getBoxWayCount(mockBetForm.numbers);
 
-const calculatedPayout = betAmount * adjustedMultiplier;
+	if (mockBetForm.betType === "straight_box") {
+	  // Straight leg
+	  const straightMultiplier = multiplier;
+	  const straightPayout =
+	    maxPayout > 0
+	      ? Math.min(betAmount * straightMultiplier, maxPayout)
+	      : betAmount * straightMultiplier;
 
-const potentialPayout =
-  maxPayout > 0
-    ? Math.min(calculatedPayout, maxPayout)
-    : calculatedPayout;
+	  // Box leg
+	  const boxTotalTicketCost =
+	    mockBetForm.boxStakeMode === "per_combo"
+	      ? betAmount * boxWayCount
+	      : betAmount;
+	  const boxAmountPerCombination =
+	    mockBetForm.boxStakeMode === "per_combo"
+	      ? betAmount
+	      : betAmount / boxWayCount;
 
-      let newBets: any[] = [];
+	  const boxPayout =
+	    maxPayout > 0
+	      ? Math.min(boxAmountPerCombination * multiplier, maxPayout)
+	      : boxAmountPerCombination * multiplier;
 
-if (mockBetForm.betType === "straight_box") {
-  // Straight leg
-  const straightMultiplier = multiplier;
-  const straightPayout =
-    maxPayout > 0
-      ? Math.min(betAmount * straightMultiplier, maxPayout)
-      : betAmount * straightMultiplier;
+	  totalTicketCost = betAmount + boxTotalTicketCost;
+	  totalPotentialPayout = straightPayout + boxPayout;
 
-  // Box leg
-  const boxMultiplier = getAdjustedMultiplier(
-    multiplier,
-    "box",
-    mockBetForm.numbers
-  );
-
-  const boxPayout =
-    maxPayout > 0
-      ? Math.min(betAmount * boxMultiplier, maxPayout)
-      : betAmount * boxMultiplier;
-
-  newBets = [
-    {
+	  newBets = [
+	    {
       id: `BET-${Date.now()}-S`,
-      drawingId: drawing.id,
-      numbers: mockBetForm.numbers,
-      betType: "straight",
+	      drawingId: drawing.id,
+	      playerId: mockBetForm.playerId,
+	      playerName: mockBetForm.playerName,
+	      agentId: mockBetForm.agentId,
+	      numbers: mockBetForm.numbers,
+	      betType: "straight",
       amount: betAmount,
       potentialPayout: straightPayout,
       placedAt: new Date().toISOString(),
       status: "accepted",
     },
     {
-      id: `BET-${Date.now()}-B`,
-      drawingId: drawing.id,
-      numbers: mockBetForm.numbers,
-      betType: "box",
-      amount: betAmount,
-      potentialPayout: boxPayout,
-      placedAt: new Date().toISOString(),
-      status: "accepted",
-    },
-  ];
-} else {
-  newBets = [
-    {
-      id: `BET-${Date.now()}`,
-      drawingId: drawing.id,
-      numbers: mockBetForm.numbers,
-      betType: mockBetForm.betType,
-      amount: betAmount,
-      potentialPayout,
-      placedAt: new Date().toISOString(),
-      status: "accepted",
+		      id: `BET-${Date.now()}-B`,
+		      drawingId: drawing.id,
+		      playerId: mockBetForm.playerId,
+		      playerName: mockBetForm.playerName,
+		      agentId: mockBetForm.agentId,
+		      numbers: mockBetForm.numbers,
+	      betType: "box",
+	      amount: boxTotalTicketCost,
+	      boxStakeMode: mockBetForm.boxStakeMode,
+	      potentialPayout: boxPayout,
+	      placedAt: new Date().toISOString(),
+	      status: "accepted",
+	    },
+	  ];
+	} else {
+	  let storedBetAmount = betAmount;
+	  let potentialPayout = 0;
+
+	  if (mockBetForm.betType === "box") {
+	    const amountPerCombination =
+	      mockBetForm.boxStakeMode === "per_combo"
+	        ? betAmount
+	        : betAmount / boxWayCount;
+
+	    storedBetAmount =
+	      mockBetForm.boxStakeMode === "per_combo"
+	        ? betAmount * boxWayCount
+	        : betAmount;
+
+	    const calculatedPayout = amountPerCombination * multiplier;
+	    potentialPayout =
+	      maxPayout > 0
+	        ? Math.min(calculatedPayout, maxPayout)
+	        : calculatedPayout;
+	  } else {
+	    const calculatedPayout = betAmount * multiplier;
+	    potentialPayout =
+	      maxPayout > 0
+	        ? Math.min(calculatedPayout, maxPayout)
+	        : calculatedPayout;
+	  }
+
+	  totalTicketCost = storedBetAmount;
+	  totalPotentialPayout = potentialPayout;
+
+	  newBets = [
+	    {
+		      id: `BET-${Date.now()}`,
+		      drawingId: drawing.id,
+		      playerId: mockBetForm.playerId,
+		      playerName: mockBetForm.playerName,
+		      agentId: mockBetForm.agentId,
+		      numbers: mockBetForm.numbers,
+	      betType: mockBetForm.betType,
+	      amount: storedBetAmount,
+	      boxStakeMode:
+	        mockBetForm.betType === "box" ? mockBetForm.boxStakeMode : undefined,
+	      potentialPayout,
+	      placedAt: new Date().toISOString(),
+	      status: "accepted",
         },
   ];
 }
@@ -885,27 +1024,34 @@ if (maxLiability > 0 && worstCase > maxLiability) {
   );
   return drawing;
 }
-      return {
-        ...drawing,
-        bets: updatedBets,
-        totalHandle: Number(drawing.totalHandle || 0) + betAmount,
-        totalPotentialPayout:
-          Number(drawing.totalPotentialPayout || 0) + potentialPayout,
-        worstCaseLiability: worstCase,
-        housePosition:
-          Number(drawing.totalHandle || 0) +
-          betAmount -
-          (Number(drawing.totalPotentialPayout || 0) + potentialPayout),
-      };
+	      betAccepted = newBets.length > 0;
+	      return {
+		        ...drawing,
+		        bets: updatedBets,
+	        totalHandle: Number(drawing.totalHandle || 0) + totalTicketCost,
+	        totalPotentialPayout:
+	          Number(drawing.totalPotentialPayout || 0) + totalPotentialPayout,
+	        worstCaseLiability: worstCase,
+	        housePosition:
+	          Number(drawing.totalHandle || 0) +
+	          totalTicketCost -
+	          (Number(drawing.totalPotentialPayout || 0) + totalPotentialPayout),
+	      };
     })
   );
 
-  setMockBetForm({
-    drawingId: "",
-    numbers: "",
-    amount: "",
-    betType: "straight",
-  });
+  if (betAccepted) {
+	    setMockBetForm({
+	      drawingId: "",
+	      playerId: "",
+	      playerName: "",
+	      agentId: "",
+	      numbers: "",
+      amount: "",
+      betType: "straight",
+      boxStakeMode: "total",
+    });
+  }
 }
   function toggleDrawingDetails(id: string) {
   setExpandedDrawingIds((prev) =>
@@ -923,6 +1069,38 @@ function formatMoney(value: any) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(Number(value || 0));
+}
+function toggleBetDetails(betId: string) {
+  setExpandedBetIds((prev) =>
+    prev.includes(betId)
+      ? prev.filter((id) => id !== betId)
+      : [...prev, betId]
+  );
+}
+function toggleExpandedBetList(drawingId: string) {
+  setExpandedBetLists((prev) =>
+    prev.includes(drawingId)
+      ? prev.filter((id) => id !== drawingId)
+      : [...prev, drawingId]
+  );
+}
+function updateBetSearchTerm(drawingId: string, value: string) {
+  setBetSearchTerms((prev) => ({
+    ...prev,
+    [drawingId]: value,
+  }));
+}
+function updateBetStatusFilter(drawingId: string, value: string) {
+  setBetStatusFilters((prev) => ({
+    ...prev,
+    [drawingId]: value,
+  }));
+}
+function updateBetTypeFilter(drawingId: string, value: string) {
+  setBetTypeFilters((prev) => ({
+    ...prev,
+    [drawingId]: value,
+  }));
 }
 function toggleDrawingDetails(id: string) {
   setExpandedDrawingIds((prev) =>
@@ -1060,6 +1238,15 @@ function isWinningBet(bet: any, winningNumbers: string) {
 }
 
 }
+async function createSettlementAuditLog(payload: any) {
+const { error } = await supabase
+.from("settlement_audit_logs")
+.insert(payload);
+
+if (error) {
+console.error("Settlement audit log insert failed:", JSON.stringify(error, null, 2));
+}
+}
 function settleDrawing(index: number) {
   const drawing = drawings[index];
   if (drawing.status === "settled") {
@@ -1094,6 +1281,24 @@ function settleDrawing(index: number) {
 
     const finalHousePosition =
   Number(drawing.totalHandle || 0) - totalPayout;
+
+  createSettlementAuditLog({
+    drawing_external_id: drawing.id,
+    state: drawing.game?.state || "",
+    game_name: drawing.game?.name || "",
+    winning_numbers: drawing.winningNumbers || "",
+    winning_bonus: drawing.winningBonus || "",
+    result_source: drawing.resultSource || "",
+    previous_status: drawing.status || "",
+    new_status: "settled",
+    total_handle: Number(drawing.totalHandle || 0),
+    actual_payout: Number(totalPayout || 0),
+    house_result: Number(finalHousePosition || 0),
+    winner_count: settledBets.filter((bet: any) => bet.status === "winner").length,
+    loser_count: settledBets.filter((bet: any) => bet.status === "loser").length,
+    override_reason: drawing.overrideReason || "",
+    action_type: "settle",
+  });
 
   setDrawings(
     drawings.map((item: any, drawingIndex: number) =>
@@ -1165,6 +1370,24 @@ function reopenDrawing(index: number) {
   );
 
   if (!confirmed) return;
+
+  createSettlementAuditLog({
+    drawing_external_id: drawing.id,
+    state: drawing.game?.state || "",
+    game_name: drawing.game?.name || "",
+    winning_numbers: drawing.winningNumbers || "",
+    winning_bonus: drawing.winningBonus || "",
+    result_source: drawing.resultSource || "",
+    previous_status: drawing.status || "",
+    new_status: "reopened",
+    total_handle: Number(drawing.totalHandle || 0),
+    actual_payout: Number(drawing.actualPayout || 0),
+    house_result: Number(drawing.housePosition || 0),
+    winner_count: (drawing.bets || []).filter((bet: any) => bet.status === "winner").length,
+    loser_count: (drawing.bets || []).filter((bet: any) => bet.status === "loser").length,
+    override_reason: overrideReason,
+    action_type: "reopen",
+  });
 
   setDrawings(
     drawings.map((item: any, drawingIndex: number) =>
@@ -1432,9 +1655,12 @@ function exportTicketAuditCSV() {
       "Drawing ID",
       "State",
       "Game",
-      "Draw Date",
-      "Draw Time",
-      "Bet Numbers",
+	      "Draw Date",
+	      "Draw Time",
+	      "Player ID",
+	      "Player Name",
+	      "Agent ID",
+	      "Bet Numbers",
       "Bet Type",
       "Bet Amount",
       "Potential Payout",
@@ -1447,10 +1673,13 @@ function exportTicketAuditCSV() {
         bet.id,
         drawing.id,
         drawing.game.state,
-        drawing.game.name,
-        drawing.drawDate,
-        drawing.drawTime,
-        bet.numbers,
+	        drawing.game.name,
+	        drawing.drawDate,
+	        drawing.drawTime,
+	        bet.playerId || "",
+	        bet.playerName || "",
+	        bet.agentId || "",
+	        bet.numbers,
         bet.betType,
         formatMoney(bet.amount),
         formatMoney(bet.potentialPayout),
@@ -2153,10 +2382,73 @@ function importLocalDataJSON(event: React.ChangeEvent<HTMLInputElement>) {
     }
   };
 
-  reader.readAsText(file);
-  event.target.value = "";
-}
-return (
+	  reader.readAsText(file);
+	  event.target.value = "";
+	}
+	const ticketLookupRows = drawings.flatMap((drawing: any, drawingIndex: number) =>
+	  (drawing.bets || []).map((bet: any, betIndex: number) => ({
+	    drawing,
+	    drawingIndex,
+	    bet,
+	    betIndex,
+	  }))
+	);
+	const filteredTickets = ticketLookupRows
+	  .filter((row: any) => {
+	    const ticketId = String(row.bet.id || "").toLowerCase();
+	    const numbers = String(row.bet.numbers || "").toLowerCase();
+	    const betType = String(row.bet.betType || "");
+	    const status = String(row.bet.status || "");
+
+	    if (
+	      ticketLookupDrawingId &&
+	      String(row.drawing.id || "") !== ticketLookupDrawingId
+	    ) {
+	      return false;
+	    }
+
+	    if (
+	      ticketLookupTicketId &&
+	      !ticketId.includes(ticketLookupTicketId.trim().toLowerCase())
+	    ) {
+	      return false;
+	    }
+
+	    if (
+	      ticketLookupNumbers &&
+	      !numbers.includes(ticketLookupNumbers.trim().toLowerCase())
+	    ) {
+	      return false;
+	    }
+
+	    if (ticketLookupBetType !== "all" && betType !== ticketLookupBetType) {
+	      return false;
+	    }
+
+	    if (ticketLookupStatus !== "all" && status !== ticketLookupStatus) {
+	      return false;
+	    }
+
+	    return true;
+	  })
+	  .sort((a: any, b: any) => {
+	    const aTime = Date.parse(a.bet.placedAt || "");
+	    const bTime = Date.parse(b.bet.placedAt || "");
+
+	    if (!Number.isNaN(aTime) && !Number.isNaN(bTime) && aTime !== bTime) {
+	      return bTime - aTime;
+	    }
+
+	    if (a.drawingIndex !== b.drawingIndex) {
+	      return b.drawingIndex - a.drawingIndex;
+	    }
+
+	    return b.betIndex - a.betIndex;
+	  });
+	const visibleTicketLookupRows = showAllTicketLookupResults
+	  ? filteredTickets
+	  : filteredTickets.slice(0, 50);
+	return (
 
     <main className="min-h-screen bg-gray-100 p-8 text-gray-900">
       <div className="mx-auto max-w-5xl">
@@ -2197,7 +2489,7 @@ return (
 <section className="mt-6 rounded-xl bg-white p-4 shadow">
   <h2 className="mb-4 text-xl font-semibold">Reporting Filters</h2>
 
-  <div className="grid gap-4 md:grid-cols-5">
+	  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
     <label className="grid gap-1">
       <span className="text-sm font-medium">From Date</span>
       <input
@@ -2205,7 +2497,7 @@ return (
         name="fromDate"
         value={reportFilters.fromDate}
         onChange={handleReportFilterChange}
-        className="rounded border p-2 text-gray-900"
+	        className="w-full rounded border p-2 text-gray-900"
       />
     </label>
 
@@ -2216,7 +2508,7 @@ return (
         name="toDate"
         value={reportFilters.toDate}
         onChange={handleReportFilterChange}
-        className="rounded border p-2 text-gray-900"
+	        className="w-full rounded border p-2 text-gray-900"
       />
     </label>
 
@@ -2226,7 +2518,7 @@ return (
         name="state"
         value={reportFilters.state}
         onChange={handleReportFilterChange}
-        className="rounded border p-2 text-gray-900"
+	        className="w-full rounded border p-2 text-gray-900"
       >
         <option value="">All States</option>
         {states.map((state) => (
@@ -2243,7 +2535,7 @@ return (
         name="game"
         value={reportFilters.game}
         onChange={handleReportFilterChange}
-        className="rounded border p-2 text-gray-900"
+	        className="w-full rounded border p-2 text-gray-900"
       >
         <option value="">All Games</option>
         {games.map((game: any, index: number) => (
@@ -2260,7 +2552,7 @@ return (
         name="status"
         value={reportFilters.status}
         onChange={handleReportFilterChange}
-        className="rounded border p-2 text-gray-900"
+	        className="w-full rounded border p-2 text-gray-900"
       >
         <option value="">All Statuses</option>
         <option value="scheduled">Scheduled</option>
@@ -2417,10 +2709,116 @@ Export Risk Exposure </button>
 	    <p>House Result: {formatMoney(metrics.houseResult)}</p>
 	  </div>
 </>
-)}
-</section>
-  </>
-)}
+	)}
+	</section>
+	<section className="mt-6 rounded-xl bg-white p-6 shadow">
+	  <h2 className="mb-4 text-xl font-semibold">Ticket Lookup</h2>
+	  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+	    <label className="grid gap-1">
+	      <span className="text-sm font-medium">Drawing</span>
+	      <select
+	        value={ticketLookupDrawingId}
+	        onChange={(e) => setTicketLookupDrawingId(e.target.value)}
+	        className="w-full rounded border p-2 text-gray-900"
+	      >
+	        <option value="">All Drawings</option>
+	        {drawings.map((drawing: any, index: number) => (
+	          <option key={drawing.id || index} value={drawing.id}>
+	            {drawing.id}
+	          </option>
+	        ))}
+	      </select>
+	    </label>
+
+	    <label className="grid gap-1">
+	      <span className="text-sm font-medium">Ticket ID</span>
+	      <input
+	        value={ticketLookupTicketId}
+	        onChange={(e) => setTicketLookupTicketId(e.target.value)}
+	        placeholder="Search ticket ID"
+	        className="w-full rounded border p-2 text-gray-900"
+	      />
+	    </label>
+
+	    <label className="grid gap-1">
+	      <span className="text-sm font-medium">Numbers</span>
+	      <input
+	        value={ticketLookupNumbers}
+	        onChange={(e) => setTicketLookupNumbers(e.target.value)}
+	        placeholder="Search numbers"
+	        className="w-full rounded border p-2 text-gray-900"
+	      />
+	    </label>
+
+	    <label className="grid gap-1">
+	      <span className="text-sm font-medium">Bet Type</span>
+	      <select
+	        value={ticketLookupBetType}
+	        onChange={(e) => setTicketLookupBetType(e.target.value)}
+	        className="w-full rounded border p-2 text-gray-900"
+	      >
+	        <option value="all">All Types</option>
+	        <option value="straight">Straight</option>
+	        <option value="box">Box</option>
+	        <option value="straight_box">Straight + Box</option>
+	      </select>
+	    </label>
+
+	    <label className="grid gap-1">
+	      <span className="text-sm font-medium">Status</span>
+	      <select
+	        value={ticketLookupStatus}
+	        onChange={(e) => setTicketLookupStatus(e.target.value)}
+	        className="w-full rounded border p-2 text-gray-900"
+	      >
+	        <option value="all">All Statuses</option>
+	        <option value="accepted">Accepted</option>
+	        <option value="winner">Winner</option>
+	        <option value="loser">Loser</option>
+	      </select>
+	    </label>
+	  </div>
+
+	  <div className="mt-4 border-t pt-3">
+	    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+	      <p className="text-sm font-semibold text-gray-700">
+	        Matching Tickets: {filteredTickets.length}
+	      </p>
+	      {filteredTickets.length > 50 && (
+	        <button
+	          type="button"
+	          onClick={() =>
+	            setShowAllTicketLookupResults(!showAllTicketLookupResults)
+	          }
+	          className="rounded-md bg-gray-200 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-300"
+	        >
+	          {showAllTicketLookupResults
+	            ? "Collapse Results"
+	            : "Show All Results"}
+	        </button>
+	      )}
+	    </div>
+
+	    <div className="space-y-1">
+	      {visibleTicketLookupRows.map((row: any) => (
+	        <div
+	          key={`${row.drawing.id}-${row.bet.id}`}
+	          className="text-xs text-gray-600"
+	        >
+	          #{row.bet.id} | {row.bet.playerId || "No Player"} |{" "}
+	          {row.bet.numbers} | {row.bet.betType} |{" "}
+	          {formatMoney(row.bet.amount)} →{" "}
+	          {formatMoney(row.bet.potentialPayout)} | {row.bet.status}
+	        </div>
+	      ))}
+	      {visibleTicketLookupRows.length === 0 && (
+	        <p className="text-sm text-gray-500">No matching tickets found.</p>
+	      )}
+	    </div>
+	  </div>
+	</section>
+	  </>
+	)}
 {activeTab === "games" && (
 <>
 <section className="mt-8 rounded-xl bg-white p-6 shadow">
@@ -3202,12 +3600,62 @@ Export Risk Exposure </button>
           timeStyle: "short",
         }).format(cutoffDateTime);
 
-        const userLocalDrawTime = new Intl.DateTimeFormat("en-US", {
-          dateStyle: "medium",
-          timeStyle: "short",
-        }).format(drawDateTime);
+	        const userLocalDrawTime = new Intl.DateTimeFormat("en-US", {
+	          dateStyle: "medium",
+	          timeStyle: "short",
+	        }).format(drawDateTime);
 
-        return (
+	        const allBets = drawing.bets || [];
+	        const drawingId = String(drawing.id || "");
+	        const isBetListExpanded = expandedBetLists.includes(drawingId);
+	        const betSearchTerm = betSearchTerms[drawingId] || "";
+	        const betStatusFilter = betStatusFilters[drawingId] || "";
+	        const betTypeFilter = betTypeFilters[drawingId] || "";
+	        const normalizedBetSearchTerm = betSearchTerm.trim().toLowerCase();
+	        const hasActiveBetFilters =
+	          Boolean(normalizedBetSearchTerm) ||
+	          Boolean(betStatusFilter) ||
+	          Boolean(betTypeFilter);
+	        const sortedBets = allBets
+	          .map((bet: any, betIndex: number) => ({ bet, betIndex }))
+	          .sort((a: any, b: any) => {
+	            const aTime = Date.parse(a.bet.placedAt || "");
+	            const bTime = Date.parse(b.bet.placedAt || "");
+
+	            if (!Number.isNaN(aTime) && !Number.isNaN(bTime) && aTime !== bTime) {
+	              return bTime - aTime;
+	            }
+
+	            return b.betIndex - a.betIndex;
+	          })
+	          .map((item: any) => item.bet);
+	        const filteredBets = sortedBets.filter((bet: any) => {
+	          const matchesSearch = normalizedBetSearchTerm
+	            ? [
+	                bet.id,
+	                bet.numbers,
+	                bet.betType,
+	                bet.status,
+	              ]
+	                .map((value) => String(value || "").toLowerCase())
+	                .some((value) => value.includes(normalizedBetSearchTerm))
+	            : true;
+	          const matchesStatus = betStatusFilter
+	            ? bet.status === betStatusFilter
+	            : true;
+	          const matchesType = betTypeFilter
+	            ? bet.betType === betTypeFilter
+	            : true;
+
+	          return matchesSearch && matchesStatus && matchesType;
+	        });
+	        const visibleBets = hasActiveBetFilters
+	          ? filteredBets
+	          : isBetListExpanded
+	            ? filteredBets
+	            : filteredBets.slice(0, MAX_VISIBLE_BETS);
+
+	        return (
           <div
             key={drawing.id || index}
             className={getDrawingCardClass(drawing)}
@@ -3254,21 +3702,130 @@ Export Risk Exposure </button>
               <>
                 {drawing.bets && drawing.bets.length > 0 && (
                   <>
-                    <div className="mt-3 border-t pt-2">
-                      <p className="text-sm font-semibold text-gray-700">
-                        Bets:
-                      </p>
+	                    <div className="mt-3 border-t pt-2">
+	                      <p className="text-sm font-semibold text-gray-700">
+	                        Bets:
+	                      </p>
+		                      <p className="text-xs text-gray-500">
+		                        Total Bets: {allBets.length}
+		                      </p>
+			                      <div className="mt-2 grid gap-2 sm:grid-cols-3">
+			                        <input
+			                          value={betSearchTerm}
+			                          onClick={(e) => e.stopPropagation()}
+			                          onChange={(e) =>
+			                            updateBetSearchTerm(drawingId, e.target.value)
+			                          }
+			                          placeholder="Search bets by ID, numbers, type, or status"
+			                          className="w-full rounded border p-2 text-xs text-gray-900"
+			                        />
+			                        <select
+			                          value={betStatusFilter}
+			                          onClick={(e) => e.stopPropagation()}
+			                          onChange={(e) =>
+			                            updateBetStatusFilter(drawingId, e.target.value)
+			                          }
+			                          className="w-full rounded border p-2 text-xs text-gray-900"
+			                        >
+			                          <option value="">All Statuses</option>
+			                          <option value="accepted">Accepted</option>
+			                          <option value="winner">Winner</option>
+			                          <option value="loser">Loser</option>
+			                        </select>
+			                        <select
+			                          value={betTypeFilter}
+			                          onClick={(e) => e.stopPropagation()}
+			                          onChange={(e) =>
+			                            updateBetTypeFilter(drawingId, e.target.value)
+			                          }
+			                          className="w-full rounded border p-2 text-xs text-gray-900"
+			                        >
+			                          <option value="">All Types</option>
+			                          <option value="straight">Straight</option>
+			                          <option value="box">Box</option>
+			                          <option value="straight_box">Straight + Box</option>
+			                        </select>
+			                      </div>
+			                      {hasActiveBetFilters && (
+			                        <p className="mt-1 text-xs text-gray-500">
+			                          Showing {visibleBets.length} matching bets
+			                        </p>
+			                      )}
+			                      {!hasActiveBetFilters &&
+			                        allBets.length > MAX_VISIBLE_BETS && (
+		                        <button
+		                          type="button"
+		                          onClick={(e) => {
+	                            e.stopPropagation();
+	                            toggleExpandedBetList(drawingId);
+	                          }}
+	                          className="mt-1 rounded-md bg-gray-200 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-300"
+		                        >
+		                          {isBetListExpanded ? "Collapse Bets" : "Show All Bets"}
+		                        </button>
+		                      )}
 
-                      {drawing.bets.map((bet: any) => (
-                        <div key={bet.id} className="text-xs text-gray-600">
-                          #{bet.id} | {bet.numbers} | {bet.betType}
-                          {bet.betType === "box"
-                            ? ` (${getBoxWayCount(bet.numbers)}-way)`
-                            : ""}
-                          | {formatMoney(bet.amount)} →{" "}
-                          {formatMoney(bet.potentialPayout)}
-                        </div>
-                      ))}
+			                      {visibleBets.map((bet: any) => {
+	                        const betId = String(bet.id || "");
+	                        const betType = String(bet.betType || "");
+	                        const isExpanded = expandedBetIds.includes(betId);
+	                        const isBoxBet = betType.includes("box");
+	                        const boxWays = isBoxBet ? getBoxWayCount(bet.numbers) : 0;
+	                        const amountPerCombination =
+	                          isBoxBet && boxWays > 0
+	                            ? Number(bet.amount || 0) / boxWays
+	                            : null;
+
+	                        return (
+	                          <div
+	                            key={bet.id}
+	                            className="text-xs text-gray-600"
+	                            onClick={(e) => {
+	                              e.stopPropagation();
+	                              toggleBetDetails(betId);
+	                            }}
+	                          >
+		                            <div className="cursor-pointer">
+		                              {isExpanded ? "▼" : "▶"} #{bet.id} |{" "}
+		                              {bet.playerId || "No Player"} | {bet.numbers} | {bet.betType} |{" "}
+		                              {formatMoney(bet.amount)} →{" "}
+		                              {formatMoney(bet.potentialPayout)} | {bet.status}
+		                            </div>
+		                            {isExpanded && (
+		                              <div className="mt-1 space-y-0.5 pl-4 text-gray-700">
+		                                <p>Bet ID: {bet.id}</p>
+		                                <p>Player ID: {bet.playerId || ""}</p>
+		                                <p>Player Name: {bet.playerName || ""}</p>
+		                                <p>Agent ID: {bet.agentId || ""}</p>
+		                                <p>Numbers: {bet.numbers}</p>
+	                                <p>Bet Type: {bet.betType}</p>
+	                                <p>Amount: {formatMoney(bet.amount)}</p>
+	                                <p>
+	                                  Potential Payout:{" "}
+	                                  {formatMoney(bet.potentialPayout)}
+	                                </p>
+	                                <p>Status: {bet.status}</p>
+	                                {isBoxBet && <p>Box Ways: {boxWays}</p>}
+	                                {isBoxBet && bet.boxStakeMode && (
+	                                  <p className="uppercase">
+	                                    Box Stake Mode: {bet.boxStakeMode}
+	                                  </p>
+	                                )}
+	                                {amountPerCombination !== null && (
+	                                  <p>
+	                                    Amount Per Combination:{" "}
+	                                    {formatMoney(amountPerCombination)}
+	                                  </p>
+	                                )}
+	                                <p>Placed At: {bet.placedAt}</p>
+	                                {bet.settledAt && (
+	                                  <p>Settled At: {bet.settledAt}</p>
+	                                )}
+	                              </div>
+	                            )}
+	                          </div>
+	                        );
+	                      })}
                     </div>
 
                     <div
@@ -3523,10 +4080,40 @@ Export Risk Exposure </button>
 ) : null)}
 
 
-        </select>
-      </label>
-<label className="grid gap-1">
-  <span className="font-medium">Bet Type</span>
+	        </select>
+	      </label>
+	<label className="grid gap-1">
+	  <span className="font-medium">Player ID</span>
+	  <input
+	    name="playerId"
+	    value={mockBetForm.playerId}
+	    onChange={handleMockBetChange}
+	    placeholder="Example: PLAYER-1001"
+	    className="rounded border p-2 text-gray-900"
+	  />
+	</label>
+	<label className="grid gap-1">
+	  <span className="font-medium">Player Name</span>
+	  <input
+	    name="playerName"
+	    value={mockBetForm.playerName}
+	    onChange={handleMockBetChange}
+	    placeholder="Example: John Smith"
+	    className="rounded border p-2 text-gray-900"
+	  />
+	</label>
+	<label className="grid gap-1">
+	  <span className="font-medium">Agent ID</span>
+	  <input
+	    name="agentId"
+	    value={mockBetForm.agentId}
+	    onChange={handleMockBetChange}
+	    placeholder="Example: AGENT-01"
+	    className="rounded border p-2 text-gray-900"
+	  />
+	</label>
+	<label className="grid gap-1">
+	  <span className="font-medium">Bet Type</span>
   <select
     name="betType"
     value={mockBetForm.betType}
@@ -3541,9 +4128,28 @@ Export Risk Exposure </button>
   <span className="text-sm text-gray-500">
     Straight pays full multiplier. Box pays reduced multiplier.
   </span>
-</label>
-      <label className="grid gap-1">
-        <span className="font-medium">Numbers</span>
+	</label>
+	{(mockBetForm.betType === "box" ||
+	  mockBetForm.betType === "straight_box") && (
+	  <label className="grid gap-1">
+	    <span className="font-medium">Box Stake Mode</span>
+	    <select
+	      name="boxStakeMode"
+	      value={mockBetForm.boxStakeMode}
+	      onChange={handleMockBetChange}
+	      className="rounded border p-2 text-gray-900"
+	    >
+	      <option value="total">Total ticket amount</option>
+	      <option value="per_combo">Amount per combination</option>
+	    </select>
+	    <span className="text-sm text-gray-500">
+	      Total ticket amount divides the wager across all box combinations.
+	      Amount per combination charges the amount for each box combination.
+	    </span>
+	  </label>
+	)}
+	      <label className="grid gap-1">
+	        <span className="font-medium">Numbers</span>
         <input
                 name="numbers"
                 value={mockBetForm.numbers}
