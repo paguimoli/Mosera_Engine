@@ -2,6 +2,7 @@ import {
   controllerFailure,
   controllerSuccess,
 } from "@/src/lib/controller/controller.types";
+import { saveGame, updateGame } from "./game.repository";
 import { buildGamePayload } from "./game.service";
 import { validateGameForm } from "./game.validation";
 
@@ -36,7 +37,7 @@ export function createGameController({
 
   return controllerSuccess({
     game: result.data.game,
-    games: [...games, result.data.game],
+    games: saveGame(games, result.data.game),
   });
 }
 
@@ -57,8 +58,6 @@ export function updateGameController({
 
   return controllerSuccess({
     game: result.data.game,
-    games: games.map((game, index) =>
-      index === editingGameIndex ? result.data!.game : game
-    ),
+    games: updateGame(games, editingGameIndex, result.data.game),
   });
 }

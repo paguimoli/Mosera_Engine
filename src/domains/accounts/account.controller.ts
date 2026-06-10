@@ -3,8 +3,15 @@ import {
   controllerSuccess,
 } from "@/src/lib/controller/controller.types";
 import type { Market } from "../markets/market.types";
+import { findMarketById } from "../markets/market.repository";
+import {
+  deleteAccount,
+  findAccountById,
+  listAccountsByParentId,
+  saveAccount,
+  updateAccount,
+} from "./account.repository";
 import type { PlayerAccount } from "./account.types";
-import { getChildAccounts } from "./account.service";
 import {
   validateAccountDelete,
   validatePlayerAccountForm,
@@ -48,8 +55,12 @@ export function saveAccountController({
     return controllerFailure(validation.errors);
   }
 
-  const existingAccount = accounts.find((account) => account.id === editingAccountId);
-  const selectedMarket = markets.find((market) => market.id === form.marketId);
+  const existingAccount = editingAccountId
+    ? findAccountById(accounts, editingAccountId)
+    : undefined;
+  const selectedMarket = form.marketId
+    ? findMarketById(markets, form.marketId)
+    : undefined;
   const creditLimit = Number(form.creditLimit || 0);
   const currentExposure = Number(form.currentExposure || 0);
   const account: PlayerAccount = {
@@ -77,10 +88,8 @@ export function saveAccountController({
   return controllerSuccess({
     account,
     accounts: editingAccountId
-      ? accounts.map((createdAccount) =>
-          createdAccount.id === editingAccountId ? account : createdAccount
-        )
-      : [...accounts, account],
+      ? updateAccount(accounts, account)
+      : saveAccount(accounts, account),
   });
 }
 
@@ -91,10 +100,10 @@ export function deleteAccountController({
   accountId: string;
   accounts: PlayerAccount[];
 }) {
-  const account = accounts.find((createdAccount) => createdAccount.id === accountId);
+  const account = findAccountById(accounts, accountId);
   const validation = validateAccountDelete(
     account,
-    account ? getChildAccounts(accounts, account.id).length : 0
+    account ? listAccountsByParentId(accounts, account.id).length : 0
   );
 
   if (!validation.valid) {
@@ -102,7 +111,7 @@ export function deleteAccountController({
   }
 
   return controllerSuccess({
-    accounts: accounts.filter((createdAccount) => createdAccount.id !== accountId),
+    accounts: deleteAccount(accounts, accountId),
   });
 }
 

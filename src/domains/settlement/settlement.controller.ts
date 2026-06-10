@@ -4,6 +4,12 @@ import {
 } from "@/src/lib/controller/controller.types";
 import type { Ticket, TicketLine } from "../tickets/ticket.types";
 import {
+  findSettlementRunById,
+  saveSettlementRecords,
+  saveSettlementRun,
+  updateSettlementRun,
+} from "./settlement.repository";
+import {
   applySettlementRunStatusTransition,
   buildPlaceholderSettlementRecords,
   buildSettlementRunPayload,
@@ -41,7 +47,7 @@ export function createSettlementRunController({
 
   return controllerSuccess({
     run,
-    runs: [...runs, run],
+    runs: saveSettlementRun(runs, run),
   });
 }
 
@@ -58,7 +64,7 @@ export function generatePlaceholderSettlementRecordsController({
   tickets: Ticket[];
   ticketLines: TicketLine[];
 }) {
-  const run = runs.find((createdRun) => createdRun.id === settlementRunId);
+  const run = findSettlementRunById(runs, settlementRunId);
 
   if (!run) {
     return controllerFailure("Settlement run not found.");
@@ -77,20 +83,16 @@ export function generatePlaceholderSettlementRecordsController({
 
   return controllerSuccess({
     acceptedTickets: built.acceptedTickets,
-    records: [...records, ...built.records],
+    records: saveSettlementRecords(records, built.records),
     newRecords: built.records,
-    runs: runs.map((createdRun) =>
-      createdRun.id === settlementRunId
-        ? {
-            ...createdRun,
-            processedTicketCount: built.acceptedTickets.length,
-            processedLineCount: built.records.length,
-            totalStake: built.totals.totalStake,
-            totalPayout: built.totals.totalPayout,
-            totalNet: built.totals.totalNet,
-          }
-        : createdRun
-    ),
+    runs: updateSettlementRun(runs, {
+      ...run,
+      processedTicketCount: built.acceptedTickets.length,
+      processedLineCount: built.records.length,
+      totalStake: built.totals.totalStake,
+      totalPayout: built.totals.totalPayout,
+      totalNet: built.totals.totalNet,
+    }),
   });
 }
 
@@ -105,7 +107,7 @@ export function updateSettlementRunStatusController({
   runs: SettlementRun[];
   records: SettlementRecord[];
 }) {
-  const run = runs.find((createdRun) => createdRun.id === settlementRunId);
+  const run = findSettlementRunById(runs, settlementRunId);
   const validation = validateSettlementStatusTransition({
     run,
     nextStatus,
@@ -116,19 +118,19 @@ export function updateSettlementRunStatusController({
     return controllerFailure(validation.errors);
   }
 
-  const nextRuns = runs.map((createdRun) =>
-    createdRun.id === settlementRunId
-      ? applySettlementRunStatusTransition({
-          run: createdRun,
-          nextStatus,
-          records,
-          runs,
-        })
-      : createdRun
-  );
+  if (!run) {
+    return controllerFailure("Settlement run not found.");
+  }
+
+  const nextRun = applySettlementRunStatusTransition({
+    run,
+    nextStatus,
+    records,
+    runs,
+  });
 
   return controllerSuccess({
-    runs: nextRuns,
+    runs: updateSettlementRun(runs, nextRun),
     records:
       nextStatus === "reversed"
         ? reverseSettlementRecords(records, settlementRunId)

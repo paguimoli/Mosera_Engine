@@ -2,6 +2,17 @@ import {
   controllerFailure,
   controllerSuccess,
 } from "@/src/lib/controller/controller.types";
+import {
+  deleteAdminRole,
+  deleteAdminUser,
+  findAdminRoleById,
+  findAdminUserById,
+  removeRoleFromAdminUsers,
+  saveAdminRole,
+  saveAdminUser,
+  updateAdminRole,
+  updateAdminUser,
+} from "./admin-access.repository";
 import { buildDefaultAdminRoles } from "./admin-access.service";
 import type { AdminRole, AdminUser } from "./admin-access.types";
 import {
@@ -33,7 +44,9 @@ export function saveAdminRoleController({
     return controllerFailure(validation.errors);
   }
 
-  const existingRole = adminRoles.find((role) => role.id === editingAdminRoleId);
+  const existingRole = editingAdminRoleId
+    ? findAdminRoleById(adminRoles, editingAdminRoleId)
+    : undefined;
   const role: AdminRole = {
     id: existingRole?.id || `ROLE-${Date.now()}`,
     name: form.name.trim(),
@@ -46,10 +59,8 @@ export function saveAdminRoleController({
   return controllerSuccess({
     role,
     adminRoles: editingAdminRoleId
-      ? adminRoles.map((createdRole) =>
-          createdRole.id === editingAdminRoleId ? role : createdRole
-        )
-      : [...adminRoles, role],
+      ? updateAdminRole(adminRoles, role)
+      : saveAdminRole(adminRoles, role),
   });
 }
 
@@ -63,11 +74,8 @@ export function deleteAdminRoleController({
   adminUsers: AdminUser[];
 }) {
   return controllerSuccess({
-    adminRoles: adminRoles.filter((role) => role.id !== roleId),
-    adminUsers: adminUsers.map((user) => ({
-      ...user,
-      roleIds: user.roleIds.filter((userRoleId) => userRoleId !== roleId),
-    })),
+    adminRoles: deleteAdminRole(adminRoles, roleId),
+    adminUsers: removeRoleFromAdminUsers(adminUsers, roleId),
   });
 }
 
@@ -80,7 +88,10 @@ export function addDefaultRolesController(adminRoles: AdminRole[]) {
 
   return controllerSuccess({
     newRoles,
-    adminRoles: [...adminRoles, ...newRoles],
+    adminRoles: newRoles.reduce(
+      (nextRoles, role) => saveAdminRole(nextRoles, role),
+      adminRoles
+    ),
   });
 }
 
@@ -108,7 +119,9 @@ export function saveAdminUserController({
     return controllerFailure(validation.errors);
   }
 
-  const existingUser = adminUsers.find((user) => user.id === editingAdminUserId);
+  const existingUser = editingAdminUserId
+    ? findAdminUserById(adminUsers, editingAdminUserId)
+    : undefined;
   const user: AdminUser = {
     id: existingUser?.id || `ADMIN-${Date.now()}`,
     name: form.name.trim(),
@@ -121,10 +134,8 @@ export function saveAdminUserController({
   return controllerSuccess({
     user,
     adminUsers: editingAdminUserId
-      ? adminUsers.map((createdUser) =>
-          createdUser.id === editingAdminUserId ? user : createdUser
-        )
-      : [...adminUsers, user],
+      ? updateAdminUser(adminUsers, user)
+      : saveAdminUser(adminUsers, user),
   });
 }
 
@@ -136,6 +147,6 @@ export function deleteAdminUserController({
   adminUsers: AdminUser[];
 }) {
   return controllerSuccess({
-    adminUsers: adminUsers.filter((user) => user.id !== userId),
+    adminUsers: deleteAdminUser(adminUsers, userId),
   });
 }

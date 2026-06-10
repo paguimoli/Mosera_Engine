@@ -2,6 +2,7 @@ import {
   controllerFailure,
   controllerSuccess,
 } from "@/src/lib/controller/controller.types";
+import { saveLedgerTransaction } from "./ledger.repository";
 import type { LedgerTransaction } from "./ledger.types";
 import {
   validateLedgerReversal,
@@ -44,7 +45,7 @@ export function createLedgerTransactionController({
 
   return controllerSuccess({
     transaction,
-    transactions: [...transactions, transaction],
+    transactions: saveLedgerTransaction(transactions, transaction),
   });
 }
 
@@ -78,6 +79,6 @@ export function reverseLedgerTransactionController({
 
   return controllerSuccess({
     reversal,
-    transactions: [...transactions, reversal],
+    transactions: saveLedgerTransaction(transactions, reversal),
   });
 }

@@ -3,6 +3,17 @@ import {
   controllerSuccess,
 } from "@/src/lib/controller/controller.types";
 import {
+  deleteWagerOption,
+  deleteWagerOptionsByTypeId,
+  deleteWagerType,
+  findWagerOptionById,
+  findWagerTypeById,
+  saveWagerOption,
+  saveWagerType,
+  updateWagerOption,
+  updateWagerType,
+} from "./wager.repository";
+import {
   buildDefaultKenoWagers,
   buildWagerOptionPayload,
   buildWagerTypePayload,
@@ -32,9 +43,9 @@ export function saveWagerTypeController({
     return controllerFailure(validation.errors);
   }
 
-  const existingWagerType = wagerTypes.find(
-    (wagerType) => wagerType.id === editingWagerTypeId
-  );
+  const existingWagerType = editingWagerTypeId
+    ? findWagerTypeById(wagerTypes, editingWagerTypeId)
+    : undefined;
   const result = buildWagerTypePayload({ form, existingWagerType });
 
   if (!result.ok || !result.payload) {
@@ -44,10 +55,8 @@ export function saveWagerTypeController({
   return controllerSuccess({
     wagerType: result.payload,
     wagerTypes: editingWagerTypeId
-      ? wagerTypes.map((wagerType) =>
-          wagerType.id === editingWagerTypeId ? result.payload! : wagerType
-        )
-      : [...wagerTypes, result.payload],
+      ? updateWagerType(wagerTypes, result.payload)
+      : saveWagerType(wagerTypes, result.payload),
   });
 }
 
@@ -61,10 +70,8 @@ export function deleteWagerTypeController({
   wagerOptions: WagerOption[];
 }) {
   return controllerSuccess({
-    wagerTypes: wagerTypes.filter((wagerType) => wagerType.id !== wagerTypeId),
-    wagerOptions: wagerOptions.filter(
-      (option) => option.wagerTypeId !== wagerTypeId
-    ),
+    wagerTypes: deleteWagerType(wagerTypes, wagerTypeId),
+    wagerOptions: deleteWagerOptionsByTypeId(wagerOptions, wagerTypeId),
   });
 }
 
@@ -87,9 +94,9 @@ export function saveWagerOptionController({
     return controllerFailure(validation.errors);
   }
 
-  const existingOption = wagerOptions.find(
-    (option) => option.id === editingWagerOptionId
-  );
+  const existingOption = editingWagerOptionId
+    ? findWagerOptionById(wagerOptions, editingWagerOptionId)
+    : undefined;
   const result = buildWagerOptionPayload({ form, existingOption });
 
   if (!result.ok || !result.payload) {
@@ -99,10 +106,8 @@ export function saveWagerOptionController({
   return controllerSuccess({
     wagerOption: result.payload,
     wagerOptions: editingWagerOptionId
-      ? wagerOptions.map((option) =>
-          option.id === editingWagerOptionId ? result.payload! : option
-        )
-      : [...wagerOptions, result.payload],
+      ? updateWagerOption(wagerOptions, result.payload)
+      : saveWagerOption(wagerOptions, result.payload),
   });
 }
 
@@ -114,7 +119,7 @@ export function deleteWagerOptionController({
   wagerOptions: WagerOption[];
 }) {
   return controllerSuccess({
-    wagerOptions: wagerOptions.filter((option) => option.id !== optionId),
+    wagerOptions: deleteWagerOption(wagerOptions, optionId),
   });
 }
 
@@ -144,7 +149,10 @@ export function addDefaultKenoWagersController({
     newDefaults,
     newOptions,
     wagerTypes: nextWagerTypes,
-    wagerOptions: [...wagerOptions, ...newOptions],
+    wagerOptions: newOptions.reduce(
+      (nextOptions, option) => saveWagerOption(nextOptions, option),
+      wagerOptions
+    ),
   });
 }
 

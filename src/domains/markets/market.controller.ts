@@ -2,6 +2,12 @@ import {
   controllerFailure,
   controllerSuccess,
 } from "@/src/lib/controller/controller.types";
+import {
+  deleteMarket,
+  findMarketById,
+  saveMarket,
+  updateMarket,
+} from "./market.repository";
 import type { Market } from "./market.types";
 import { validateMarketForm } from "./market.validation";
 
@@ -20,7 +26,9 @@ export function saveMarketController({
     return controllerFailure(validation.errors);
   }
 
-  const existingMarket = markets.find((market) => market.id === editingMarketId);
+  const existingMarket = editingMarketId
+    ? findMarketById(markets, editingMarketId)
+    : undefined;
   const market: Market = {
     id: existingMarket?.id || `MARKET-${Date.now()}`,
     name: form.name.trim(),
@@ -38,10 +46,8 @@ export function saveMarketController({
   return controllerSuccess({
     market,
     markets: editingMarketId
-      ? markets.map((createdMarket) =>
-          createdMarket.id === editingMarketId ? market : createdMarket
-        )
-      : [...markets, market],
+      ? updateMarket(markets, market)
+      : saveMarket(markets, market),
   });
 }
 
@@ -53,7 +59,7 @@ export function deleteMarketController({
   markets: Market[];
 }) {
   return controllerSuccess({
-    markets: markets.filter((market) => market.id !== marketId),
+    markets: deleteMarket(markets, marketId),
   });
 }
 
@@ -120,6 +126,9 @@ export function addDefaultMarketsController(markets: Market[]) {
 
   return controllerSuccess({
     newMarkets,
-    markets: [...markets, ...newMarkets],
+    markets: newMarkets.reduce(
+      (nextMarkets, market) => saveMarket(nextMarkets, market),
+      markets
+    ),
   });
 }

@@ -3,6 +3,12 @@ import {
   controllerSuccess,
 } from "@/src/lib/controller/controller.types";
 import {
+  findTicketById,
+  saveTicket,
+  saveTicketLines,
+  updateTicketStatus,
+} from "./ticket.repository";
+import {
   applyTicketStatusTransition,
   buildDraftTicketLine,
   buildTestTicketPayload,
@@ -59,8 +65,8 @@ export function createTicketController({
   return controllerSuccess({
     ticket: result.ticket,
     lines: result.lines,
-    tickets: [...tickets, result.ticket],
-    ticketLines: [...ticketLines, ...result.lines],
+    tickets: saveTicket(tickets, result.ticket),
+    ticketLines: saveTicketLines(ticketLines, result.lines),
   });
 }
 
@@ -73,11 +79,15 @@ export function updateTicketStatusController({
   ticketId: string;
   nextStatus: TicketStatus;
 }) {
+  const ticket = findTicketById(tickets, ticketId);
+
+  if (!ticket) {
+    return controllerFailure("Ticket not found.");
+  }
+
+  const nextTicket = applyTicketStatusTransition(ticket, nextStatus);
+
   return controllerSuccess({
-    tickets: tickets.map((ticket) =>
-      ticket.id === ticketId
-        ? applyTicketStatusTransition(ticket, nextStatus)
-        : ticket
-    ),
+    tickets: updateTicketStatus(tickets, nextTicket),
   });
 }
