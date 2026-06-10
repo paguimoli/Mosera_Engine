@@ -10,6 +10,10 @@ import {
 } from "@/src/domains/admin-access/admin-access.types";
 import { buildDefaultAdminRoles } from "@/src/domains/admin-access/admin-access.service";
 import {
+  validateAdminRoleForm,
+  validateAdminUserForm,
+} from "@/src/domains/admin-access/admin-access.validation";
+import {
   getAccountTypeLabel,
 } from "@/src/domains/accounts/account.helpers";
 import type {
@@ -22,6 +26,10 @@ import {
   getDescendantAccountIds as getDescendantAccountIdsFromAccounts,
   wouldCreateHierarchyCycle as wouldCreateHierarchyCycleForAccounts,
 } from "@/src/domains/accounts/account.service";
+import {
+  validateAccountDelete,
+  validatePlayerAccountForm,
+} from "@/src/domains/accounts/account.validation";
 import type {
   AccountFinancialSummary,
   LedgerCategory,
@@ -36,11 +44,16 @@ import {
   calculateWeeklyFigure as calculateWeeklyFigureFromTransactions,
 } from "@/src/domains/ledger/ledger.service";
 import {
+  validateLedgerReversal,
+  validateLedgerTransactionForm,
+} from "@/src/domains/ledger/ledger.validation";
+import {
   buildGamePayload,
   getGameLocalId,
 } from "@/src/domains/games/game.service";
+import { validateGameForm } from "@/src/domains/games/game.validation";
 import type { Market } from "@/src/domains/markets/market.types";
-import { hasDuplicateMarketCode } from "@/src/domains/markets/market.service";
+import { validateMarketForm } from "@/src/domains/markets/market.validation";
 import type {
   SettlementRecord,
   SettlementRun,
@@ -57,6 +70,12 @@ import {
   hasExistingCompletedSettlementForDrawing as hasCompletedSettlementRunForDrawing,
   reverseSettlementRecords,
 } from "@/src/domains/settlement/settlement.service";
+import {
+  hasExistingSettlementRunForDrawing,
+  validatePlaceholderSettlementRecords,
+  validateSettlementRunCreation,
+  validateSettlementStatusTransition,
+} from "@/src/domains/settlement/settlement.validation";
 import {
   isOpenTicketStatus,
 } from "@/src/domains/tickets/ticket.helpers";
@@ -75,6 +94,10 @@ import {
   type DraftTicketLine,
 } from "@/src/domains/tickets/ticket.service";
 import {
+  validateTicketForm,
+  validateTicketLineForm,
+} from "@/src/domains/tickets/ticket.validation";
+import {
   COMPARISON_OPERATORS,
   KENO_METRIC_KEYS,
   type KenoDrawMetrics,
@@ -92,7 +115,12 @@ import {
   methodNeedsThreshold,
   methodUsesPayTable,
 } from "@/src/domains/wagers/wager.service";
+import {
+  validateWagerOptionForm,
+  validateWagerTypeForm,
+} from "@/src/domains/wagers/wager.validation";
 import { formatMoney } from "@/src/lib/money/format-money";
+import type { ValidationResult } from "@/src/lib/validation/validation.types";
 
 const states = [
   { code: "AL", name: "Alabama" },
@@ -368,6 +396,10 @@ export default function Home() {
   game: "",
   status: "",
 });
+
+  function alertValidation(validation: ValidationResult) {
+    alert(validation.errors.join("\n"));
+  }
 	  const [mockBetForm, setMockBetForm] = useState({
 	  drawingId: "",
 	  playerId: "",
@@ -1168,6 +1200,16 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
 
   function saveWagerType(event: React.FormEvent) {
     event.preventDefault();
+    const validation = validateWagerTypeForm({
+      form: wagerTypeForm,
+      wagerTypes,
+      editingWagerTypeId,
+    });
+
+    if (!validation.valid) {
+      alertValidation(validation);
+      return;
+    }
 
     const existingWagerType = wagerTypes.find(
       (wagerType) => wagerType.id === editingWagerTypeId
@@ -1182,18 +1224,6 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
       return;
     }
     const nextWagerType = result.payload;
-
-    if (
-      wagerTypes.some(
-        (wagerType) =>
-          wagerType.id !== editingWagerTypeId &&
-          wagerType.gameId === wagerTypeForm.gameId &&
-          wagerType.code === result.code
-      )
-    ) {
-      alert("A wager type with this code already exists for this game.");
-      return;
-    }
 
     if (editingWagerTypeId) {
       setWagerTypes(
@@ -1239,6 +1269,16 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
 
   function saveWagerOption(event: React.FormEvent) {
     event.preventDefault();
+    const validation = validateWagerOptionForm({
+      form: wagerOptionForm,
+      wagerOptions,
+      editingWagerOptionId,
+    });
+
+    if (!validation.valid) {
+      alertValidation(validation);
+      return;
+    }
 
     const existingOption = wagerOptions.find(
       (option) => option.id === editingWagerOptionId
@@ -1253,18 +1293,6 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
       return;
     }
     const nextOption = result.payload;
-
-    if (
-      wagerOptions.some(
-        (option) =>
-          option.id !== editingWagerOptionId &&
-          option.wagerTypeId === wagerOptionForm.wagerTypeId &&
-          option.code === result.code
-      )
-    ) {
-      alert("An option with this code already exists for this wager type.");
-      return;
-    }
 
     if (editingWagerOptionId) {
       setWagerOptions(
@@ -1334,30 +1362,18 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
 
   function saveAdminRole(event: React.FormEvent) {
     event.preventDefault();
+    const validation = validateAdminRoleForm({
+      form: adminRoleForm,
+      adminRoles,
+      editingAdminRoleId,
+    });
+
+    if (!validation.valid) {
+      alertValidation(validation);
+      return;
+    }
 
     const name = adminRoleForm.name.trim();
-
-    if (!name) {
-      alert("Please enter a role name.");
-      return;
-    }
-
-    if (adminRoleForm.permissions.length === 0) {
-      alert("Please select at least one permission.");
-      return;
-    }
-
-    if (
-      adminRoles.some(
-        (role) =>
-          role.id !== editingAdminRoleId &&
-          role.name.trim().toLowerCase() === name.toLowerCase()
-      )
-    ) {
-      alert("An admin role with this name already exists.");
-      return;
-    }
-
     const existingRole = adminRoles.find((role) => role.id === editingAdminRoleId);
     const nextRole: AdminRole = {
       id: existingRole?.id || `ROLE-${Date.now()}`,
@@ -1440,37 +1456,19 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
 
   function saveAdminUser(event: React.FormEvent) {
     event.preventDefault();
+    const validation = validateAdminUserForm({
+      form: adminUserForm,
+      adminUsers,
+      editingAdminUserId,
+    });
+
+    if (!validation.valid) {
+      alertValidation(validation);
+      return;
+    }
 
     const name = adminUserForm.name.trim();
     const email = adminUserForm.email.trim().toLowerCase();
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-    if (!name) {
-      alert("Please enter an admin user name.");
-      return;
-    }
-
-    if (!email || !emailPattern.test(email)) {
-      alert("Please enter a valid admin user email.");
-      return;
-    }
-
-    if (adminUserForm.roleIds.length === 0) {
-      alert("Please assign at least one admin role.");
-      return;
-    }
-
-    if (
-      adminUsers.some(
-        (user) =>
-          user.id !== editingAdminUserId &&
-          user.email.trim().toLowerCase() === email
-      )
-    ) {
-      alert("An admin user with this email already exists.");
-      return;
-    }
-
     const existingUser = adminUsers.find(
       (user) => user.id === editingAdminUserId
     );
@@ -1540,6 +1538,11 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
 
   function saveMarket(event: React.FormEvent) {
     event.preventDefault();
+    const validation = validateMarketForm({
+      form: marketForm,
+      markets,
+      editingMarketId,
+    });
 
     const name = marketForm.name.trim();
     const code = marketForm.code.trim().toUpperCase();
@@ -1547,13 +1550,8 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
     const currency = marketForm.currency.trim().toUpperCase();
     const timeZone = marketForm.timeZone.trim();
 
-    if (!name || !code || !language || !currency || !timeZone) {
-      alert("Please enter market name, code, language, currency, and time zone.");
-      return;
-    }
-
-    if (hasDuplicateMarketCode(markets, code, editingMarketId)) {
-      alert("A market with this code already exists.");
+    if (!validation.valid) {
+      alertValidation(validation);
       return;
     }
 
@@ -1815,127 +1813,20 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
       playerAccountForm.maxPayout === ""
         ? undefined
         : Number(playerAccountForm.maxPayout);
+    const validation = validatePlayerAccountForm({
+      form: playerAccountForm,
+      accounts: playerAccounts,
+      editingPlayerAccountId,
+    });
 
-    if (!playerAccountForm.accountType || !username || !displayName || !playerAccountForm.status) {
-      alert("Please enter account type, username, display name, and status.");
-      return;
-    }
-
-    if (
-      playerAccounts.some(
-        (account) =>
-          account.id !== editingPlayerAccountId &&
-          account.username.trim().toLowerCase() === username.toLowerCase()
-      )
-    ) {
-      alert("An account with this username already exists.");
-      return;
-    }
-
-    if (
-      Number.isNaN(cashBalance) ||
-      Number.isNaN(creditLimit) ||
-      Number.isNaN(currentExposure) ||
-      Number.isNaN(maxBet ?? 0) ||
-      Number.isNaN(maxPayout ?? 0)
-    ) {
-      alert("Cash, credit, exposure, max bet, and max payout values must be numeric.");
-      return;
-    }
-
-    if (playerAccountForm.accountType === "super_master" && playerAccountForm.parentId) {
-      alert("Super master accounts cannot have a parent account.");
-      return;
-    }
-
-    if (
-      editingPlayerAccountId &&
-      playerAccountForm.parentId === editingPlayerAccountId
-    ) {
-      alert("An account cannot be assigned as its own parent.");
-      return;
-    }
-
-    if (
-      editingPlayerAccountId &&
-      wouldCreateHierarchyCycle(
-        editingPlayerAccountId,
-        playerAccountForm.parentId || null
-      )
-    ) {
-      alert("This parent assignment would create a hierarchy cycle.");
+    if (!validation.valid) {
+      alertValidation(validation);
       return;
     }
 
     const existingAccount = playerAccounts.find(
       (account) => account.id === editingPlayerAccountId
     );
-    const hasChildAccounts =
-      !!existingAccount &&
-      playerAccounts.some((account) => account.parentId === existingAccount.id);
-
-    if (
-      hasChildAccounts &&
-      existingAccount?.accountType === "super_master" &&
-      playerAccountForm.accountType !== "super_master"
-    ) {
-      alert("Cannot change a super master type while it has downline accounts.");
-      return;
-    }
-
-    if (
-      hasChildAccounts &&
-      existingAccount?.accountType === "master_agent" &&
-      playerAccountForm.accountType !== "master_agent"
-    ) {
-      alert("Cannot change a master agent type while it has downline accounts.");
-      return;
-    }
-
-    if (
-      hasChildAccounts &&
-      existingAccount?.accountType === "agent" &&
-      playerAccountForm.accountType !== "agent"
-    ) {
-      alert("Cannot change an agent type while it has players.");
-      return;
-    }
-
-    if (playerAccountForm.accountType === "master_agent") {
-      const parentAccount = playerAccounts.find(
-        (account) => account.id === playerAccountForm.parentId
-      );
-
-      if (
-        !parentAccount ||
-        !["super_master", "master_agent"].includes(parentAccount.accountType)
-      ) {
-        alert("Master agents must be assigned to a super master or master agent.");
-        return;
-      }
-    }
-
-    if (playerAccountForm.accountType === "agent") {
-      const parentAccount = playerAccounts.find(
-        (account) => account.id === playerAccountForm.parentId
-      );
-
-      if (!parentAccount || parentAccount.accountType !== "master_agent") {
-        alert("Agents must be assigned to a master agent.");
-        return;
-      }
-    }
-
-    if (playerAccountForm.accountType === "player") {
-      const parentAccount = playerAccounts.find(
-        (account) => account.id === playerAccountForm.parentId
-      );
-
-      if (!parentAccount || parentAccount.accountType !== "agent") {
-        alert("Players must be assigned to an agent.");
-        return;
-      }
-    }
 
     const selectedMarket = markets.find(
       (market) => market.id === playerAccountForm.marketId
@@ -1991,12 +1882,13 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
       (createdAccount) => createdAccount.id === accountId
     );
 
-    if (!account) {
-      return;
-    }
+    const validation = validateAccountDelete(
+      account,
+      account ? getChildAccounts(account.id).length : 0
+    );
 
-    if (getChildAccounts(account.id).length > 0) {
-      alert("Cannot delete an account that has child accounts.");
+    if (!validation.valid) {
+      alertValidation(validation);
       return;
     }
 
@@ -2595,21 +2487,12 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
 
   function saveLedgerTransaction(event: React.FormEvent) {
     event.preventDefault();
+    const validation = validateLedgerTransactionForm(ledgerForm);
 
     const amount = Number(ledgerForm.amount || 0);
 
-    if (!ledgerForm.accountId || !ledgerForm.category || !ledgerForm.transactionType) {
-      alert("Please select account, category, and transaction type.");
-      return;
-    }
-
-    if (Number.isNaN(amount) || amount <= 0) {
-      alert("Please enter a positive numeric amount.");
-      return;
-    }
-
-    if (!ledgerForm.description.trim()) {
-      alert("Please enter a transaction description.");
+    if (!validation.valid) {
+      alertValidation(validation);
       return;
     }
 
@@ -2636,6 +2519,13 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
   }
 
   function reverseLedgerTransaction(transaction: LedgerTransaction) {
+    const validation = validateLedgerReversal(transaction);
+
+    if (!validation.valid) {
+      alertValidation(validation);
+      return;
+    }
+
     if (!window.confirm("Reverse this transaction? The original transaction will remain unchanged.")) {
       return;
     }
@@ -2712,6 +2602,13 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
   }
 
   function addDraftTicketLine() {
+    const validation = validateTicketLineForm(ticketLineForm);
+
+    if (!validation.valid) {
+      alertValidation(validation);
+      return;
+    }
+
     const result = buildDraftTicketLine(ticketLineForm);
 
     if (!result.ok || !result.line) {
@@ -2740,6 +2637,16 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
 
   function saveTestTicket(event: React.FormEvent) {
     event.preventDefault();
+    const validation = validateTicketForm({
+      form: ticketForm,
+      draftLines: draftTicketLines,
+    });
+
+    if (!validation.valid) {
+      alertValidation(validation);
+      return;
+    }
+
     const result = buildTestTicketPayload({
       form: ticketForm,
       draftLines: draftTicketLines,
@@ -2833,21 +2740,18 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
 
   function createSettlementRun(event: React.FormEvent) {
     event.preventDefault();
+    const validation = validateSettlementRunCreation({
+      drawingId: settlementForm.drawingId,
+      runs: settlementRuns,
+    });
 
-    if (!settlementForm.drawingId) {
-      alert("Please select a drawing.");
-      return;
-    }
-
-    if (hasExistingCompletedSettlementForDrawing(settlementForm.drawingId)) {
-      alert(
-        "A completed settlement run already exists for this drawing. Future resettlement will require explicit override authorization."
-      );
+    if (!validation.valid) {
+      alertValidation(validation);
       return;
     }
 
     if (
-      getSettlementRunsForDrawing(settlementForm.drawingId).length > 0 &&
+      hasExistingSettlementRunForDrawing(settlementRuns, settlementForm.drawingId) &&
       !confirm(
         "A settlement run already exists for this drawing. Create another pending run?"
       )
@@ -2883,8 +2787,13 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
       return;
     }
 
-    if (getSettlementRecordsForRun(settlementRunId).length > 0) {
-      alert("Placeholder settlement records already exist for this run.");
+    const validation = validatePlaceholderSettlementRecords({
+      records: settlementRecords,
+      settlementRunId,
+    });
+
+    if (!validation.valid) {
+      alertValidation(validation);
       return;
     }
 
@@ -2935,16 +2844,20 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
       return;
     }
 
-    if (nextStatus === "running" && run.status !== "pending") {
-      return;
-    }
+    const validation = validateSettlementStatusTransition({
+      run,
+      nextStatus,
+      runs: settlementRuns,
+    });
 
-    if (
-      nextStatus === "completed" &&
-      hasCompletedSettlementRunForDrawing(settlementRuns, run.drawingId, run.id)
-    ) {
-        alert("A completed settlement run already exists for this drawing.");
-        return;
+    if (!validation.valid) {
+      if (
+        nextStatus === "completed" &&
+        hasCompletedSettlementRunForDrawing(settlementRuns, run.drawingId, run.id)
+      ) {
+        alertValidation(validation);
+      }
+      return;
     }
 
     setSettlementRuns(
@@ -2999,6 +2912,13 @@ const [selectedGameIndex, setSelectedGameIndex] = useState("");
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    const validation = validateGameForm(form);
+
+    if (!validation.valid) {
+      alertValidation(validation);
+      return;
+    }
+
     const result = buildGamePayload(form);
 
     if (!result.ok || !result.payload) {
