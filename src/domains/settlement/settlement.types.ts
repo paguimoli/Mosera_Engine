@@ -12,7 +12,7 @@ export type SettlementRecordStatus =
   | "failed"
   | "void";
 
-export type SettlementOutcome = "win" | "loss" | "push" | "void";
+export type SettlementOutcome = "win" | "loss" | "push" | "void" | "failed";
 
 export type SettlementRun = {
   id: string;

@@ -3,12 +3,19 @@ import {
   controllerSuccess,
 } from "@/src/lib/controller/controller.types";
 import type { Ticket, TicketLine } from "../tickets/ticket.types";
+import type {
+  KenoDrawMetrics,
+  PayTableRow,
+  WagerOption,
+  WagerType,
+} from "../wagers/wager.types";
 import {
   findSettlementRunById,
   saveSettlementRecords,
   saveSettlementRun,
   updateSettlementRun,
 } from "./settlement.repository";
+import { executeSettlementRun } from "./settlement-engine.service";
 import {
   applySettlementRunStatusTransition,
   buildPlaceholderSettlementRecords,
@@ -152,5 +159,74 @@ export function reverseSettlementRunController({
     nextStatus: "reversed",
     runs,
     records,
+  });
+}
+
+export function executeSettlementRunController({
+  settlementRunId,
+  runs,
+  records,
+  tickets,
+  ticketLines,
+  wagerTypes,
+  wagerOptions,
+  payTableRows,
+  winningNumbers,
+  bullseyeNumber,
+  drawMetrics,
+  officialResultPostedAt,
+}: {
+  settlementRunId: string;
+  runs: SettlementRun[];
+  records: SettlementRecord[];
+  tickets: Ticket[];
+  ticketLines: TicketLine[];
+  wagerTypes: WagerType[];
+  wagerOptions: WagerOption[];
+  payTableRows: PayTableRow[];
+  winningNumbers: number[];
+  bullseyeNumber?: number | null;
+  drawMetrics?: KenoDrawMetrics | null;
+  officialResultPostedAt?: string | null;
+}) {
+  const run = findSettlementRunById(runs, settlementRunId);
+
+  if (!run) {
+    return controllerFailure("Settlement run not found.");
+  }
+
+  const execution = executeSettlementRun({
+    settlementRun: run,
+    drawingId: run.drawingId,
+    gameId: run.gameId,
+    tickets,
+    ticketLines,
+    wagerTypes,
+    wagerOptions,
+    payTableRows,
+    winningNumbers,
+    bullseyeNumber,
+    drawMetrics,
+    officialResultPostedAt,
+    existingSettlementRecords: records,
+  });
+  const completedRun: SettlementRun = {
+    ...run,
+    status: "completed",
+    startedAt: execution.summary.startedAt,
+    completedAt: execution.summary.completedAt,
+    processedTicketCount: execution.summary.processedTicketCount,
+    processedLineCount: execution.summary.processedLineCount,
+    totalStake: execution.summary.totalStake,
+    totalPayout: execution.summary.totalPayout,
+    totalNet: execution.summary.totalNet,
+  };
+
+  return controllerSuccess({
+    execution,
+    runs: updateSettlementRun(runs, completedRun),
+    records: saveSettlementRecords(records, execution.settlementRecords),
+    tickets: execution.updatedTickets,
+    ticketLines: execution.updatedTicketLines,
   });
 }
