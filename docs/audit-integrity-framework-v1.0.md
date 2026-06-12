@@ -11,7 +11,7 @@ Core principles:
 - Ledger entries are append-only.
 - Accepted tickets cannot be edited.
 - Official results cannot be directly edited.
-- Settlement is versioned and reversible.
+- Settlement is versioned and reversible only before accounting period closure.
 - Sensitive admin actions require audit.
 - High-risk actions require override approval.
 - Hashing is used before signing.
@@ -193,6 +193,7 @@ Purpose: records approval workflows for high-risk actions.
 - fail settlement run
 - reverse settlement run
 - resettlement
+- attempted resettlement blocked because accounting period is closed
 
 ### RNG
 
@@ -204,7 +205,97 @@ Purpose: records approval workflows for high-risk actions.
 - failed RNG request
 - manual result source override
 
-## 5. Actions Requiring Override Approval
+## 5. Accounting Period Closure Rule
+
+Locked business rule:
+
+Once an accounting period is closed:
+
+```text
+periodStatus = closed
+```
+
+the following actions are prohibited for transactions belonging to that accounting period:
+
+- automated resettlement
+- settlement reversal
+- settlement version replacement
+- commission recalculation
+- weekly figure recalculation
+
+Historical accounting periods must remain financially immutable.
+
+If a result correction affects a closed accounting period, the system must not:
+
+- modify original settlement records
+- modify original ledger transactions
+- modify original weekly figures
+- modify original commission calculations
+
+Instead, create a manual adjustment in the current open accounting period.
+
+Allowed adjustment types:
+
+- `credit_adjustment`
+- `debit_adjustment`
+
+The adjustment reason must reference:
+
+- original accounting period
+- original settlement run
+- original ticket or ticket line if applicable
+
+Example:
+
+```text
+Week 23 closed.
+Player received: +100
+Correct amount: +60
+Difference: -40
+
+Week 24:
+debit_adjustment
+amount = -40
+reason = Settlement correction for closed Week 23.
+```
+
+### `canResettleSettlementRun()`
+
+Resettlement eligibility rules:
+
+- If accounting period status is `open`, resettlement is allowed.
+- If accounting period status is `closed`, resettlement is denied.
+- If accounting period status is `locked`, resettlement is denied.
+
+Required error code:
+
+```text
+RESETTLEMENT_BLOCKED_PERIOD_CLOSED
+```
+
+Attempted resettlement on a closed or locked period must generate an audit event:
+
+```text
+RESSETTLEMENT_BLOCKED
+```
+
+Reason:
+
+```text
+Accounting period closed.
+```
+
+The audit event should include:
+
+- accounting period id
+- accounting period status
+- settlement run id
+- actor admin id
+- requested action
+- denial error code
+- timestamp
+
+## 6. Actions Requiring Override Approval
 
 Override approval is required for:
 
@@ -223,7 +314,19 @@ Override approval is required for:
 - RNG provider change on active game
 - manual result override
 
-## 6. Hashing Model
+## 7. Actions Blocked By Accounting Period Closure
+
+The following actions are not override-eligible after the affected accounting period is closed or locked:
+
+- automated resettlement
+- settlement reversal
+- settlement version replacement
+- historical commission recalculation
+- historical weekly figure recalculation
+
+Corrections must use current-open-period `credit_adjustment` or `debit_adjustment` transactions.
+
+## 8. Hashing Model
 
 ### Canonical Hashing
 
@@ -264,7 +367,7 @@ Examples of fields to exclude from canonical hashes unless explicitly part of a 
 - audit logs
 - override approvals
 
-## 7. Hash Chain Strategy
+## 9. Hash Chain Strategy
 
 ### Ledger
 
@@ -310,7 +413,7 @@ No chain is required initially.
 
 Reason: tickets are immutable once accepted and are primarily verified as standalone acceptance artifacts. Ticket lines should also receive individual hashes.
 
-## 8. Tamper Detection
+## 10. Tamper Detection
 
 ### Verification Jobs
 
@@ -351,7 +454,7 @@ Tamper detection should emit records with:
 - `false_positive`
 - `resolved`
 
-## 9. Public / Private Signing Roadmap
+## 11. Public / Private Signing Roadmap
 
 Public/private signing is Phase 4.8.
 
@@ -384,7 +487,7 @@ Signing guidance:
 - Maintain key rotation metadata.
 - Preserve historical verification material for retired keys.
 
-## 10. Encryption Requirements
+## 12. Encryption Requirements
 
 ### Encrypted Data Categories
 
@@ -403,7 +506,7 @@ Signing guidance:
 - Access to decrypted values must be audited.
 - Secret references should be stable identifiers, not secrets.
 
-## 11. Implementation Order
+## 13. Implementation Order
 
 Recommended order:
 
@@ -422,7 +525,7 @@ Implementation notes:
 - Add hash fields before enforcing hash verification jobs.
 - Add signing after schemas, canonical payloads, settlement, and ledger logic stabilize.
 
-## 12. Open Questions
+## 14. Open Questions
 
 - Should the first production ledger chain be account-level only, or account-level plus global checkpoints?
 - How long should audit logs remain in hot storage before archival?

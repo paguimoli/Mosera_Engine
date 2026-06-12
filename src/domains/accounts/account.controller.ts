@@ -2,6 +2,8 @@ import {
   controllerFailure,
   controllerSuccess,
 } from "@/src/lib/controller/controller.types";
+import { createAuditEvent } from "../audit/audit.service";
+import { AUDIT_ACTIONS } from "../audit/audit.types";
 import type { Market } from "../markets/market.types";
 import { findMarketById } from "../markets/market.repository";
 import {
@@ -87,6 +89,35 @@ export function saveAccountController({
 
   return controllerSuccess({
     account,
+    auditEvents: [
+      createAuditEvent({
+        entityType: "account",
+        entityId: account.id,
+        action: editingAccountId
+          ? existingAccount?.parentId !== account.parentId
+            ? AUDIT_ACTIONS.ACCOUNT_MOVED
+            : AUDIT_ACTIONS.ACCOUNT_UPDATED
+          : AUDIT_ACTIONS.ACCOUNT_CREATED,
+        actorType: "admin",
+        actorId: "admin",
+        oldValue: existingAccount,
+        newValue: account,
+      }),
+      ...(existingAccount?.status !== account.status &&
+      account.status !== "active"
+        ? [
+            createAuditEvent({
+              entityType: "account",
+              entityId: account.id,
+              action: AUDIT_ACTIONS.ACCOUNT_DEACTIVATED,
+              actorType: "admin",
+              actorId: "admin",
+              oldValue: existingAccount,
+              newValue: account,
+            }),
+          ]
+        : []),
+    ],
     accounts: editingAccountId
       ? updateAccount(accounts, account)
       : saveAccount(accounts, account),
@@ -111,6 +142,19 @@ export function deleteAccountController({
   }
 
   return controllerSuccess({
+    auditEvents: account
+      ? [
+          createAuditEvent({
+            entityType: "account",
+            entityId: account.id,
+            action: AUDIT_ACTIONS.ACCOUNT_DEACTIVATED,
+            actorType: "admin",
+            actorId: "admin",
+            oldValue: account,
+            metadata: { deleteRequested: true },
+          }),
+        ]
+      : [],
     accounts: deleteAccount(accounts, accountId),
   });
 }

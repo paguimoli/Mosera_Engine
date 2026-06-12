@@ -10,7 +10,7 @@ Principles:
 - Pending wagers are not settled revenue.
 - Hierarchy rollups are deterministic.
 - Calculations must be auditable.
-- Corrections are additive through reversals.
+- Corrections are additive through reversals for open periods or adjustment transactions for closed periods.
 - Commission calculations must be reproducible historically.
 - Commission outputs must reference source settlement and ledger records.
 - Historical commission results must not be silently overwritten.
@@ -119,7 +119,77 @@ Unsettled wagers:
 - Unsettled wagers are not included in weekly figure.
 - Pending exposure rolls forward until settlement.
 
-## 5. Player Weekly Figure
+## 5. Accounting Period Closure Rule
+
+Locked business rule:
+
+Once an accounting period is closed:
+
+```text
+periodStatus = closed
+```
+
+the following actions are prohibited for transactions belonging to that accounting period:
+
+- automated resettlement
+- settlement reversal
+- settlement version replacement
+- commission recalculation
+- weekly figure recalculation
+
+Historical accounting periods must remain financially immutable.
+
+Closed-period commissions are immutable. Corrections occurring after period closure must be handled through adjustment transactions in a future open period. Historical commission records and historical weekly figures must not be recalculated.
+
+If a result correction affects a closed accounting period, the system must not:
+
+- modify original settlement records
+- modify original ledger transactions
+- modify original weekly figures
+- modify original commission calculations
+
+Instead, create a manual adjustment in the current open accounting period.
+
+Allowed adjustment types:
+
+- `credit_adjustment`
+- `debit_adjustment`
+
+The adjustment reason must reference:
+
+- original accounting period
+- original settlement run
+- original ticket or ticket line if applicable
+
+Example:
+
+```text
+Week 23 closed.
+Player received: +100
+Correct amount: +60
+Difference: -40
+
+Week 24:
+debit_adjustment
+amount = -40
+reason = Settlement correction for closed Week 23.
+```
+
+### `canResettleSettlementRun()`
+
+Resettlement eligibility rules:
+
+- If accounting period status is `open`, resettlement is allowed.
+- If accounting period status is `closed`, resettlement is denied.
+- If accounting period status is `locked`, resettlement is denied.
+
+Required error code:
+
+```text
+RESETTLEMENT_BLOCKED_PERIOD_CLOSED
+```
+
+## 6. Player Weekly Figure
 
 Weekly Figure is calculated from operational ledger transactions.
 
@@ -157,7 +227,7 @@ Notes:
 - Zero balance entries close accounting balances, not operational performance.
 - The formula must be reproducible from immutable ledger transactions.
 
-## 6. Pending Exposure
+## 7. Pending Exposure
 
 Definition:
 
@@ -181,7 +251,7 @@ Reporting treatment:
 - Master reports show all downline exposure recursively.
 - Super Master reports show platform exposure.
 
-## 7. Agent Rollup
+## 8. Agent Rollup
 
 Agent Weekly Figure:
 
@@ -209,7 +279,7 @@ Rules:
 - Agents roll up direct Players only.
 - Agent reports should not show parent Master financials.
 
-## 8. Master Agent Rollup
+## 9. Master Agent Rollup
 
 Master Weekly Figure:
 
@@ -233,7 +303,7 @@ Recursive rollup rules:
 - Player figures roll up through Agent to every parent Master Agent.
 - Historical statements should use the hierarchy snapshot effective for the statement period.
 
-## 9. Super Master Rollup
+## 10. Super Master Rollup
 
 Platform Weekly Figure:
 
@@ -255,7 +325,7 @@ Rules:
 - Super Master rollups include all Masters, Agents, and Players.
 - Super Master reporting is the platform-level operational view.
 
-## 10. Commission Models
+## 11. Commission Models
 
 The platform should support multiple future commission models.
 
@@ -319,7 +389,7 @@ Hybrid models support complex commercial agreements.
 
 No final commission model is selected in this design version.
 
-## 11. Commission Inputs
+## 12. Commission Inputs
 
 Required inputs:
 
@@ -344,7 +414,7 @@ Source records:
 - account hierarchy snapshots
 - commission assignment records
 
-## 12. Commission Statements
+## 13. Commission Statements
 
 Statement sections:
 
@@ -389,7 +459,7 @@ Shows:
 - deposits/withdrawals
 - closing balance
 
-## 13. Freeplay Treatment
+## 14. Freeplay Treatment
 
 Freeplay losses:
 
@@ -405,9 +475,9 @@ Commission calculations:
 - should include `freeplay_win` according to configured model
 - should exclude freeplay grants and freeplay wagers from weekly figure
 
-## 14. Resettlement Impact
+## 15. Resettlement Impact
 
-If settlement reversal occurs:
+If settlement reversal occurs in an open accounting period:
 
 - commission inputs recalculate
 - historical audit is retained
@@ -421,7 +491,15 @@ Rules:
 - Corrected commission records reference source resettlement records.
 - Statements show adjustments transparently.
 
-## 15. Audit Requirements
+If the affected accounting period is closed or locked:
+
+- commission inputs must not recalculate
+- historical commission records remain immutable
+- historical weekly figures remain immutable
+- corrections must be represented by `credit_adjustment` or `debit_adjustment` transactions in a future open period
+- commission impact, if any, must be handled through additive future-period commission adjustment records
+
+## 16. Audit Requirements
 
 Audit required for:
 
@@ -444,7 +522,7 @@ Audit records should include:
 - affected account
 - affected period
 
-## 16. Future Tables
+## 17. Future Tables
 
 Conceptual tables only:
 
@@ -474,7 +552,7 @@ Stores calculated commission output per account and period.
 
 Stores additive adjustments caused by corrections, overrides, or resettlement.
 
-## 17. Open Questions
+## 18. Open Questions
 
 - What final commission model should be used for first production release?
 - What is the commission payment frequency?

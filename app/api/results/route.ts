@@ -132,6 +132,9 @@ export async function POST(request: Request) {
     return jsonError("Drawing result insert failed.", 500);
   }
 
+  // TODO Phase 5.7 integration: persist RESULT_POSTED audit event through
+  // the audit repository/service once backend audit storage is available.
+
   if (gameFamily === "keno_style") {
     const { error: metricsError } = await supabase.rpc(
       "generate_keno_draw_metrics",

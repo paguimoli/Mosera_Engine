@@ -2,6 +2,8 @@ import {
   controllerFailure,
   controllerSuccess,
 } from "@/src/lib/controller/controller.types";
+import { createAuditEvent } from "../audit/audit.service";
+import { AUDIT_ACTIONS } from "../audit/audit.types";
 import { saveLedgerTransaction } from "./ledger.repository";
 import type { LedgerTransaction } from "./ledger.types";
 import {
@@ -45,6 +47,19 @@ export function createLedgerTransactionController({
 
   return controllerSuccess({
     transaction,
+    auditEvents: [
+      createAuditEvent({
+        entityType: "ledger_transaction",
+        entityId: transaction.id,
+        action:
+          transaction.transactionType === "manual_adjustment"
+            ? AUDIT_ACTIONS.MANUAL_ADJUSTMENT_CREATED
+            : AUDIT_ACTIONS.LEDGER_TRANSACTION_CREATED,
+        actorType: "admin",
+        actorId: transaction.createdBy || "admin",
+        newValue: transaction,
+      }),
+    ],
     transactions: saveLedgerTransaction(transactions, transaction),
   });
 }
@@ -79,6 +94,17 @@ export function reverseLedgerTransactionController({
 
   return controllerSuccess({
     reversal,
+    auditEvents: [
+      createAuditEvent({
+        entityType: "ledger_transaction",
+        entityId: reversal.id,
+        action: AUDIT_ACTIONS.LEDGER_REVERSAL_CREATED,
+        actorType: "admin",
+        actorId: reversal.createdBy || "admin",
+        oldValue: transaction,
+        newValue: reversal,
+      }),
+    ],
     transactions: saveLedgerTransaction(transactions, reversal),
   });
 }

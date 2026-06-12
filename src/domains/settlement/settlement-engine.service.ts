@@ -34,3 +34,27 @@ export {
   createLedgerTransactionsForSettlementRecords,
   type SettlementLedgerPostingResult,
 } from "./settlement-ledger.service";
+
+export { executeResettlementController } from "./resettlement.controller";
+
+export {
+  createCorrectedSettlementRecords,
+  createLedgerReversalsForSettlementRecords,
+  createSettlementReversalRecords,
+  executeResettlement,
+} from "./resettlement.service";
+
+export {
+  RESETTLEMENT_ACTION_TYPE,
+  validateResettlementEligibility,
+} from "./resettlement.validation";
+
+export type {
+  AccountingPeriod,
+  AccountingPeriodStatus,
+  OverrideApproval,
+  OverrideApprovalStatus,
+  ResettlementEligibilityResult,
+  ResettlementExecutionInput,
+  ResettlementExecutionResult,
+} from "./resettlement.types";

@@ -2,6 +2,8 @@ import {
   controllerFailure,
   controllerSuccess,
 } from "@/src/lib/controller/controller.types";
+import { createAuditEvent } from "../audit/audit.service";
+import { AUDIT_ACTIONS } from "../audit/audit.types";
 import {
   deleteAdminRole,
   deleteAdminUser,
@@ -55,9 +57,49 @@ export function saveAdminRoleController({
     active: form.active,
     createdAt: existingRole?.createdAt || new Date().toISOString(),
   };
+  const grantedPermissions = form.permissions.filter(
+    (permission) => !existingRole?.permissions.includes(permission)
+  );
+  const revokedPermissions =
+    existingRole?.permissions.filter(
+      (permission) => !form.permissions.includes(permission)
+    ) || [];
 
   return controllerSuccess({
     role,
+    auditEvents: [
+      createAuditEvent({
+        entityType: "admin_role",
+        entityId: role.id,
+        action: editingAdminRoleId
+          ? AUDIT_ACTIONS.ROLE_UPDATED
+          : AUDIT_ACTIONS.ROLE_CREATED,
+        actorType: "admin",
+        actorId: "admin",
+        oldValue: existingRole,
+        newValue: role,
+      }),
+      ...grantedPermissions.map((permission) =>
+        createAuditEvent({
+          entityType: "admin_role",
+          entityId: role.id,
+          action: AUDIT_ACTIONS.PERMISSION_GRANTED,
+          actorType: "admin",
+          actorId: "admin",
+          newValue: { permission },
+        })
+      ),
+      ...revokedPermissions.map((permission) =>
+        createAuditEvent({
+          entityType: "admin_role",
+          entityId: role.id,
+          action: AUDIT_ACTIONS.PERMISSION_REVOKED,
+          actorType: "admin",
+          actorId: "admin",
+          oldValue: { permission },
+        })
+      ),
+    ],
     adminRoles: editingAdminRoleId
       ? updateAdminRole(adminRoles, role)
       : saveAdminRole(adminRoles, role),
@@ -73,7 +115,21 @@ export function deleteAdminRoleController({
   adminRoles: AdminRole[];
   adminUsers: AdminUser[];
 }) {
+  const role = findAdminRoleById(adminRoles, roleId);
+
   return controllerSuccess({
+    auditEvents: role
+      ? [
+          createAuditEvent({
+            entityType: "admin_role",
+            entityId: role.id,
+            action: AUDIT_ACTIONS.ROLE_DELETED,
+            actorType: "admin",
+            actorId: "admin",
+            oldValue: role,
+          }),
+        ]
+      : [],
     adminRoles: deleteAdminRole(adminRoles, roleId),
     adminUsers: removeRoleFromAdminUsers(adminUsers, roleId),
   });
@@ -133,6 +189,19 @@ export function saveAdminUserController({
 
   return controllerSuccess({
     user,
+    auditEvents: [
+      createAuditEvent({
+        entityType: "admin_user",
+        entityId: user.id,
+        action: editingAdminUserId
+          ? AUDIT_ACTIONS.ADMIN_UPDATED
+          : AUDIT_ACTIONS.ADMIN_CREATED,
+        actorType: "admin",
+        actorId: "admin",
+        oldValue: existingUser,
+        newValue: user,
+      }),
+    ],
     adminUsers: editingAdminUserId
       ? updateAdminUser(adminUsers, user)
       : saveAdminUser(adminUsers, user),
@@ -146,7 +215,22 @@ export function deleteAdminUserController({
   userId: string;
   adminUsers: AdminUser[];
 }) {
+  const user = findAdminUserById(adminUsers, userId);
+
   return controllerSuccess({
+    auditEvents: user
+      ? [
+          createAuditEvent({
+            entityType: "admin_user",
+            entityId: user.id,
+            action: AUDIT_ACTIONS.ADMIN_UPDATED,
+            actorType: "admin",
+            actorId: "admin",
+            oldValue: user,
+            metadata: { deleteRequested: true },
+          }),
+        ]
+      : [],
     adminUsers: deleteAdminUser(adminUsers, userId),
   });
 }

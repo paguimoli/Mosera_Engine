@@ -3663,6 +3663,9 @@ function saveKenoDrawMetrics(metrics: KenoDrawMetrics) {
 
 function updateDrawingResult(index: number, field: string, value: string) {
   const targetDrawing = drawings[index];
+  // TODO Phase 5.7 integration: emit RESULT_POSTED / RESULT_CORRECTED /
+  // RESULT_VOIDED audit events when result state moves through explicit
+  // result workflows instead of raw field editing.
   const updatedDrawing = targetDrawing
     ? {
         ...targetDrawing,
@@ -8416,6 +8419,10 @@ Export Risk Exposure </button>
               <p className="mt-2 text-sm text-gray-700">
                 Production resettlement will require override authorization,
                 reason code, approving admin, and audit log entry.
+              </p>
+              <p className="mt-2 text-sm text-gray-700">
+                Resettlement requires an approved override, dual-control
+                approval, and is allowed only for open accounting periods.
               </p>
             </section>
 

@@ -2,6 +2,8 @@ import {
   controllerFailure,
   controllerSuccess,
 } from "@/src/lib/controller/controller.types";
+import { createAuditEvent } from "../audit/audit.service";
+import { AUDIT_ACTIONS } from "../audit/audit.types";
 import { saveLedgerTransactions } from "../ledger/ledger.repository";
 import type { LedgerTransaction } from "../ledger/ledger.types";
 import type { Ticket, TicketLine } from "../tickets/ticket.types";
@@ -52,6 +54,13 @@ function mergeSettlementRecordsForRun({
   ];
 }
 
+function getSettlementStatusAuditAction(status: SettlementRunStatus) {
+  if (status === "completed") return AUDIT_ACTIONS.SETTLEMENT_RUN_COMPLETED;
+  if (status === "failed") return AUDIT_ACTIONS.SETTLEMENT_RUN_FAILED;
+
+  return "";
+}
+
 export function createSettlementRunController({
   drawingId,
   gameId,
@@ -73,6 +82,16 @@ export function createSettlementRunController({
 
   return controllerSuccess({
     run,
+    auditEvents: [
+      createAuditEvent({
+        entityType: "settlement_run",
+        entityId: run.id,
+        action: AUDIT_ACTIONS.SETTLEMENT_RUN_CREATED,
+        actorType: "admin",
+        actorId: "admin",
+        newValue: run,
+      }),
+    ],
     runs: saveSettlementRun(runs, run),
   });
 }
@@ -156,6 +175,19 @@ export function updateSettlementRunStatusController({
   });
 
   return controllerSuccess({
+    auditEvents: getSettlementStatusAuditAction(nextStatus)
+      ? [
+          createAuditEvent({
+            entityType: "settlement_run",
+            entityId: nextRun.id,
+            action: getSettlementStatusAuditAction(nextStatus),
+            actorType: "admin",
+            actorId: "admin",
+            oldValue: run,
+            newValue: nextRun,
+          }),
+        ]
+      : [],
     runs: updateSettlementRun(runs, nextRun),
     records:
       nextStatus === "reversed"
@@ -269,6 +301,36 @@ export function executeSettlementRunController({
       ...execution,
       settlementRecords: ledgerPosting.settlementRecords,
     },
+    auditEvents: [
+      createAuditEvent({
+        entityType: "settlement_run",
+        entityId: completedRun.id,
+        action:
+          completedRun.status === "completed"
+            ? AUDIT_ACTIONS.SETTLEMENT_RUN_COMPLETED
+            : AUDIT_ACTIONS.SETTLEMENT_RUN_FAILED,
+        actorType: "system",
+        actorId: "settlement-engine",
+        oldValue: run,
+        newValue: completedRun,
+        metadata: {
+          executionId: execution.summary.executionId,
+          processedLineCount: execution.summary.processedLineCount,
+          failedCount: execution.summary.failedCount,
+        },
+      }),
+      ...ledgerPosting.ledgerTransactions.map((transaction) =>
+        createAuditEvent({
+          entityType: "ledger_transaction",
+          entityId: transaction.id,
+          action: AUDIT_ACTIONS.LEDGER_TRANSACTION_CREATED,
+          actorType: "system",
+          actorId: "settlement-engine",
+          newValue: transaction,
+          metadata: { settlementRunId: completedRun.id },
+        })
+      ),
+    ],
     runs: updateSettlementRun(runs, completedRun),
     records: mergeSettlementRecordsForRun({
       records,
@@ -377,6 +439,36 @@ export function resumeSettlementRunController({
       ...execution,
       settlementRecords: ledgerPosting.settlementRecords,
     },
+    auditEvents: [
+      createAuditEvent({
+        entityType: "settlement_run",
+        entityId: nextRun.id,
+        action:
+          nextRun.status === "completed"
+            ? AUDIT_ACTIONS.SETTLEMENT_RUN_COMPLETED
+            : AUDIT_ACTIONS.SETTLEMENT_RUN_FAILED,
+        actorType: "worker",
+        actorId: "settlement-recovery",
+        oldValue: run,
+        newValue: nextRun,
+        metadata: {
+          executionId: execution.summary.executionId,
+          processedLineCount: execution.summary.processedLineCount,
+          failedCount: execution.summary.failedCount,
+        },
+      }),
+      ...ledgerPosting.ledgerTransactions.map((transaction) =>
+        createAuditEvent({
+          entityType: "ledger_transaction",
+          entityId: transaction.id,
+          action: AUDIT_ACTIONS.LEDGER_TRANSACTION_CREATED,
+          actorType: "worker",
+          actorId: "settlement-recovery",
+          newValue: transaction,
+          metadata: { settlementRunId: nextRun.id },
+        })
+      ),
+    ],
     runs: updateSettlementRun(runs, nextRun),
     records: mergeSettlementRecordsForRun({
       records,

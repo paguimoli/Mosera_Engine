@@ -34,7 +34,7 @@ The platform includes:
 - RNG / PRNG domain
 - audit and integrity framework
 
-Settlement must be idempotent, auditable, reversible, and safe for future resettlement.
+Settlement must be idempotent, auditable, reversible before accounting period closure, and safe for future resettlement.
 
 ## 3. Core Settlement Pipeline
 
@@ -71,7 +71,7 @@ Rules:
 - Settlement starts only after an official result exists.
 - Settlement should fail safely if required draw metrics or paytables are missing.
 - Failed settlement runs are preserved for audit.
-- Completed settlement runs are immutable except through reversal/resettlement workflow.
+- Completed settlement runs are immutable except through reversal/resettlement workflow while the accounting period is open.
 
 ## 5. Ticket / Line Model
 
@@ -418,6 +418,76 @@ Rules:
 - Reversal records must reference originals.
 - Corrected records must reference previous records.
 
+### Accounting Period Closure Rule
+
+Locked business rule:
+
+Once an accounting period is closed:
+
+```text
+periodStatus = closed
+```
+
+the following actions are prohibited for transactions belonging to that accounting period:
+
+- automated resettlement
+- settlement reversal
+- settlement version replacement
+- weekly figure recalculation
+- commission recalculation
+
+Historical accounting periods must remain financially immutable.
+
+If a result correction affects a closed accounting period, the system must not:
+
+- modify original settlement records
+- modify original ledger transactions
+- modify original weekly figures
+- modify original commission calculations
+
+Instead, the correction must be represented as a manual adjustment in the current open accounting period.
+
+Allowed adjustment types:
+
+- `credit_adjustment`
+- `debit_adjustment`
+
+The adjustment reason must reference:
+
+- original accounting period
+- original settlement run
+- original ticket or ticket line if applicable
+
+Example:
+
+```text
+Week 23 closed.
+Player received: +100
+Correct amount: +60
+Difference: -40
+
+Week 24:
+debit_adjustment
+amount = -40
+reason = Settlement correction for closed Week 23.
+```
+
+### `canResettleSettlementRun()`
+
+Resettlement eligibility rules:
+
+- If accounting period status is `open`, resettlement is allowed.
+- If accounting period status is `closed`, resettlement is denied.
+- If accounting period status is `locked`, resettlement is denied.
+
+Required error code:
+
+```text
+RESETTLEMENT_BLOCKED_PERIOD_CLOSED
+```
+
+Attempted resettlement against a closed or locked accounting period must not create reversal or corrected settlement records.
+
 ## 11. Audit / Integrity
 
 Audit events:
@@ -428,6 +498,7 @@ Audit events:
 - settlement failure
 - settlement reversal
 - resettlement
+- `RESSETTLEMENT_BLOCKED` when resettlement is attempted against a closed accounting period
 
 Integrity fields:
 
