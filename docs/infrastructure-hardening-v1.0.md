@@ -335,118 +335,6 @@ The platform must be capable of restoring:
 
 within the defined RTO target while remaining within the defined RPO target.
 
-Restore Validation Checklist:
-
-A successful restore is not defined solely by database availability. A recovery event is considered complete only after business, financial, audit, and integrity validation have been performed.
-
-Post-Recovery Validation Steps:
-
-1. Settlement Validation
-
-Verify:
-
-- settlement run counts
-- settlement totals
-- settlement statuses
-- open settlement runs
-- partially completed settlement runs
-
-2. Ledger Validation
-
-Verify:
-
-- account balances
-- operational ledger totals
-- financial ledger totals
-- reversal transactions
-- adjustment transactions
-
-3. Account Hierarchy Validation
-
-Verify:
-
-- Super Master hierarchy
-- Master Agent hierarchy
-- Agent hierarchy
-- Player assignments
-- account visibility scopes
-
-4. Commission Validation
-
-Verify:
-
-- commission runs
-- commission records
-- rollup calculations
-- pending commission runs
-- commission assignments
-
-5. Audit Validation
-
-Verify:
-
-- audit event counts
-- audit timeline continuity
-- override approval records
-- resettlement audit history
-
-6. Integrity Validation
-
-Verify:
-
-- settlement record hashes
-- ledger transaction hashes
-- audit event hashes
-- override approval hashes
-
-Run:
-
-- `verifySettlementIntegrity()`
-- `verifyLedgerIntegrity()`
-- `verifyAuditIntegrity()`
-
-Investigate all integrity failures before production reopening.
-
-7. Draw Result Validation
-
-Verify:
-
-- latest draw results
-- result versions
-- corrected results
-- voided results
-- RNG result continuity
-
-8. Accounting Period Validation
-
-Verify:
-
-- open accounting periods
-- closed accounting periods
-- locked accounting periods
-- pending weekly closes
-
-9. Authorization Validation
-
-Verify:
-
-- platform operator permissions
-- hierarchy visibility scopes
-- restricted governance permissions
-- dual-control approval rules
-
-Recovery Completion Criteria:
-
-A recovery event is considered complete only when:
-
-- infrastructure restored
-- database restored
-- validation checks completed
-- no unresolved critical integrity failures
-- no unresolved financial discrepancies
-
-Production reopening must be blocked until all critical validation checks pass.
-
 Rationale:
 
 The current platform stage does not justify the infrastructure cost of near-zero RPO/RTO targets.
@@ -462,8 +350,6 @@ provide a practical balance between:
 - infrastructure cost
 - platform complexity
 - recovery capability
-
-For a gambling platform, restoring data is insufficient. The platform must also prove financial accuracy, settlement accuracy, audit continuity, integrity continuity, and hierarchy consistency before wagering activity resumes.
 
 ## 10. Disaster Recovery
 
@@ -508,7 +394,103 @@ Corrupted settlement data:
 - Use reversal/correction workflows only.
 - Do not overwrite historical records.
 
-## 11. Security Governance
+## 11. Restore Validation Checklist
+
+A successful restore is not defined solely by database availability. A recovery event is considered complete only after business, financial, audit, and integrity validation have been performed.
+
+Post-Recovery Validation:
+
+Settlement Validation:
+
+- settlement run counts
+- settlement totals
+- settlement statuses
+- open settlement runs
+- partially completed settlement runs
+
+Ledger Validation:
+
+- account balances
+- operational ledger totals
+- financial ledger totals
+- reversal transactions
+- adjustment transactions
+
+Hierarchy Validation:
+
+- account structure
+- Super Master hierarchy
+- Master Agent hierarchy
+- Agent hierarchy
+- Player assignments
+- account visibility scopes
+
+Commission Validation:
+
+- commission runs
+- commission records
+- rollup calculations
+- pending commission runs
+- commission assignments
+
+Audit Validation:
+
+- audit event counts
+- audit timeline continuity
+- override approval records
+- resettlement audit history
+
+Integrity Validation:
+
+- settlement record hashes
+- ledger transaction hashes
+- audit event hashes
+- override approval hashes
+
+Run:
+
+- `verifySettlementIntegrity()`
+- `verifyLedgerIntegrity()`
+- `verifyAuditIntegrity()`
+
+Investigate all integrity failures before production reopening.
+
+Draw Result Validation:
+
+- latest draw results
+- corrected results
+- voided results
+- result versions
+- RNG result continuity
+
+Accounting Period Validation:
+
+- open accounting periods
+- closed accounting periods
+- locked accounting periods
+- pending weekly closes
+
+Authorization Validation:
+
+- platform operator permissions
+- hierarchy visibility scopes
+- restricted governance permissions
+- dual-control approval rules
+
+Recovery Completion Criteria:
+
+Production may not reopen until:
+
+- infrastructure restored
+- database restored
+- validation checks completed
+- critical validation passes
+- no unresolved critical integrity failures
+- no unresolved financial discrepancies
+
+For a gambling platform, restoring data is insufficient. The platform must also prove financial accuracy, settlement accuracy, audit continuity, integrity continuity, and hierarchy consistency before wagering activity resumes.
+
+## 12. Security Governance
 
 The platform enforces governance separation between hierarchy participants and platform operators.
 
@@ -551,7 +533,7 @@ High-risk permissions should eventually require approval:
 - result.correct
 - rng.configure
 
-## 12. Future Cryptographic Roadmap
+## 13. Future Cryptographic Roadmap
 
 Future Production Security Enhancements:
 
@@ -579,7 +561,7 @@ Likely signing targets:
 
 Signing keys must not live as raw database values. HSM or managed KMS integration should be evaluated before production signing.
 
-## 13. Open Questions
+## 14. Open Questions
 
 Hosting model:
 
