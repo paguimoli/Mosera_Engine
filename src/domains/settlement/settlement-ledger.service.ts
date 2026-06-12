@@ -32,6 +32,7 @@ function buildSettlementLedgerTransaction({
     accountId: settlementRecord.accountId,
     category: "operational",
     transactionType,
+    walletType: ticket.fundingType,
     amount,
     description,
     referenceId: settlementRecord.id,

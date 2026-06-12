@@ -20,6 +20,7 @@ export function createLedgerTransactionController({
     accountId: string;
     category: LedgerTransaction["category"];
     transactionType: LedgerTransaction["transactionType"];
+    walletType?: LedgerTransaction["walletType"];
     amount: string;
     description: string;
     referenceId: string;
@@ -41,6 +42,7 @@ export function createLedgerTransactionController({
     accountId: form.accountId,
     category: form.category,
     transactionType: form.transactionType,
+    walletType: form.walletType || null,
     amount: Number(form.amount || 0),
     description: form.description.trim(),
     referenceId: form.referenceId.trim() || null,
@@ -89,6 +91,7 @@ export function reverseLedgerTransactionController({
     accountId: transaction.accountId,
     category: transaction.category,
     transactionType: "reversal",
+    walletType: transaction.walletType || null,
     amount: -transaction.amount,
     description: `Reversal of ${transaction.id}: ${transaction.description}`,
     referenceId: transaction.referenceId || null,

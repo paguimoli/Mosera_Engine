@@ -1,3 +1,5 @@
+import type { WalletType } from "../wallets/wallet.types";
+
 export type LedgerCategory = "accounting" | "operational" | "freeplay";
 
 export type TransactionType =
@@ -28,6 +30,7 @@ export type LedgerTransaction = {
   accountId: string;
   category: LedgerCategory;
   transactionType: TransactionType;
+  walletType?: WalletType | null;
   amount: number;
   description: string;
   referenceId?: string | null;
