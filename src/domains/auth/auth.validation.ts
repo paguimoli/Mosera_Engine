@@ -6,6 +6,7 @@ import {
 } from "./auth.constants";
 import type { IdentityClass, UserStatus } from "./auth.types";
 export { validatePasswordPolicy } from "./password.policy";
+export { validateSessionMetadata } from "./session.helpers";
 
 const USERNAME_PATTERN = /^[a-zA-Z0-9._-]+$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

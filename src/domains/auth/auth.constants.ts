@@ -39,6 +39,17 @@ export const SESSION_STATUSES = {
   EXPIRED: "EXPIRED",
 } as const;
 
+export const SESSION_HASH_ALGORITHM = "sha256" as const;
+
+export const SESSION_POLICY = {
+  defaultDurationSeconds: 60 * 60 * 12,
+  operatorDurationSeconds: 60 * 60 * 8,
+  playerDurationSeconds: 60 * 60 * 24,
+  tokenByteLength: 32,
+  hashAlgorithm: SESSION_HASH_ALGORITHM,
+  singleActiveSessionIdentityClasses: [IDENTITY_CLASSES.PLATFORM_OPERATOR],
+} as const;
+
 export const BREAK_GLASS_STATUSES = {
   ACTIVE: "ACTIVE",
   USED: "USED",

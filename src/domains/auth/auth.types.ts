@@ -12,6 +12,15 @@ import type {
   PasswordValidationResult,
   PasswordVerificationResult,
 } from "./password.types";
+import type {
+  SessionCreationInput,
+  SessionHashAlgorithm,
+  SessionMetadata,
+  SessionRecord,
+  SessionToken,
+  SessionTokenHash,
+  SessionValidationResult,
+} from "./session.types";
 
 export type IdentityClass =
   (typeof IDENTITY_CLASSES)[keyof typeof IDENTITY_CLASSES];
@@ -49,6 +58,13 @@ export type {
   PasswordPolicyInput,
   PasswordValidationResult,
   PasswordVerificationResult,
+  SessionCreationInput,
+  SessionHashAlgorithm,
+  SessionMetadata,
+  SessionRecord,
+  SessionToken,
+  SessionTokenHash,
+  SessionValidationResult,
 };
 
 export type UserGroup = {
@@ -70,8 +86,10 @@ export type UserGroupMembership = {
 export type UserSession = {
   id: string;
   userId: string;
+  sessionTokenHash?: string | null;
   status: SessionStatus;
   createdAt: string;
+  lastSeenAt?: string | null;
   expiresAt: string;
   revokedAt?: string | null;
   ipAddress?: string | null;
