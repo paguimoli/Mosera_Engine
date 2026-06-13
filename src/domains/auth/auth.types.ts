@@ -6,6 +6,12 @@ import {
   SESSION_STATUSES,
   USER_STATUSES,
 } from "./auth.constants";
+import type {
+  Argon2idPasswordHash,
+  PasswordPolicyInput,
+  PasswordValidationResult,
+  PasswordVerificationResult,
+} from "./password.types";
 
 export type IdentityClass =
   (typeof IDENTITY_CLASSES)[keyof typeof IDENTITY_CLASSES];
@@ -31,10 +37,18 @@ export type PlatformUser = {
   identityClass: IdentityClass;
   status: UserStatus;
   accountId?: string | null;
+  passwordHash?: string | null;
   mfaStatus?: MfaStatus | null;
   createdAt: string;
   updatedAt?: string | null;
   lastLoginAt?: string | null;
+};
+
+export type {
+  Argon2idPasswordHash,
+  PasswordPolicyInput,
+  PasswordValidationResult,
+  PasswordVerificationResult,
 };
 
 export type UserGroup = {

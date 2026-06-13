@@ -53,3 +53,20 @@ export const DEFAULT_PLATFORM_GROUP_NAMES = [
   "Compliance Admin",
   "Support Admin",
 ] as const;
+
+export const ARGON2ID_ALGORITHM = "argon2id" as const;
+
+export const ARGON2ID_PASSWORD_SETTINGS = {
+  memoryCost: 65536,
+  timeCost: 3,
+  parallelism: 1,
+  hashLength: 32,
+} as const;
+
+export const PASSWORD_POLICY = {
+  minimumLength: 12,
+  requireUppercase: true,
+  requireLowercase: true,
+  requireNumber: true,
+  requireSpecialCharacter: true,
+} as const;
