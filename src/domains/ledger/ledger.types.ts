@@ -50,3 +50,56 @@ export type AccountFinancialSummary = {
   pendingExposure: number;
   availableCredit: number;
 };
+
+export type LedgerDirection = "CREDIT" | "DEBIT";
+
+export type LedgerTransactionType =
+  | "DEPOSIT"
+  | "WITHDRAWAL"
+  | "TICKET_STAKE"
+  | "TICKET_WIN"
+  | "TICKET_REFUND"
+  | "TICKET_VOID"
+  | "FREE_PLAY_CREDIT"
+  | "FREE_PLAY_STAKE"
+  | "FREE_PLAY_WIN"
+  | "MANUAL_CREDIT_ADJUSTMENT"
+  | "MANUAL_DEBIT_ADJUSTMENT"
+  | "SETTLEMENT_CREDIT"
+  | "SETTLEMENT_DEBIT"
+  | "ZERO_BALANCE_CREDIT"
+  | "ZERO_BALANCE_DEBIT"
+  | "REVERSAL";
+
+export type LedgerReference = {
+  referenceType?: string | null;
+  referenceId?: string | null;
+};
+
+export type LedgerEntry = {
+  id: string;
+  walletId: string;
+  accountId: string;
+  transactionType: LedgerTransactionType;
+  direction: LedgerDirection;
+  amount: number;
+  balanceAfter: number;
+  currencyCode: string;
+  referenceType?: string | null;
+  referenceId?: string | null;
+  idempotencyKey?: string | null;
+  reversalOfLedgerEntryId?: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type CreateLedgerEntryInput = {
+  walletId: string;
+  transactionType: LedgerTransactionType;
+  direction: LedgerDirection;
+  amount: number;
+  reference?: LedgerReference;
+  idempotencyKey?: string | null;
+  reversalOfLedgerEntryId?: string | null;
+  metadata?: Record<string, unknown>;
+};

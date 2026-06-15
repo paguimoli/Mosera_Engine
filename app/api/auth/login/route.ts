@@ -5,7 +5,7 @@ import type { AuthRequestMetadata } from "@/src/domains/auth/auth.types";
 
 export const runtime = "nodejs";
 
-const INVALID_CREDENTIALS_ERROR = "Invalid credentials.";
+const INVALID_CREDENTIALS_ERROR = "Invalid username or password.";
 
 function getRequestMetadata(request: Request): AuthRequestMetadata {
   const forwardedFor = request.headers.get("x-forwarded-for");
@@ -20,11 +20,11 @@ function getRequestMetadata(request: Request): AuthRequestMetadata {
   };
 }
 
-function loginFailureResponse() {
+function loginFailureResponse(error = INVALID_CREDENTIALS_ERROR) {
   return NextResponse.json(
     {
       success: false,
-      error: INVALID_CREDENTIALS_ERROR,
+      error,
     },
     { status: 401 }
   );
@@ -45,12 +45,8 @@ export async function POST(request: Request) {
   });
 
   if (!result.success || !result.data) {
-    return loginFailureResponse();
+    return loginFailureResponse(result.errors?.[0]);
   }
 
-  return NextResponse.json({
-    success: true,
-    sessionToken: result.data.sessionToken,
-    expiresAt: result.data.expiresAt,
-  });
+  return NextResponse.json(result.data);
 }

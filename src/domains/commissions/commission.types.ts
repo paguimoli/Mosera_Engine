@@ -79,3 +79,103 @@ export type CommissionExecutionInput = {
   periodEnd?: string | null;
   notes?: string;
 };
+
+export type CommissionCalculationBasis = "NET_LOSS" | "TURNOVER" | "HYBRID";
+
+export type PersistedCommissionPlanStatus = "ACTIVE" | "DISABLED";
+
+export type CommissionRuleType =
+  | "NET_LOSS_PERCENT"
+  | "TURNOVER_PERCENT"
+  | "FLAT_AMOUNT";
+
+export type CommissionAssignmentStatus = "ACTIVE" | "INACTIVE";
+
+export type WeeklyCommissionRecordStatus =
+  | "DRAFT"
+  | "APPROVED"
+  | "PAID"
+  | "VOID";
+
+export type PersistedCommissionPlan = {
+  id: string;
+  code: string;
+  name: string;
+  description?: string | null;
+  calculationBasis: CommissionCalculationBasis;
+  status: PersistedCommissionPlanStatus;
+  createdAt: string;
+  updatedAt?: string | null;
+};
+
+export type CommissionPlanRule = {
+  id: string;
+  commissionPlanId: string;
+  ruleType: CommissionRuleType;
+  rate: number;
+  appliesToAccountType?: "MASTER_AGENT" | "AGENT" | "PLAYER" | null;
+  minAmount?: number | null;
+  maxAmount?: number | null;
+  createdAt: string;
+};
+
+export type AccountCommissionAssignment = {
+  id: string;
+  accountId: string;
+  commissionPlanId: string;
+  status: CommissionAssignmentStatus;
+  effectiveFrom: string;
+  effectiveTo?: string | null;
+  createdAt: string;
+};
+
+export type WeeklyCommissionRecord = {
+  id: string;
+  periodId: string;
+  accountId: string;
+  commissionPlanId: string;
+  calculationBasis: CommissionCalculationBasis;
+  grossBasisAmount: number;
+  commissionAmount: number;
+  status: WeeklyCommissionRecordStatus;
+  createdAt: string;
+  approvedAt?: string | null;
+  paidAt?: string | null;
+  metadata: Record<string, unknown>;
+};
+
+export type CreateCommissionPlanInput = {
+  code: string;
+  name: string;
+  description?: string | null;
+  calculationBasis: CommissionCalculationBasis;
+  status?: PersistedCommissionPlanStatus;
+};
+
+export type CreateCommissionPlanRuleInput = {
+  commissionPlanId: string;
+  ruleType: CommissionRuleType;
+  rate: number;
+  appliesToAccountType?: "MASTER_AGENT" | "AGENT" | "PLAYER" | null;
+  minAmount?: number | null;
+  maxAmount?: number | null;
+};
+
+export type AssignCommissionPlanInput = {
+  accountId: string;
+  commissionPlanId: string;
+  status?: CommissionAssignmentStatus;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
+};
+
+export type CreateWeeklyCommissionRecordInput = {
+  periodId: string;
+  accountId: string;
+  commissionPlanId: string;
+  calculationBasis: CommissionCalculationBasis;
+  grossBasisAmount?: number;
+  commissionAmount?: number;
+  status?: WeeklyCommissionRecordStatus;
+  metadata?: Record<string, unknown>;
+};

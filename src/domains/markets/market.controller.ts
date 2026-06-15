@@ -7,16 +7,28 @@ import {
   findMarketById,
   saveMarket,
   updateMarket,
-} from "./market.repository";
+} from "./market.helpers";
 import type { Market } from "./market.types";
 import { validateMarketForm } from "./market.validation";
+
+type LegacyMarketForm = {
+  name: string;
+  code: string;
+  language: string;
+  currency: string;
+  timeZone: string;
+  dateFormat: string;
+  numberFormat: string;
+  defaultBrand: string;
+  active: boolean;
+};
 
 export function saveMarketController({
   form,
   markets,
   editingMarketId,
 }: {
-  form: Omit<Market, "id" | "createdAt">;
+  form: LegacyMarketForm;
   markets: Market[];
   editingMarketId?: string | null;
 }) {
@@ -33,6 +45,13 @@ export function saveMarketController({
     id: existingMarket?.id || `MARKET-${Date.now()}`,
     name: form.name.trim(),
     code: form.code.trim().toUpperCase(),
+    currencyCode: form.currency.trim().toUpperCase(),
+    languageCode: form.language.trim(),
+    timezone: form.timeZone.trim(),
+    brandCode: form.defaultBrand.trim() || "Default",
+    status: form.active ? "ACTIVE" : "DISABLED",
+    isDefault: existingMarket?.isDefault ?? false,
+    updatedAt: existingMarket?.updatedAt ?? null,
     language: form.language.trim(),
     currency: form.currency.trim().toUpperCase(),
     timeZone: form.timeZone.trim(),
@@ -68,6 +87,13 @@ export function addDefaultMarketsController(markets: Market[]) {
     {
       name: "Costa Rica",
       code: "CR",
+      currencyCode: "USD",
+      languageCode: "es",
+      timezone: "America/Costa_Rica",
+      brandCode: "Default",
+      status: "ACTIVE",
+      isDefault: false,
+      updatedAt: null,
       language: "es",
       currency: "USD",
       timeZone: "America/Costa_Rica",
@@ -78,6 +104,13 @@ export function addDefaultMarketsController(markets: Market[]) {
     {
       name: "English International",
       code: "EN-INT",
+      currencyCode: "USD",
+      languageCode: "en",
+      timezone: "America/New_York",
+      brandCode: "Default",
+      status: "ACTIVE",
+      isDefault: false,
+      updatedAt: null,
       language: "en",
       currency: "USD",
       timeZone: "America/New_York",
@@ -88,6 +121,13 @@ export function addDefaultMarketsController(markets: Market[]) {
     {
       name: "Spanish International",
       code: "ES-INT",
+      currencyCode: "USD",
+      languageCode: "es",
+      timezone: "America/Panama",
+      brandCode: "Default",
+      status: "ACTIVE",
+      isDefault: false,
+      updatedAt: null,
       language: "es",
       currency: "USD",
       timeZone: "America/Panama",
@@ -98,6 +138,13 @@ export function addDefaultMarketsController(markets: Market[]) {
     {
       name: "Vietnam",
       code: "VN",
+      currencyCode: "VND",
+      languageCode: "vi",
+      timezone: "Asia/Ho_Chi_Minh",
+      brandCode: "Default",
+      status: "ACTIVE",
+      isDefault: false,
+      updatedAt: null,
       language: "vi",
       currency: "VND",
       timeZone: "Asia/Ho_Chi_Minh",

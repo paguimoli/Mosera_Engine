@@ -1,8 +1,11 @@
+import { randomBytes } from "node:crypto";
 import argon2 from "argon2";
 import {
   ARGON2ID_ALGORITHM,
   ARGON2ID_PASSWORD_SETTINGS,
+  PASSWORD_RESET_TOKEN_BYTES,
 } from "./auth.constants";
+import { hashSessionToken } from "./session.helpers";
 import type { Argon2idPasswordHash } from "./password.types";
 
 export class PasswordInfrastructureError extends Error {
@@ -72,4 +75,12 @@ export async function verifyPassword(
   } catch {
     return false;
   }
+}
+
+export function generatePasswordResetToken(): string {
+  return randomBytes(PASSWORD_RESET_TOKEN_BYTES).toString("base64url");
+}
+
+export function hashPasswordResetToken(token: string): string {
+  return hashSessionToken(token);
 }

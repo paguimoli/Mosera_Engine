@@ -1,5 +1,10 @@
 import { invalid, valid } from "@/src/lib/validation/validation.types";
-import type { LedgerTransaction } from "./ledger.types";
+import type { ValidationResult } from "@/src/lib/validation/validation.types";
+import type {
+  CreateLedgerEntryInput,
+  LedgerTransaction,
+  LedgerTransactionType,
+} from "./ledger.types";
 
 export function validateLedgerTransactionForm(form: {
   accountId: string;
@@ -36,4 +41,56 @@ export function validateLedgerReversal(transaction?: LedgerTransaction) {
   }
 
   return valid();
+}
+
+const LEDGER_TRANSACTION_TYPES: LedgerTransactionType[] = [
+  "DEPOSIT",
+  "WITHDRAWAL",
+  "TICKET_STAKE",
+  "TICKET_WIN",
+  "TICKET_REFUND",
+  "TICKET_VOID",
+  "FREE_PLAY_CREDIT",
+  "FREE_PLAY_STAKE",
+  "FREE_PLAY_WIN",
+  "MANUAL_CREDIT_ADJUSTMENT",
+  "MANUAL_DEBIT_ADJUSTMENT",
+  "SETTLEMENT_CREDIT",
+  "SETTLEMENT_DEBIT",
+  "ZERO_BALANCE_CREDIT",
+  "ZERO_BALANCE_DEBIT",
+  "REVERSAL",
+];
+
+export function validateCreateLedgerEntryInput(
+  input: CreateLedgerEntryInput
+): ValidationResult {
+  const errors: string[] = [];
+
+  if (!input.walletId.trim()) {
+    errors.push("Wallet id is required.");
+  }
+
+  if (!LEDGER_TRANSACTION_TYPES.includes(input.transactionType)) {
+    errors.push("Ledger transaction type is invalid.");
+  }
+
+  if (input.direction !== "CREDIT" && input.direction !== "DEBIT") {
+    errors.push("Ledger direction is invalid.");
+  }
+
+  if (!Number.isFinite(input.amount) || input.amount <= 0) {
+    errors.push("Ledger amount must be positive.");
+  }
+
+  return errors.length > 0 ? invalid(errors) : valid();
+}
+
+export function isManualAdjustmentTransactionType(
+  transactionType: LedgerTransactionType
+) {
+  return (
+    transactionType === "MANUAL_CREDIT_ADJUSTMENT" ||
+    transactionType === "MANUAL_DEBIT_ADJUSTMENT"
+  );
 }

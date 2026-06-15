@@ -1,5 +1,5 @@
 import type { PlayerAccount } from "../accounts/account.types";
-import { calculateWeeklyFigure } from "../ledger/ledger.service";
+import { calculateWeeklyFigure } from "../ledger/ledger.helpers";
 import type { LedgerTransaction } from "../ledger/ledger.types";
 import type {
   CommissionModel,

@@ -61,6 +61,7 @@ export type AuthUserRecord = {
   identityClass: IdentityClass;
   status: UserStatus;
   passwordHash?: string | null;
+  mfaEnabled: boolean;
   failedLoginAttempts: number;
   lockedUntil?: string | null;
   lastLoginAt?: string | null;
@@ -75,13 +76,34 @@ export type LogoutRequestInput = {
   sessionToken: SessionToken;
 };
 
+export type PasswordResetRequestInput = {
+  identifier: string;
+};
+
+export type PasswordResetConfirmInput = {
+  resetToken: string;
+  newPassword: string;
+};
+
 export type AuthRequestMetadata = SessionMetadata;
 
-export type LoginSuccessResponse = {
+export type LoginSessionSuccessResponse = {
   success: true;
+  mfaRequired?: false;
   sessionToken: SessionToken;
   expiresAt: string;
 };
+
+export type LoginMfaRequiredResponse = {
+  success: true;
+  mfaRequired: true;
+  challengeToken: string;
+  expiresAt: string;
+};
+
+export type LoginSuccessResponse =
+  | LoginSessionSuccessResponse
+  | LoginMfaRequiredResponse;
 
 export type LoginFailureResponse = {
   success: false;
@@ -93,6 +115,21 @@ export type LoginResponse = LoginSuccessResponse | LoginFailureResponse;
 export type LogoutResponse = {
   success: true;
 };
+
+export type PasswordResetRequestResponse = {
+  success: true;
+  message: string;
+  resetToken?: string;
+};
+
+export type PasswordResetConfirmResponse =
+  | {
+      success: true;
+    }
+  | {
+      success: false;
+      errors: string[];
+    };
 
 export type {
   Argon2idPasswordHash,
@@ -143,7 +180,7 @@ export type PasswordResetToken = {
   userId: string;
   tokenHash: string;
   expiresAt: string;
-  consumedAt?: string | null;
+  usedAt?: string | null;
   createdAt: string;
 };
 

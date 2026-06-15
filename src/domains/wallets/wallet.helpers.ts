@@ -105,7 +105,9 @@ export function getWalletForAccount({
 }
 
 export function isWalletActive(wallet?: Wallet | null) {
-  return Boolean(wallet && wallet.status === "active");
+  return Boolean(
+    wallet && (wallet.status === "ACTIVE" || wallet.status === "active")
+  );
 }
 
 export function calculateWalletBalanceSummary({

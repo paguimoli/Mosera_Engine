@@ -5,7 +5,7 @@ import {
 import { createAuditEvent } from "../audit/audit.service";
 import { AUDIT_ACTIONS } from "../audit/audit.types";
 import { attachIntegrityHash } from "../integrity/integrity.helpers";
-import { saveLedgerTransaction } from "./ledger.repository";
+import { saveLedgerTransaction } from "./ledger.helpers";
 import type { LedgerTransaction } from "./ledger.types";
 import {
   validateLedgerReversal,

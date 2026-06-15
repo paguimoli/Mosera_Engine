@@ -5,7 +5,7 @@ import {
 import { createAuditEvent } from "../audit/audit.service";
 import { AUDIT_ACTIONS } from "../audit/audit.types";
 import { attachIntegrityHash } from "../integrity/integrity.helpers";
-import { saveLedgerTransactions } from "../ledger/ledger.repository";
+import { saveLedgerTransactions } from "../ledger/ledger.helpers";
 import type { LedgerTransaction } from "../ledger/ledger.types";
 import type { Ticket, TicketLine } from "../tickets/ticket.types";
 import type {

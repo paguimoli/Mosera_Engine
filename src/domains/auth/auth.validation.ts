@@ -8,6 +8,8 @@ import type {
   IdentityClass,
   LoginRequestInput,
   LogoutRequestInput,
+  PasswordResetConfirmInput,
+  PasswordResetRequestInput,
   UserStatus,
 } from "./auth.types";
 export { validatePasswordPolicy } from "./password.policy";
@@ -145,4 +147,33 @@ export function validateLogoutInput(input: unknown) {
   }
 
   return valid();
+}
+
+export function normalizePasswordResetRequestInput(
+  input: unknown
+): PasswordResetRequestInput | null {
+  if (!isRecord(input) || !isNonEmptyString(input.identifier)) {
+    return null;
+  }
+
+  return {
+    identifier: input.identifier.trim(),
+  };
+}
+
+export function normalizePasswordResetConfirmInput(
+  input: unknown
+): PasswordResetConfirmInput | null {
+  if (
+    !isRecord(input) ||
+    !isNonEmptyString(input.resetToken) ||
+    !isNonEmptyString(input.newPassword)
+  ) {
+    return null;
+  }
+
+  return {
+    resetToken: input.resetToken,
+    newPassword: input.newPassword,
+  };
 }

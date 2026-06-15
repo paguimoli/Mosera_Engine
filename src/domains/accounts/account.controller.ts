@@ -5,14 +5,14 @@ import {
 import { createAuditEvent } from "../audit/audit.service";
 import { AUDIT_ACTIONS } from "../audit/audit.types";
 import type { Market } from "../markets/market.types";
-import { findMarketById } from "../markets/market.repository";
+import { findMarketById } from "../markets/market.helpers";
 import {
   deleteAccount,
   findAccountById,
   listAccountsByParentId,
   saveAccount,
   updateAccount,
-} from "./account.repository";
+} from "./account.helpers";
 import type { PlayerAccount } from "./account.types";
 import {
   validateAccountDelete,
