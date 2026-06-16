@@ -5,6 +5,7 @@ import type {
   JobRun,
   JobRunMetadata,
   JobRunStatus,
+  ListRecentJobRunsInput,
   StartJobRunInput,
 } from "./job-run.types";
 
@@ -126,4 +127,33 @@ export async function failJobRun(input: FailJobRunInput): Promise<JobRun> {
   }
 
   return jobRun;
+}
+
+export async function listRecentJobRuns(
+  input: ListRecentJobRunsInput = {}
+): Promise<JobRun[]> {
+  const limit = input.limit ?? 50;
+  let query = supabaseServerAdmin
+    .from("job_runs")
+    .select(JOB_RUN_SELECT)
+    .order("started_at", { ascending: false })
+    .limit(limit);
+
+  if (input.jobName) {
+    query = query.eq("job_name", input.jobName);
+  }
+
+  if (input.status) {
+    query = query.eq("status", input.status);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new JobRunRepositoryError();
+  }
+
+  return ((data ?? []) as JobRunRow[])
+    .map(mapJobRunRow)
+    .filter((jobRun): jobRun is JobRun => Boolean(jobRun));
 }

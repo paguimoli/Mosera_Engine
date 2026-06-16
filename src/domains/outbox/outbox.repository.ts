@@ -2,6 +2,10 @@ import { supabaseServerAdmin } from "@/src/lib/supabase/server-admin-client";
 import type {
   CreateOutboxEventInput,
   ListPendingOutboxEventsInput,
+  ListRecentOutboxEventsInput,
+  MarkOutboxEventDeadLetterInput,
+  MarkOutboxEventFailedInput,
+  MarkOutboxEventPublishedInput,
   OutboxEvent,
   OutboxEventPayload,
   OutboxEventStatus,
@@ -107,6 +111,37 @@ export async function listPendingOutboxEvents(
     .filter((event): event is OutboxEvent => Boolean(event));
 }
 
+export async function listDispatchableOutboxEvents(
+  input: ListPendingOutboxEventsInput = {}
+): Promise<OutboxEvent[]> {
+  return listPendingOutboxEvents(input);
+}
+
+export async function listRecentOutboxEvents(
+  input: ListRecentOutboxEventsInput = {}
+): Promise<OutboxEvent[]> {
+  const limit = input.limit ?? 50;
+  let query = supabaseServerAdmin
+    .from("outbox_events")
+    .select(OUTBOX_EVENT_SELECT)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (input.status) {
+    query = query.eq("status", input.status);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new OutboxRepositoryError();
+  }
+
+  return ((data ?? []) as OutboxEventRow[])
+    .map(mapOutboxEventRow)
+    .filter((event): event is OutboxEvent => Boolean(event));
+}
+
 async function updateOutboxEventStatus({
   id,
   status,
@@ -139,64 +174,45 @@ async function updateOutboxEventStatus({
   return event;
 }
 
-export async function markOutboxEventPublished(id: string): Promise<OutboxEvent> {
+export async function markOutboxEventPublished(
+  input: MarkOutboxEventPublishedInput | string
+): Promise<OutboxEvent> {
+  const normalized =
+    typeof input === "string" ? { id: input, publishedAt: undefined } : input;
+
   return updateOutboxEventStatus({
-    id,
+    id: normalized.id,
     status: "PUBLISHED",
     updatePayload: {
-      published_at: new Date().toISOString(),
+      published_at: normalized.publishedAt ?? new Date().toISOString(),
       last_error: null,
     },
   });
 }
 
-export async function markOutboxEventFailed({
-  id,
-  lastError,
-  nextAttemptAt,
-}: {
-  id: string;
-  lastError: string;
-  nextAttemptAt?: string | null;
-}): Promise<OutboxEvent> {
-  const { data: existingData, error: existingError } = await supabaseServerAdmin
-    .from("outbox_events")
-    .select("attempt_count")
-    .eq("id", id)
-    .single();
-
-  if (existingError) {
-    throw new OutboxRepositoryError();
-  }
-
-  const existingAttemptCount = Number(
-    (existingData as Pick<OutboxEventRow, "attempt_count"> | null)
-      ?.attempt_count ?? 0
-  );
-
+export async function markOutboxEventFailed(
+  input: MarkOutboxEventFailedInput
+): Promise<OutboxEvent> {
   return updateOutboxEventStatus({
-    id,
+    id: input.id,
     status: "FAILED",
     updatePayload: {
-      attempt_count: existingAttemptCount + 1,
-      last_error: lastError,
-      next_attempt_at: nextAttemptAt ?? null,
+      attempt_count: input.attemptCount,
+      last_error: input.lastError,
+      next_attempt_at: input.nextAttemptAt ?? null,
     },
   });
 }
 
-export async function markOutboxEventDeadLetter({
-  id,
-  lastError,
-}: {
-  id: string;
-  lastError: string;
-}): Promise<OutboxEvent> {
+export async function markOutboxEventDeadLetter(
+  input: MarkOutboxEventDeadLetterInput
+): Promise<OutboxEvent> {
   return updateOutboxEventStatus({
-    id,
+    id: input.id,
     status: "DEAD_LETTER",
     updatePayload: {
-      last_error: lastError,
+      attempt_count: input.attemptCount,
+      last_error: input.lastError,
       next_attempt_at: null,
     },
   });

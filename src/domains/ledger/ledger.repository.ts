@@ -60,36 +60,25 @@ function mapLedgerEntryRow(row: LedgerEntryRow | null): LedgerEntry | null {
 
 export async function insertLedgerEntry({
   input,
-  accountId,
-  currencyCode,
-  balanceAfter,
 }: {
   input: CreateLedgerEntryInput;
-  accountId: string;
-  currencyCode: string;
-  balanceAfter: number;
 }): Promise<LedgerEntry> {
   const { data, error } = await supabaseServerAdmin
-    .from(FINANCIAL_LEDGER_ENTRIES_TABLE)
-    .insert({
-      wallet_id: input.walletId,
-      account_id: accountId,
-      transaction_type: input.transactionType,
-      direction: input.direction,
-      amount: input.amount,
-      balance_after: balanceAfter,
-      currency_code: currencyCode,
-      reference_type: input.reference?.referenceType ?? null,
-      reference_id: input.reference?.referenceId ?? null,
-      idempotency_key: input.idempotencyKey ?? null,
-      reversal_of_ledger_entry_id: input.reversalOfLedgerEntryId ?? null,
-      metadata: input.metadata ?? {},
+    .rpc("post_financial_ledger_entry", {
+      p_wallet_id: input.walletId,
+      p_transaction_type: input.transactionType,
+      p_direction: input.direction,
+      p_amount: input.amount,
+      p_reference_type: input.reference?.referenceType ?? null,
+      p_reference_id: input.reference?.referenceId ?? null,
+      p_idempotency_key: input.idempotencyKey ?? null,
+      p_metadata: input.metadata ?? {},
+      p_reversal_of_ledger_entry_id: input.reversalOfLedgerEntryId ?? null,
     })
-    .select(LEDGER_ENTRY_SELECT)
     .single();
 
   if (error) {
-    throw new LedgerRepositoryError();
+    throw new LedgerRepositoryError(error.message);
   }
 
   const ledgerEntry = mapLedgerEntryRow(data as LedgerEntryRow | null);

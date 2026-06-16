@@ -31,3 +31,9 @@ export type FailJobRunInput = {
   errorMessage: string;
   metadata?: JobRunMetadata;
 };
+
+export type ListRecentJobRunsInput = {
+  limit?: number;
+  jobName?: string;
+  status?: JobRunStatus;
+};

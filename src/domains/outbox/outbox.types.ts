@@ -35,3 +35,26 @@ export type ListPendingOutboxEventsInput = {
   limit?: number;
   now?: string;
 };
+
+export type ListRecentOutboxEventsInput = {
+  limit?: number;
+  status?: OutboxEventStatus;
+};
+
+export type MarkOutboxEventPublishedInput = {
+  id: string;
+  publishedAt?: string;
+};
+
+export type MarkOutboxEventFailedInput = {
+  id: string;
+  attemptCount: number;
+  lastError: string;
+  nextAttemptAt?: string | null;
+};
+
+export type MarkOutboxEventDeadLetterInput = {
+  id: string;
+  attemptCount: number;
+  lastError: string;
+};

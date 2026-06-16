@@ -1,5 +1,4 @@
 import type { PlayerAccount } from "../accounts/account.types";
-import { findWalletById, updateWalletBalance } from "../wallets/wallet.repository";
 import {
   getAccountingTransactionImpact,
   getFreeplayTransactionImpact,
@@ -7,8 +6,8 @@ import {
 } from "./ledger.helpers";
 import {
   findLedgerEntryById,
-  findLedgerEntryByIdempotencyKey,
   insertLedgerEntry,
+  LedgerRepositoryError,
   listLedgerEntriesForAccount as listPersistedLedgerEntriesForAccount,
   listLedgerEntriesForWallet as listPersistedLedgerEntriesForWallet,
 } from "./ledger.repository";
@@ -103,22 +102,17 @@ export function buildAccountFinancialSummary({
   };
 }
 
-function calculateBalanceAfter({
-  currentBalance,
-  direction,
-  amount,
-}: {
-  currentBalance: number;
-  direction: LedgerDirection;
-  amount: number;
-}) {
-  return direction === "CREDIT"
-    ? currentBalance + amount
-    : currentBalance - amount;
-}
-
 function getOppositeDirection(direction: LedgerDirection): LedgerDirection {
   return direction === "CREDIT" ? "DEBIT" : "CREDIT";
+}
+
+function isFinancialPostingBusinessRuleError(error: LedgerRepositoryError) {
+  return [
+    "Ledger amount must be positive.",
+    "Ledger direction is invalid.",
+    "Wallet not found.",
+    "Wallet is not active.",
+  ].some((message) => error.message.includes(message));
 }
 
 export async function postLedgerEntry(
@@ -130,45 +124,18 @@ export async function postLedgerEntry(
     throw new LedgerValidationError(validation.errors);
   }
 
-  if (input.idempotencyKey) {
-    const existingEntry = await findLedgerEntryByIdempotencyKey(
-      input.idempotencyKey
-    );
-
-    if (existingEntry) {
-      throw new LedgerBusinessRuleError("Duplicate idempotency key.");
+  try {
+    return await insertLedgerEntry({ input });
+  } catch (error) {
+    if (
+      error instanceof LedgerRepositoryError &&
+      isFinancialPostingBusinessRuleError(error)
+    ) {
+      throw new LedgerBusinessRuleError(error.message);
     }
+
+    throw error;
   }
-
-  const wallet = await findWalletById(input.walletId);
-
-  if (!wallet) {
-    throw new LedgerBusinessRuleError("Wallet not found.");
-  }
-
-  if (wallet.status !== "ACTIVE") {
-    throw new LedgerBusinessRuleError("Wallet is not active.");
-  }
-
-  const currentBalance = Number(wallet.balance ?? 0);
-  const balanceAfter = calculateBalanceAfter({
-    currentBalance,
-    direction: input.direction,
-    amount: input.amount,
-  });
-
-  const ledgerEntry = await insertLedgerEntry({
-    input,
-    accountId: wallet.accountId,
-    currencyCode: wallet.currencyCode ?? wallet.currency ?? "",
-    balanceAfter,
-  });
-
-  // Production hardening: move ledger insert + wallet balance update into a
-  // Postgres RPC/database transaction before live financial traffic.
-  await updateWalletBalance(wallet.id, balanceAfter);
-
-  return ledgerEntry;
 }
 
 export async function reverseLedgerEntry({
