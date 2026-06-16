@@ -1,6 +1,6 @@
 import { createCorrelationId } from "@/src/lib/observability/correlation";
 import { logger } from "@/src/lib/observability/logger";
-import { NoopQueuePublisher } from "@/src/lib/queue/queue.publisher";
+import { createQueuePublisher } from "@/src/lib/queue/queue.publisher-factory";
 import type { QueuePublisher } from "@/src/lib/queue/queue.types";
 import {
   listDispatchableOutboxEvents,
@@ -36,6 +36,8 @@ async function publishOutboxEvent(
     type: event.eventType,
     payload: event.payload,
     correlationId: event.correlationId ?? null,
+    aggregateType: event.aggregateType,
+    aggregateId: event.aggregateId,
   });
 }
 
@@ -44,7 +46,7 @@ export async function dispatchPendingOutboxEvents(
 ): Promise<OutboxDispatchResult> {
   const now = options.now ?? new Date();
   const correlationId = options.correlationId ?? createCorrelationId();
-  const publisher = options.publisher ?? new NoopQueuePublisher();
+  const publisher = options.publisher ?? createQueuePublisher();
 
   try {
     return await runTrackedJob({

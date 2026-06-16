@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.0",
+    "amqplib": "^0.10.5",
     "argon2": "^0.41.1",
     "next": "16.2.4",
     "otplib": "^12.0.1",
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/amqplib": "^0.10.7",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
