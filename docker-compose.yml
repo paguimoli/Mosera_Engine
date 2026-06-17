@@ -38,6 +38,22 @@ services:
       - rabbitmq
       - redis
 
+  ledger-service:
+    build:
+      context: ./services/ledger-service
+      dockerfile: Dockerfile
+    ports:
+      - "5200:8080"
+    environment:
+      SERVICE_NAME: ${LEDGER_SERVICE_NAME:-ledger-service}
+      ASPNETCORE_ENVIRONMENT: ${LEDGER_SERVICE_ENVIRONMENT:-Production}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://lottery:lottery_dev_password@rabbitmq:5672}
+      RABBITMQ_EXCHANGE_NAME: ${RABBITMQ_EXCHANGE_NAME:-lottery.events}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+    depends_on:
+      - rabbitmq
+      - redis
+
   rabbitmq:
     image: rabbitmq:3-management
     ports:
