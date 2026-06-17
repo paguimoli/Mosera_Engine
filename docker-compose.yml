@@ -17,8 +17,10 @@ services:
       SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-dummy-anon-key}
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://lottery:lottery_dev_password@rabbitmq:5672}
       RABBITMQ_EXCHANGE_NAME: ${RABBITMQ_EXCHANGE_NAME:-lottery.events}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     depends_on:
       - rabbitmq
+      - redis
 
   rabbitmq:
     image: rabbitmq:3-management
@@ -31,5 +33,14 @@ services:
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
 
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
 volumes:
   rabbitmq_data:
+  redis_data:
