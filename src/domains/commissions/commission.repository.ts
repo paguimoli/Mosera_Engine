@@ -7,10 +7,16 @@ import type {
   CommissionPlan,
   CommissionPlanRule,
   CommissionRuleType,
+  CommissionAccountingRun,
+  CommissionAccountingRunStatus,
+  CommissionAdjustment,
   CommissionRecord,
   CommissionRun,
+  CommissionRunDetail,
+  CreateCommissionAdjustmentInput,
   CreateCommissionPlanInput,
   CreateCommissionPlanRuleInput,
+  GenerateCommissionRunInput,
   CreateWeeklyCommissionRecordInput,
   PersistedCommissionPlan,
   PersistedCommissionPlanStatus,
@@ -65,6 +71,53 @@ type WeeklyCommissionRecordRow = {
   metadata?: Record<string, unknown> | null;
 };
 
+type CommissionAccountingRunRpcResult = {
+  runId?: unknown;
+  weekStart?: unknown;
+  weekEnd?: unknown;
+  currency?: unknown;
+  status?: unknown;
+  correlationId?: unknown;
+  createdAt?: unknown;
+  completedAt?: unknown;
+  detailCount?: unknown;
+  totalCommission?: unknown;
+};
+
+type CommissionAccountingRunRow = {
+  id: string;
+  week_start: string;
+  week_end: string;
+  currency: string;
+  status: CommissionAccountingRunStatus;
+  correlation_id?: string | null;
+  created_at: string;
+  completed_at?: string | null;
+};
+
+type CommissionRunDetailRow = {
+  id: string;
+  run_id: string;
+  account_id: string;
+  snapshot_id: string;
+  net_result: string | number;
+  commission_percentage_basis_points: number;
+  commission_amount: string | number;
+  created_at: string;
+};
+
+type CommissionAdjustmentRow = {
+  id: string;
+  account_id: string;
+  run_id: string;
+  adjustment_amount: string | number;
+  reason_code: string;
+  notes?: string | null;
+  actor_user_id?: string | null;
+  correlation_id?: string | null;
+  created_at: string;
+};
+
 const COMMISSION_PLAN_SELECT =
   "id, code, name, description, calculation_basis, status, created_at, updated_at";
 const COMMISSION_PLAN_RULE_SELECT =
@@ -73,6 +126,12 @@ const ACCOUNT_COMMISSION_ASSIGNMENT_SELECT =
   "id, account_id, commission_plan_id, status, effective_from, effective_to, created_at";
 const WEEKLY_COMMISSION_RECORD_SELECT =
   "id, period_id, account_id, commission_plan_id, calculation_basis, gross_basis_amount, commission_amount, status, created_at, approved_at, paid_at, metadata";
+const COMMISSION_RUN_SELECT =
+  "id, week_start, week_end, currency, status, correlation_id, created_at, completed_at";
+const COMMISSION_RUN_DETAIL_SELECT =
+  "id, run_id, account_id, snapshot_id, net_result, commission_percentage_basis_points, commission_amount, created_at";
+const COMMISSION_ADJUSTMENT_SELECT =
+  "id, account_id, run_id, adjustment_amount, reason_code, notes, actor_user_id, correlation_id, created_at";
 
 export class CommissionRepositoryError extends Error {
   constructor(message = "Commission persistence operation failed.") {
@@ -163,6 +222,90 @@ function mapWeeklyCommissionRecordRow(
     approvedAt: row.approved_at ?? null,
     paidAt: row.paid_at ?? null,
     metadata: row.metadata ?? {},
+  };
+}
+
+function mapCommissionAccountingRunRow(
+  row: CommissionAccountingRunRow | null,
+  detailCount = 0,
+  totalCommission = 0
+): CommissionAccountingRun | null {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    weekStart: row.week_start,
+    weekEnd: row.week_end,
+    currency: row.currency,
+    status: row.status,
+    correlationId: row.correlation_id ?? null,
+    createdAt: row.created_at,
+    completedAt: row.completed_at ?? null,
+    detailCount,
+    totalCommission,
+  };
+}
+
+function mapCommissionAccountingRunRpcResult(
+  row: CommissionAccountingRunRpcResult | null
+): CommissionAccountingRun {
+  if (!row || typeof row !== "object") {
+    throw new CommissionRepositoryError();
+  }
+
+  return {
+    id: String(row.runId ?? ""),
+    weekStart: String(row.weekStart ?? ""),
+    weekEnd: String(row.weekEnd ?? ""),
+    currency: String(row.currency ?? ""),
+    status: String(row.status ?? "FAILED") as CommissionAccountingRunStatus,
+    correlationId:
+      typeof row.correlationId === "string" ? row.correlationId : null,
+    createdAt: String(row.createdAt ?? ""),
+    completedAt: typeof row.completedAt === "string" ? row.completedAt : null,
+    detailCount: Number(row.detailCount ?? 0),
+    totalCommission: Number(row.totalCommission ?? 0),
+  };
+}
+
+function mapCommissionRunDetailRow(
+  row: CommissionRunDetailRow | null
+): CommissionRunDetail | null {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    runId: row.run_id,
+    accountId: row.account_id,
+    snapshotId: row.snapshot_id,
+    netResult: Number(row.net_result),
+    commissionPercentageBasisPoints: row.commission_percentage_basis_points,
+    commissionAmount: Number(row.commission_amount),
+    createdAt: row.created_at,
+  };
+}
+
+function mapCommissionAdjustmentRow(
+  row: CommissionAdjustmentRow | null
+): CommissionAdjustment | null {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    accountId: row.account_id,
+    runId: row.run_id,
+    adjustmentAmount: Number(row.adjustment_amount),
+    reasonCode: row.reason_code,
+    notes: row.notes ?? null,
+    actorUserId: row.actor_user_id ?? null,
+    correlationId: row.correlation_id ?? null,
+    createdAt: row.created_at,
   };
 }
 
@@ -458,6 +601,137 @@ export async function listWeeklyCommissionRecords(
   return ((data ?? []) as WeeklyCommissionRecordRow[])
     .map(mapWeeklyCommissionRecordRow)
     .filter((record): record is WeeklyCommissionRecord => Boolean(record));
+}
+
+export async function generateCommissionRunFromSnapshots(
+  input: GenerateCommissionRunInput
+): Promise<CommissionAccountingRun> {
+  const { data, error } = await supabaseServerAdmin.rpc(
+    "generate_commission_run_from_snapshots",
+    {
+      p_week_start: input.weekStart,
+      p_week_end: input.weekEnd,
+      p_currency: input.currency,
+      p_correlation_id: input.correlationId ?? null,
+    }
+  );
+
+  if (error) {
+    throw new CommissionRepositoryError(error.message);
+  }
+
+  return mapCommissionAccountingRunRpcResult(
+    data as CommissionAccountingRunRpcResult | null
+  );
+}
+
+export async function findCommissionRunById(
+  runId: string
+): Promise<CommissionAccountingRun | null> {
+  const { data, error } = await supabaseServerAdmin
+    .from("commission_runs")
+    .select(COMMISSION_RUN_SELECT)
+    .eq("id", runId)
+    .maybeSingle();
+
+  if (error) {
+    throw new CommissionRepositoryError(error.message);
+  }
+
+  const details = await listCommissionRunDetails(runId);
+
+  return mapCommissionAccountingRunRow(
+    data as CommissionAccountingRunRow | null,
+    details.length,
+    details.reduce((total, detail) => total + detail.commissionAmount, 0)
+  );
+}
+
+export async function listCommissionRunDetails(
+  runId: string
+): Promise<CommissionRunDetail[]> {
+  const { data, error } = await supabaseServerAdmin
+    .from("commission_run_details")
+    .select(COMMISSION_RUN_DETAIL_SELECT)
+    .eq("run_id", runId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new CommissionRepositoryError(error.message);
+  }
+
+  return ((data ?? []) as CommissionRunDetailRow[])
+    .map(mapCommissionRunDetailRow)
+    .filter((detail): detail is CommissionRunDetail => Boolean(detail));
+}
+
+export async function listCommissionRunsForAccount(
+  accountId: string
+): Promise<CommissionRunDetail[]> {
+  const { data, error } = await supabaseServerAdmin
+    .from("commission_run_details")
+    .select(COMMISSION_RUN_DETAIL_SELECT)
+    .eq("account_id", accountId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new CommissionRepositoryError(error.message);
+  }
+
+  return ((data ?? []) as CommissionRunDetailRow[])
+    .map(mapCommissionRunDetailRow)
+    .filter((detail): detail is CommissionRunDetail => Boolean(detail));
+}
+
+export async function createCommissionAdjustmentRecord(
+  input: CreateCommissionAdjustmentInput
+): Promise<CommissionAdjustment> {
+  const { data, error } = await supabaseServerAdmin.rpc(
+    "create_commission_adjustment",
+    {
+      p_account_id: input.accountId,
+      p_run_id: input.runId,
+      p_adjustment_amount: input.adjustmentAmount,
+      p_reason_code: input.reasonCode,
+      p_notes: input.notes ?? null,
+      p_actor_user_id: input.actorUserId ?? null,
+      p_correlation_id: input.correlationId ?? null,
+    }
+  );
+
+  if (error) {
+    throw new CommissionRepositoryError(error.message);
+  }
+
+  const adjustment = mapCommissionAdjustmentRow(
+    data as CommissionAdjustmentRow | null
+  );
+
+  if (!adjustment) {
+    throw new CommissionRepositoryError();
+  }
+
+  return adjustment;
+}
+
+export async function listCommissionAdjustmentsForRun(
+  runId: string
+): Promise<CommissionAdjustment[]> {
+  const { data, error } = await supabaseServerAdmin
+    .from("commission_adjustments")
+    .select(COMMISSION_ADJUSTMENT_SELECT)
+    .eq("run_id", runId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new CommissionRepositoryError(error.message);
+  }
+
+  return ((data ?? []) as CommissionAdjustmentRow[])
+    .map(mapCommissionAdjustmentRow)
+    .filter(
+      (adjustment): adjustment is CommissionAdjustment => Boolean(adjustment)
+    );
 }
 
 export function saveCommissionPlan(

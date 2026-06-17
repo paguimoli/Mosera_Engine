@@ -3,6 +3,8 @@ import type {
   CommissionAssignment,
   CommissionExecutionInput,
   CommissionPlan,
+  CreateCommissionAdjustmentInput,
+  GenerateCommissionRunInput,
 } from "./commission.types";
 
 function isPercentageModel(model?: string) {
@@ -86,6 +88,79 @@ export function validateCommissionRun(
 
   if (!run.accountingPeriodId && !run.marketId) {
     errors.push("Commission run requires accounting period or market.");
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
+function isValidDate(value: string) {
+  return Boolean(value) && !Number.isNaN(new Date(value).getTime());
+}
+
+function isIso4217Currency(currency: string) {
+  return /^[A-Z]{3}$/.test(currency);
+}
+
+function isIntegerMinorUnitAmount(amount: number) {
+  return Number.isInteger(amount);
+}
+
+export function validateGenerateCommissionRunInput(
+  input: GenerateCommissionRunInput
+): ValidationResult {
+  const errors: string[] = [];
+
+  if (!isValidDate(input.weekStart)) {
+    errors.push("Week start is required and must be a valid date.");
+  }
+
+  if (!isValidDate(input.weekEnd)) {
+    errors.push("Week end is required and must be a valid date.");
+  }
+
+  if (
+    isValidDate(input.weekStart) &&
+    isValidDate(input.weekEnd) &&
+    new Date(input.weekEnd).getTime() <= new Date(input.weekStart).getTime()
+  ) {
+    errors.push("Week end must be after week start.");
+  }
+
+  if (!isIso4217Currency(input.currency)) {
+    errors.push("Currency must be an ISO-4217 code.");
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
+export function validateCreateCommissionAdjustmentInput(
+  input: CreateCommissionAdjustmentInput
+): ValidationResult {
+  const errors: string[] = [];
+
+  if (!input.accountId) {
+    errors.push("Account id is required.");
+  }
+
+  if (!input.runId) {
+    errors.push("Commission run id is required.");
+  }
+
+  if (
+    !isIntegerMinorUnitAmount(input.adjustmentAmount) ||
+    input.adjustmentAmount === 0
+  ) {
+    errors.push("Adjustment amount must be a non-zero integer minor unit value.");
+  }
+
+  if (!input.reasonCode.trim()) {
+    errors.push("Reason code is required.");
   }
 
   return {

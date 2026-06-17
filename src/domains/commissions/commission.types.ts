@@ -82,6 +82,8 @@ export type CommissionExecutionInput = {
 
 export type CommissionCalculationBasis = "NET_LOSS" | "TURNOVER" | "HYBRID";
 
+export type CommissionType = "LOSS_BASED_PERCENTAGE";
+
 export type PersistedCommissionPlanStatus = "ACTIVE" | "DISABLED";
 
 export type CommissionRuleType =
@@ -178,4 +180,63 @@ export type CreateWeeklyCommissionRecordInput = {
   commissionAmount?: number;
   status?: WeeklyCommissionRecordStatus;
   metadata?: Record<string, unknown>;
+};
+
+export type CommissionAccountingRunStatus =
+  | "STARTED"
+  | "COMPLETED"
+  | "FAILED"
+  | "REVERSED";
+
+export type CommissionAccountingRun = {
+  id: string;
+  weekStart: string;
+  weekEnd: string;
+  currency: string;
+  status: CommissionAccountingRunStatus;
+  correlationId?: string | null;
+  createdAt: string;
+  completedAt?: string | null;
+  detailCount: number;
+  totalCommission: number;
+};
+
+export type CommissionRunDetail = {
+  id: string;
+  runId: string;
+  accountId: string;
+  snapshotId: string;
+  netResult: number;
+  commissionPercentageBasisPoints: number;
+  commissionAmount: number;
+  createdAt: string;
+};
+
+export type CommissionAdjustment = {
+  id: string;
+  accountId: string;
+  runId: string;
+  adjustmentAmount: number;
+  reasonCode: string;
+  notes?: string | null;
+  actorUserId?: string | null;
+  correlationId?: string | null;
+  createdAt: string;
+};
+
+export type GenerateCommissionRunInput = {
+  weekStart: string;
+  weekEnd: string;
+  currency: string;
+  correlationId?: string | null;
+};
+
+export type CreateCommissionAdjustmentInput = {
+  accountId: string;
+  runId: string;
+  adjustmentAmount: number;
+  reasonCode: string;
+  notes?: string | null;
+  actorUserId?: string | null;
+  correlationId?: string | null;
 };

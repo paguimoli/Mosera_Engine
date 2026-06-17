@@ -14,12 +14,18 @@ import {
   assignCommissionPlan,
   createCommissionPlan,
   createCommissionPlanRule,
+  createCommissionAdjustmentRecord,
   createWeeklyCommissionRecord,
   findActiveCommissionAssignment,
   findCommissionPlanByCode,
   findCommissionPlanById,
+  findCommissionRunById,
   findWeeklyCommissionRecord,
+  generateCommissionRunFromSnapshots,
   listCommissionAssignments,
+  listCommissionAdjustmentsForRun,
+  listCommissionRunDetails,
+  listCommissionRunsForAccount,
   listCommissionPlanRules,
   listCommissionPlans as listCommissionPlanRecords,
   listWeeklyCommissionRecords as listWeeklyCommissionRecordRows,
@@ -27,23 +33,42 @@ import {
 import type {
   AccountCommissionAssignment,
   AssignCommissionPlanInput,
+  CommissionAccountingRun,
+  CommissionAdjustment,
   CommissionAssignment,
   CommissionExecutionInput,
   CommissionPlan,
   CommissionPlanRule,
   CommissionRecord,
+  CommissionRunDetail,
   CommissionRollup,
   CommissionRun,
+  CreateCommissionAdjustmentInput,
   CreateCommissionPlanInput,
   CreateCommissionPlanRuleInput,
+  GenerateCommissionRunInput,
   PersistedCommissionPlan,
   WeeklyCommissionRecord,
 } from "./commission.types";
+import {
+  validateCreateCommissionAdjustmentInput,
+  validateGenerateCommissionRunInput,
+} from "./commission.validation";
 
 export class CommissionBusinessRuleError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "CommissionBusinessRuleError";
+  }
+}
+
+export class CommissionValidationError extends Error {
+  readonly errors: string[];
+
+  constructor(errors: string[]) {
+    super(errors.join(" "));
+    this.name = "CommissionValidationError";
+    this.errors = errors;
   }
 }
 
@@ -303,6 +328,76 @@ export async function listWeeklyCommissionRecords(
   periodId: string
 ): Promise<WeeklyCommissionRecord[]> {
   return listWeeklyCommissionRecordRows(periodId);
+}
+
+export async function generateSnapshotCommissionRun(
+  input: GenerateCommissionRunInput
+): Promise<CommissionAccountingRun> {
+  const normalized: GenerateCommissionRunInput = {
+    ...input,
+    currency: input.currency.trim().toUpperCase(),
+  };
+  const validation = validateGenerateCommissionRunInput(normalized);
+
+  if (!validation.valid) {
+    throw new CommissionValidationError(validation.errors);
+  }
+
+  return generateCommissionRunFromSnapshots(normalized);
+}
+
+export async function getSnapshotCommissionRun(runId: string): Promise<{
+  run: CommissionAccountingRun;
+  details: CommissionRunDetail[];
+  adjustments: CommissionAdjustment[];
+}> {
+  if (!runId) {
+    throw new CommissionValidationError(["Commission run id is required."]);
+  }
+
+  const run = await findCommissionRunById(runId);
+
+  if (!run) {
+    throw new CommissionBusinessRuleError("Commission run not found.");
+  }
+
+  const [details, adjustments] = await Promise.all([
+    listCommissionRunDetails(runId),
+    listCommissionAdjustmentsForRun(runId),
+  ]);
+
+  return {
+    run,
+    details,
+    adjustments,
+  };
+}
+
+export async function getAccountCommissionDetails(
+  accountId: string
+): Promise<CommissionRunDetail[]> {
+  if (!accountId) {
+    throw new CommissionValidationError(["Account id is required."]);
+  }
+
+  return listCommissionRunsForAccount(accountId);
+}
+
+export async function createCommissionAdjustment(
+  input: CreateCommissionAdjustmentInput
+): Promise<CommissionAdjustment> {
+  const normalized: CreateCommissionAdjustmentInput = {
+    ...input,
+    reasonCode: input.reasonCode.trim().toUpperCase(),
+    notes: input.notes?.trim() || null,
+  };
+  const validation = validateCreateCommissionAdjustmentInput(normalized);
+
+  if (!validation.valid) {
+    throw new CommissionValidationError(validation.errors);
+  }
+
+  return createCommissionAdjustmentRecord(normalized);
 }
 
 export function createCommissionPlanPayload(form: {
