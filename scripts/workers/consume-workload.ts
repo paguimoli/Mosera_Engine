@@ -32,6 +32,7 @@ async function main() {
   const category = parseCategory(process.argv[2]);
   const routing = resolveRabbitMqWorkloadRouting(category);
   const topology = getQueueTopologyEntry(category);
+  const workerName = topology.consumerOwner;
   const consumer = new RabbitMqQueueConsumer();
 
   logger.info({
@@ -47,6 +48,7 @@ async function main() {
 
   await consumer.consume({
     routing,
+    workerName,
     handler: async (message) => {
       logger.info({
         message: "RabbitMQ workload event payload consumed.",

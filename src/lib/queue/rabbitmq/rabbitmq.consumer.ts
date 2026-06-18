@@ -1,6 +1,12 @@
 import * as amqp from "amqplib";
 import type { Channel, ChannelModel, ConsumeMessage } from "amqplib";
 
+import {
+  getWorkerInstanceId,
+  safeRecordWorkerFailure,
+  safeRecordWorkerHeartbeat,
+  safeRecordWorkerProcessingMetric,
+} from "@/src/domains/operations/worker-observability.service";
 import { logger } from "@/src/lib/observability/logger";
 import type { QueueMessage } from "../queue.types";
 import { getRabbitMqQueueConfig } from "./rabbitmq.config";
@@ -38,12 +44,19 @@ export class RabbitMqQueueConsumer {
   async consume({
     routing,
     handler,
+    workerName,
+    instanceId,
   }: {
     routing: RabbitMqRouting;
     handler: RabbitMqMessageHandler;
+    workerName?: string;
+    instanceId?: string;
   }): Promise<void> {
     const channel = await this.getChannel();
     const config = getRabbitMqQueueConfig();
+    const resolvedWorkerName = workerName ?? routing.workloadCategory.toLowerCase();
+    const resolvedInstanceId =
+      instanceId ?? getWorkerInstanceId(resolvedWorkerName);
 
     await channel.assertExchange(routing.exchange, "topic", {
       durable: config.durable,
@@ -60,6 +73,16 @@ export class RabbitMqQueueConsumer {
       await channel.bindQueue(routing.queue, routing.exchange, bindingKey);
     }
     await channel.prefetch(1);
+    await safeRecordWorkerHeartbeat({
+      workerName: resolvedWorkerName,
+      workloadCategory: routing.workloadCategory,
+      instanceId: resolvedInstanceId,
+      status: "ACTIVE",
+      metadata: {
+        queue: routing.queue,
+        routingKey: routing.routingKey,
+      },
+    });
 
     await channel.consume(
       routing.queue,
@@ -69,6 +92,8 @@ export class RabbitMqQueueConsumer {
         }
 
         let message: QueueMessage;
+
+        const parseStartedAt = Date.now();
 
         try {
           message = JSON.parse(
@@ -87,6 +112,24 @@ export class RabbitMqQueueConsumer {
           });
 
           channel.nack(rawMessage, false, false);
+          await safeRecordWorkerFailure({
+            workerName: resolvedWorkerName,
+            workloadCategory: routing.workloadCategory,
+            eventType: metadata.eventType || "unknown",
+            entityId: metadata.aggregateId || null,
+            correlationId: metadata.correlationId,
+            errorCode: "MESSAGE_PARSE_FAILED",
+            errorMessage: getErrorMessage(error),
+            metadata,
+          });
+          await safeRecordWorkerProcessingMetric({
+            workerName: resolvedWorkerName,
+            workloadCategory: routing.workloadCategory,
+            eventType: metadata.eventType || "unknown",
+            failedCount: 1,
+            totalProcessingMs: Date.now() - parseStartedAt,
+            maxProcessingMs: Date.now() - parseStartedAt,
+          });
           logger.warn({
             message: "RabbitMQ message rejected.",
             correlationId: metadata.correlationId,
@@ -96,6 +139,7 @@ export class RabbitMqQueueConsumer {
         }
 
         const metadata = getMessageMetadata(rawMessage, message);
+        const startedAt = Date.now();
 
         logger.info({
           message: "RabbitMQ message received.",
@@ -106,6 +150,26 @@ export class RabbitMqQueueConsumer {
         try {
           await handler(message, rawMessage);
           channel.ack(rawMessage);
+          const processingMs = Date.now() - startedAt;
+
+          await safeRecordWorkerHeartbeat({
+            workerName: resolvedWorkerName,
+            workloadCategory: routing.workloadCategory,
+            instanceId: resolvedInstanceId,
+            status: "ACTIVE",
+            metadata: {
+              lastSuccessfulEventAt: new Date().toISOString(),
+              eventType: message.type,
+            },
+          });
+          await safeRecordWorkerProcessingMetric({
+            workerName: resolvedWorkerName,
+            workloadCategory: routing.workloadCategory,
+            eventType: message.type,
+            processedCount: 1,
+            totalProcessingMs: processingMs,
+            maxProcessingMs: processingMs,
+          });
           logger.info({
             message: "RabbitMQ message acknowledged.",
             correlationId: metadata.correlationId,
@@ -122,6 +186,39 @@ export class RabbitMqQueueConsumer {
           });
 
           channel.nack(rawMessage, false, false);
+          const processingMs = Date.now() - startedAt;
+
+          await safeRecordWorkerHeartbeat({
+            workerName: resolvedWorkerName,
+            workloadCategory: routing.workloadCategory,
+            instanceId: resolvedInstanceId,
+            status: "DEGRADED",
+            metadata: {
+              lastFailureAt: new Date().toISOString(),
+              eventType: message.type,
+            },
+          });
+          await safeRecordWorkerProcessingMetric({
+            workerName: resolvedWorkerName,
+            workloadCategory: routing.workloadCategory,
+            eventType: message.type,
+            failedCount: 1,
+            retryCount: 1,
+            totalProcessingMs: processingMs,
+            maxProcessingMs: processingMs,
+          });
+          await safeRecordWorkerFailure({
+            workerName: resolvedWorkerName,
+            workloadCategory: routing.workloadCategory,
+            eventType: message.type,
+            entityId: message.aggregateId ?? null,
+            correlationId: message.correlationId ?? null,
+            errorMessage: getErrorMessage(error),
+            metadata: {
+              queue: routing.queue,
+              routingKey: rawMessage.fields.routingKey,
+            },
+          });
           logger.warn({
             message: "RabbitMQ message rejected.",
             correlationId: metadata.correlationId,

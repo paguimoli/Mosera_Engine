@@ -197,6 +197,7 @@ const PREFIX_EVENT_CATEGORY: Array<[string, QueueWorkloadCategory]> = [
   ["ledger.", "CRITICAL_FINANCIAL"],
   ["wallet.", "CRITICAL_FINANCIAL"],
   ["credit.reservation.", "CRITICAL_FINANCIAL"],
+  ["credit.exposure.", "CRITICAL_FINANCIAL"],
   ["credit.release.", "CRITICAL_FINANCIAL"],
   ["credit.balance.", "CRITICAL_FINANCIAL"],
   ["ticket.", "TICKET_LIFECYCLE"],

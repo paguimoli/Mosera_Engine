@@ -21,8 +21,10 @@ export type RabbitMqQueueHealth = {
   consumerOwner: string;
   messagesReady: number | null;
   messagesUnacked: number | null;
+  consumerCount: number | null;
   deadLetterMessagesReady: number | null;
   deadLetterMessagesUnacked: number | null;
+  status: "HEALTHY" | "WARNING" | "CRITICAL" | "DEGRADED";
   available: boolean;
   error: string | null;
 };

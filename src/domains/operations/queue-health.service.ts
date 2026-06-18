@@ -9,6 +9,7 @@ import type {
 type RabbitMqQueueResponse = {
   messages_ready?: number;
   messages_unacknowledged?: number;
+  consumers?: number;
 };
 
 function getErrorMessage(error: unknown) {
@@ -78,7 +79,7 @@ function getRabbitMqManagementConfig() {
   const sourceUrl = new URL(explicitUrl ?? amqpUrl ?? "");
   const protocol = sourceUrl.protocol === "https:" ? "https:" : "http:";
   const hostname = sourceUrl.hostname || "localhost";
-  const port = sourceUrl.port || (explicitUrl ? "" : "15672");
+  const port = explicitUrl ? sourceUrl.port : "15672";
   const username = decodeURIComponent(sourceUrl.username || "guest");
   const password = decodeURIComponent(sourceUrl.password || "guest");
   const vhost = sourceUrl.pathname && sourceUrl.pathname !== "/" ? sourceUrl.pathname.slice(1) : "/";
@@ -93,7 +94,7 @@ function getRabbitMqManagementConfig() {
 
 async function fetchRabbitMqQueue(
   queueName: string
-): Promise<{ ready: number; unacked: number }> {
+): Promise<{ ready: number; unacked: number; consumers: number }> {
   const config = getRabbitMqManagementConfig();
 
   if (!config) {
@@ -118,7 +119,32 @@ async function fetchRabbitMqQueue(
   return {
     ready: body.messages_ready ?? 0,
     unacked: body.messages_unacknowledged ?? 0,
+    consumers: body.consumers ?? 0,
   };
+}
+
+function getQueueStatus({
+  ready,
+  dlqReady,
+  available,
+}: {
+  ready: number | null;
+  dlqReady: number | null;
+  available: boolean;
+}): RabbitMqQueueHealth["status"] {
+  if (!available) {
+    return "DEGRADED";
+  }
+
+  if ((dlqReady ?? 0) > 0) {
+    return "CRITICAL";
+  }
+
+  if ((ready ?? 0) > 0) {
+    return "WARNING";
+  }
+
+  return "HEALTHY";
 }
 
 async function getRabbitMqHealth(): Promise<RabbitMqQueueHealth[]> {
@@ -141,8 +167,14 @@ async function getRabbitMqHealth(): Promise<RabbitMqQueueHealth[]> {
           consumerOwner: entry.consumerOwner,
           messagesReady: queue.ready,
           messagesUnacked: queue.unacked,
+          consumerCount: queue.consumers,
           deadLetterMessagesReady: dlq.ready,
           deadLetterMessagesUnacked: dlq.unacked,
+          status: getQueueStatus({
+            ready: queue.ready,
+            dlqReady: dlq.ready,
+            available: true,
+          }),
           available: true,
           error: null,
         };
@@ -156,8 +188,10 @@ async function getRabbitMqHealth(): Promise<RabbitMqQueueHealth[]> {
           consumerOwner: entry.consumerOwner,
           messagesReady: null,
           messagesUnacked: null,
+          consumerCount: null,
           deadLetterMessagesReady: null,
           deadLetterMessagesUnacked: null,
+          status: "DEGRADED",
           available: false,
           error: getErrorMessage(error),
         };
