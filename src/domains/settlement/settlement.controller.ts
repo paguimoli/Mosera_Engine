@@ -25,6 +25,7 @@ import {
   type SettlementCreditApplicationResult,
 } from "./settlement-credit.service";
 import { applySettlementLedgerEffects } from "./settlement-financial-effects.service";
+import { runSettlementShadowComparison } from "./settlement-shadow-client";
 import {
   applySettlementRunStatusTransition,
   buildPlaceholderSettlementRecords,
@@ -390,6 +391,14 @@ export async function executeSettlementRunController({
   const ledgerEffects = await applySettlementLedgerEffects({
     settlementRecords: [...runRecords, ...execution.settlementRecords],
   });
+  const shadowSummary = await runSettlementShadowComparison({
+    settlementRecords: ledgerEffects.settlementRecords,
+    tickets: execution.updatedTickets,
+    ticketLines: execution.updatedTicketLines,
+    winningNumbers,
+    currency,
+    correlationId,
+  });
   const { creditSettlementResults, creditSettlementFailures } =
     await applyCreditSettlementsForRun({
       settlementRecords: ledgerEffects.settlementRecords,
@@ -429,6 +438,7 @@ export async function executeSettlementRunController({
       ...execution,
       settlementRecords: ledgerEffects.settlementRecords,
       creditSettlementResults,
+      shadowSummary,
       errors: [
         ...execution.errors,
         ...formatCreditSettlementErrors({
@@ -546,6 +556,14 @@ export async function resumeSettlementRunController({
   const ledgerEffects = await applySettlementLedgerEffects({
     settlementRecords: [...runRecords, ...execution.settlementRecords],
   });
+  const shadowSummary = await runSettlementShadowComparison({
+    settlementRecords: ledgerEffects.settlementRecords,
+    tickets: execution.updatedTickets,
+    ticketLines: execution.updatedTicketLines,
+    winningNumbers,
+    currency,
+    correlationId,
+  });
   const { creditSettlementResults, creditSettlementFailures } =
     await applyCreditSettlementsForRun({
       settlementRecords: ledgerEffects.settlementRecords,
@@ -585,6 +603,7 @@ export async function resumeSettlementRunController({
       ...execution,
       settlementRecords: ledgerEffects.settlementRecords,
       creditSettlementResults,
+      shadowSummary,
       errors: [
         ...execution.errors,
         ...formatCreditSettlementErrors({

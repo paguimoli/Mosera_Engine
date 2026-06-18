@@ -18,6 +18,8 @@ services:
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://lottery:lottery_dev_password@rabbitmq:5672}
       RABBITMQ_EXCHANGE_NAME: ${RABBITMQ_EXCHANGE_NAME:-lottery.events}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      SETTLEMENT_SHADOW_MODE_ENABLED: ${SETTLEMENT_SHADOW_MODE_ENABLED:-false}
+      SETTLEMENT_SERVICE_URL: ${SETTLEMENT_SERVICE_URL:-http://settlement-service:8080}
     depends_on:
       - rabbitmq
       - redis
@@ -63,6 +65,22 @@ services:
     environment:
       SERVICE_NAME: ${CREDIT_WALLET_SERVICE_NAME:-credit-wallet-service}
       ASPNETCORE_ENVIRONMENT: ${CREDIT_WALLET_SERVICE_ENVIRONMENT:-Production}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://lottery:lottery_dev_password@rabbitmq:5672}
+      RABBITMQ_EXCHANGE_NAME: ${RABBITMQ_EXCHANGE_NAME:-lottery.events}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+    depends_on:
+      - rabbitmq
+      - redis
+
+  settlement-service:
+    build:
+      context: ./services/settlement-service
+      dockerfile: Dockerfile
+    ports:
+      - "5400:8080"
+    environment:
+      SERVICE_NAME: ${SETTLEMENT_SERVICE_NAME:-settlement-service}
+      ASPNETCORE_ENVIRONMENT: ${SETTLEMENT_SERVICE_ENVIRONMENT:-Production}
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://lottery:lottery_dev_password@rabbitmq:5672}
       RABBITMQ_EXCHANGE_NAME: ${RABBITMQ_EXCHANGE_NAME:-lottery.events}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}

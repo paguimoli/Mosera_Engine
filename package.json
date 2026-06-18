@@ -16,6 +16,7 @@
     "qa:workload-isolation": "node scripts/qa/workload-isolation-queue-topology.mjs",
     "qa:service-boundaries": "node scripts/qa/service-boundary-hardening.mjs",
     "qa:settlement-boundaries": "node scripts/qa/settlement-boundary-hardening.mjs",
+    "qa:settlement-shadow": "node scripts/qa/settlement-shadow-mode.mjs",
     "ops:reconcile": "node scripts/operations/run-reconciliation.mjs",
     "ops:audit": "node scripts/operations/audit-correlation-check.mjs",
     "ops:queue-health": "node scripts/operations/queue-health.mjs",
