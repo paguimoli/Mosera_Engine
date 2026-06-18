@@ -4,6 +4,8 @@ import type {
   ListReconciliationFindingsInput,
   ReconciliationFinding,
   ReconciliationRun,
+  ReconciliationFindingReviewStatus,
+  ReconciliationRunReviewStatus,
   ReconciliationRunStatus,
   ReconciliationRunType,
   ReconciliationScopeType,
@@ -74,6 +76,10 @@ type ReconciliationRunRow = {
   passed_checks: number;
   failed_checks: number;
   warning_checks: number;
+  review_status?: ReconciliationRunReviewStatus | null;
+  reviewed_by_user_id?: string | null;
+  reviewed_at?: string | null;
+  severity_summary?: Record<string, unknown> | null;
   correlation_id?: string | null;
   created_at: string;
   completed_at?: string | null;
@@ -91,13 +97,21 @@ type ReconciliationFindingRow = {
   currency?: string | null;
   message: string;
   metadata?: Record<string, unknown> | null;
+  review_status?: ReconciliationFindingReviewStatus | null;
+  assigned_operator_user_id?: string | null;
+  reviewed_at?: string | null;
+  acknowledged_by_user_id?: string | null;
+  acknowledged_at?: string | null;
+  resolved_by_user_id?: string | null;
+  resolved_at?: string | null;
+  resolution_notes?: string | null;
   created_at: string;
 };
 
 const RUN_SELECT =
-  "id, run_type, scope_type, scope_id, week_start, week_end, currency, status, total_checks, passed_checks, failed_checks, warning_checks, correlation_id, created_at, completed_at";
+  "id, run_type, scope_type, scope_id, week_start, week_end, currency, status, total_checks, passed_checks, failed_checks, warning_checks, review_status, reviewed_by_user_id, reviewed_at, severity_summary, correlation_id, created_at, completed_at";
 const FINDING_SELECT =
-  "id, run_id, severity, check_code, entity_type, entity_id, expected_amount, actual_amount, currency, message, metadata, created_at";
+  "id, run_id, severity, check_code, entity_type, entity_id, expected_amount, actual_amount, currency, message, metadata, review_status, assigned_operator_user_id, reviewed_at, acknowledged_by_user_id, acknowledged_at, resolved_by_user_id, resolved_at, resolution_notes, created_at";
 
 export class ReconciliationRepositoryError extends Error {
   constructor(message = "Reconciliation persistence operation failed.") {
@@ -124,6 +138,10 @@ function mapRunRow(row: ReconciliationRunRow | null): ReconciliationRun | null {
     passedChecks: row.passed_checks,
     failedChecks: row.failed_checks,
     warningChecks: row.warning_checks,
+    reviewStatus: row.review_status ?? "PENDING",
+    reviewedByUserId: row.reviewed_by_user_id ?? null,
+    reviewedAt: row.reviewed_at ?? null,
+    severitySummary: row.severity_summary ?? {},
     correlationId: row.correlation_id ?? null,
     createdAt: row.created_at,
     completedAt: row.completed_at ?? null,
@@ -155,6 +173,14 @@ function mapFindingRow(
     currency: row.currency ?? null,
     message: row.message,
     metadata: row.metadata ?? {},
+    reviewStatus: row.review_status ?? "OPEN",
+    assignedOperatorUserId: row.assigned_operator_user_id ?? null,
+    reviewedAt: row.reviewed_at ?? null,
+    acknowledgedByUserId: row.acknowledged_by_user_id ?? null,
+    acknowledgedAt: row.acknowledged_at ?? null,
+    resolvedByUserId: row.resolved_by_user_id ?? null,
+    resolvedAt: row.resolved_at ?? null,
+    resolutionNotes: row.resolution_notes ?? null,
     createdAt: row.created_at,
   };
 }
@@ -226,6 +252,13 @@ export async function completeReconciliationRun({
       passed_checks: passedChecks,
       failed_checks: failedChecks,
       warning_checks: warningChecks,
+      review_status:
+        failedChecks > 0 || warningChecks > 0 ? "REQUIRES_ATTENTION" : "PENDING",
+      severity_summary: {
+        pass: passedChecks,
+        warning: warningChecks,
+        fail: failedChecks,
+      },
       completed_at: new Date().toISOString(),
     })
     .eq("id", runId)
@@ -336,6 +369,152 @@ export async function listRecentReconciliationRuns(
   return ((data ?? []) as ReconciliationRunRow[])
     .map(mapRunRow)
     .filter((run): run is ReconciliationRun => Boolean(run));
+}
+
+export async function listOpenReconciliationFindings(
+  limit = 100
+): Promise<ReconciliationFinding[]> {
+  const { data, error } = await supabaseServerAdmin
+    .from("reconciliation_run_findings")
+    .select(FINDING_SELECT)
+    .in("severity", ["WARNING", "FAIL"])
+    .neq("review_status", "RESOLVED")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    throw new ReconciliationRepositoryError(error.message);
+  }
+
+  return ((data ?? []) as ReconciliationFindingRow[])
+    .map(mapFindingRow)
+    .filter((finding): finding is ReconciliationFinding => Boolean(finding));
+}
+
+export async function findReconciliationFindingById(
+  findingId: string
+): Promise<ReconciliationFinding | null> {
+  const { data, error } = await supabaseServerAdmin
+    .from("reconciliation_run_findings")
+    .select(FINDING_SELECT)
+    .eq("id", findingId)
+    .maybeSingle();
+
+  if (error) {
+    throw new ReconciliationRepositoryError(error.message);
+  }
+
+  return mapFindingRow(data as ReconciliationFindingRow | null);
+}
+
+export async function acknowledgeReconciliationFindingRecord({
+  findingId,
+  actorUserId,
+  assignedOperatorUserId,
+  notes,
+}: {
+  findingId: string;
+  actorUserId: string;
+  assignedOperatorUserId?: string | null;
+  notes?: string | null;
+}): Promise<ReconciliationFinding> {
+  const acknowledgedAt = new Date().toISOString();
+  const { data, error } = await supabaseServerAdmin
+    .from("reconciliation_run_findings")
+    .update({
+      review_status: "ACKNOWLEDGED",
+      assigned_operator_user_id: assignedOperatorUserId ?? actorUserId,
+      reviewed_at: acknowledgedAt,
+      acknowledged_by_user_id: actorUserId,
+      acknowledged_at: acknowledgedAt,
+      resolution_notes: notes ?? null,
+    })
+    .eq("id", findingId)
+    .neq("review_status", "RESOLVED")
+    .select(FINDING_SELECT)
+    .maybeSingle();
+
+  if (error) {
+    throw new ReconciliationRepositoryError(error.message);
+  }
+
+  const finding = mapFindingRow(data as ReconciliationFindingRow | null);
+
+  if (!finding) {
+    throw new ReconciliationRepositoryError("Reconciliation finding not found.");
+  }
+
+  return finding;
+}
+
+export async function resolveReconciliationFindingRecord({
+  findingId,
+  actorUserId,
+  notes,
+}: {
+  findingId: string;
+  actorUserId: string;
+  notes: string;
+}): Promise<ReconciliationFinding> {
+  const resolvedAt = new Date().toISOString();
+  const { data, error } = await supabaseServerAdmin
+    .from("reconciliation_run_findings")
+    .update({
+      review_status: "RESOLVED",
+      reviewed_at: resolvedAt,
+      resolved_by_user_id: actorUserId,
+      resolved_at: resolvedAt,
+      resolution_notes: notes,
+    })
+    .eq("id", findingId)
+    .select(FINDING_SELECT)
+    .maybeSingle();
+
+  if (error) {
+    throw new ReconciliationRepositoryError(error.message);
+  }
+
+  const finding = mapFindingRow(data as ReconciliationFindingRow | null);
+
+  if (!finding) {
+    throw new ReconciliationRepositoryError("Reconciliation finding not found.");
+  }
+
+  return finding;
+}
+
+export async function reviewReconciliationRunRecord({
+  runId,
+  actorUserId,
+  reviewStatus,
+}: {
+  runId: string;
+  actorUserId: string;
+  reviewStatus: ReconciliationRunReviewStatus;
+}): Promise<ReconciliationRun> {
+  const reviewedAt = new Date().toISOString();
+  const { data, error } = await supabaseServerAdmin
+    .from("reconciliation_runs")
+    .update({
+      review_status: reviewStatus,
+      reviewed_by_user_id: actorUserId,
+      reviewed_at: reviewedAt,
+    })
+    .eq("id", runId)
+    .select(RUN_SELECT)
+    .maybeSingle();
+
+  if (error) {
+    throw new ReconciliationRepositoryError(error.message);
+  }
+
+  const run = mapRunRow(data as ReconciliationRunRow | null);
+
+  if (!run) {
+    throw new ReconciliationRepositoryError("Reconciliation run not found.");
+  }
+
+  return run;
 }
 
 export async function recordReconciliationOutboxEvent({

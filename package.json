@@ -11,6 +11,8 @@
     "auth:bootstrap-break-glass": "node scripts/run-ts-script.mjs scripts/bootstrap-break-glass-accounts.ts",
     "qa:credit-launch": "node scripts/qa/credit-launch-e2e.mjs",
     "qa:operational-access": "node scripts/qa/operational-access-hardening.mjs",
+    "qa:reconciliation-operations": "node scripts/qa/reconciliation-operations.mjs",
+    "ops:reconcile": "node scripts/operations/run-reconciliation.mjs",
     "docker:build": "docker compose build",
     "docker:up": "docker compose up",
     "docker:down": "docker compose down",

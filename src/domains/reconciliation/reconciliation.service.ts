@@ -1,9 +1,12 @@
 import { getPlayerCreditSummary } from "../credit/credit-reservation.service";
 import {
+  acknowledgeReconciliationFindingRecord,
   completeReconciliationRun,
   createReconciliationFindings,
   createReconciliationRun,
+  findReconciliationFindingById,
   findReconciliationRunById,
+  listOpenReconciliationFindings,
   listCommissionRunDetails,
   listCreditReservations,
   listCreditSettlementApplications,
@@ -12,12 +15,18 @@ import {
   listTicketsSafely,
   listWeeklyAccountingSnapshots,
   recordReconciliationOutboxEvent,
+  resolveReconciliationFindingRecord,
+  reviewReconciliationRunRecord,
 } from "./reconciliation.repository";
+import type { AuthContext } from "../auth/auth-context.types";
+import { AUTHENTICATION_EVENT_TYPES } from "../auth/auth.constants";
+import { saveAuthAuditEvent } from "../auth/auth.repository";
 import type {
   CreateReconciliationFindingInput,
   ListReconciliationFindingsInput,
   ReconciliationFinding,
   ReconciliationRun,
+  ReconciliationRunReviewStatus,
   RunReconciliationInput,
 } from "./reconciliation.types";
 import {
@@ -582,6 +591,20 @@ export async function runReconciliation(
       },
     });
 
+    if (completedRun.failedChecks > 0 || completedRun.warningChecks > 0) {
+      await recordReconciliationOutboxEvent({
+        eventType: "reconciliation.run.requires_attention",
+        aggregateId: completedRun.id,
+        correlationId: normalized.correlationId,
+        payload: {
+          runId: completedRun.id,
+          runType: completedRun.runType,
+          failedChecks: completedRun.failedChecks,
+          warningChecks: completedRun.warningChecks,
+        },
+      });
+    }
+
     for (const finding of persistedFindings) {
       if (finding.severity === "FAIL" || finding.severity === "WARNING") {
         await recordReconciliationOutboxEvent({
@@ -685,4 +708,211 @@ export async function getReconciliationSummary() {
     latestFailedChecks: runs[0]?.failedChecks ?? 0,
     latestWarningChecks: runs[0]?.warningChecks ?? 0,
   };
+}
+
+export async function getReconciliationOperationsSummary() {
+  const runs = await listRecentReconciliationRuns(50);
+  const openFindings = await listOpenReconciliationFindings(500);
+  const openFailCount = openFindings.filter(
+    (finding) => finding.severity === "FAIL"
+  ).length;
+  const openWarningCount = openFindings.filter(
+    (finding) => finding.severity === "WARNING"
+  ).length;
+  const latestRun = runs[0] ?? null;
+
+  return {
+    latestRun,
+    recentRuns: runs,
+    openFindingsCount: openFindings.length,
+    openFailCount,
+    openWarningCount,
+    launchBlocked: openFailCount > 0,
+    severityBehavior: {
+      PASS: "No action required.",
+      WARNING: "Review required but does not block normal operations.",
+      FAIL: "Blocks launch or beta readiness until acknowledged or resolved.",
+    },
+  };
+}
+
+export async function getOpenReconciliationFindings(limit = 100) {
+  return listOpenReconciliationFindings(Math.min(Math.max(limit, 1), 500));
+}
+
+function requireFindingId(findingId: string) {
+  if (!findingId) {
+    throw new ReconciliationValidationError(["Reconciliation finding id is required."]);
+  }
+}
+
+function requireResolutionNotes(notes: string) {
+  if (!notes.trim()) {
+    throw new ReconciliationValidationError(["Resolution notes are required."]);
+  }
+}
+
+export async function acknowledgeReconciliationFinding({
+  findingId,
+  actor,
+  assignedOperatorUserId,
+  notes,
+  correlationId,
+}: {
+  findingId: string;
+  actor: AuthContext;
+  assignedOperatorUserId?: string | null;
+  notes?: string | null;
+  correlationId?: string | null;
+}) {
+  requireFindingId(findingId);
+
+  const existing = await findReconciliationFindingById(findingId);
+
+  if (!existing) {
+    throw new ReconciliationBusinessRuleError("Reconciliation finding not found.");
+  }
+
+  if (existing.reviewStatus === "RESOLVED") {
+    throw new ReconciliationBusinessRuleError(
+      "Resolved reconciliation findings cannot be acknowledged."
+    );
+  }
+
+  const finding = await acknowledgeReconciliationFindingRecord({
+    findingId,
+    actorUserId: actor.user.id,
+    assignedOperatorUserId: assignedOperatorUserId || null,
+    notes: notes || null,
+  });
+
+  await saveAuthAuditEvent({
+    userId: actor.user.id,
+    eventType: AUTHENTICATION_EVENT_TYPES.RECONCILIATION_FINDING_ACKNOWLEDGED,
+    metadata: {
+      findingId,
+      runId: finding.runId,
+      severity: finding.severity,
+    },
+  });
+
+  await recordReconciliationOutboxEvent({
+    eventType: "reconciliation.finding.acknowledged",
+    aggregateId: finding.id,
+    correlationId,
+    payload: {
+      findingId: finding.id,
+      runId: finding.runId,
+      severity: finding.severity,
+      actorUserId: actor.user.id,
+    },
+  });
+
+  return finding;
+}
+
+export async function resolveReconciliationFinding({
+  findingId,
+  actor,
+  notes,
+  correlationId,
+}: {
+  findingId: string;
+  actor: AuthContext;
+  notes: string;
+  correlationId?: string | null;
+}) {
+  requireFindingId(findingId);
+  requireResolutionNotes(notes);
+
+  const existing = await findReconciliationFindingById(findingId);
+
+  if (!existing) {
+    throw new ReconciliationBusinessRuleError("Reconciliation finding not found.");
+  }
+
+  const finding = await resolveReconciliationFindingRecord({
+    findingId,
+    actorUserId: actor.user.id,
+    notes: notes.trim(),
+  });
+
+  await saveAuthAuditEvent({
+    userId: actor.user.id,
+    eventType: AUTHENTICATION_EVENT_TYPES.RECONCILIATION_FINDING_RESOLVED,
+    metadata: {
+      findingId,
+      runId: finding.runId,
+      severity: finding.severity,
+    },
+  });
+
+  await recordReconciliationOutboxEvent({
+    eventType: "reconciliation.finding.resolved",
+    aggregateId: finding.id,
+    correlationId,
+    payload: {
+      findingId: finding.id,
+      runId: finding.runId,
+      severity: finding.severity,
+      actorUserId: actor.user.id,
+    },
+  });
+
+  return finding;
+}
+
+export async function reviewReconciliationRun({
+  runId,
+  actor,
+  reviewStatus,
+  correlationId,
+}: {
+  runId: string;
+  actor: AuthContext;
+  reviewStatus?: ReconciliationRunReviewStatus | null;
+  correlationId?: string | null;
+}) {
+  if (!runId) {
+    throw new ReconciliationValidationError(["Reconciliation run id is required."]);
+  }
+
+  const existing = await findReconciliationRunById(runId);
+
+  if (!existing) {
+    throw new ReconciliationBusinessRuleError("Reconciliation run not found.");
+  }
+
+  const status =
+    reviewStatus ??
+    (existing.failedChecks > 0 || existing.warningChecks > 0
+      ? "REQUIRES_ATTENTION"
+      : "REVIEWED");
+  const run = await reviewReconciliationRunRecord({
+    runId,
+    actorUserId: actor.user.id,
+    reviewStatus: status,
+  });
+
+  await saveAuthAuditEvent({
+    userId: actor.user.id,
+    eventType: AUTHENTICATION_EVENT_TYPES.RECONCILIATION_RUN_REVIEWED,
+    metadata: {
+      runId,
+      reviewStatus: status,
+    },
+  });
+
+  await recordReconciliationOutboxEvent({
+    eventType: "reconciliation.run.reviewed",
+    aggregateId: run.id,
+    correlationId,
+    payload: {
+      runId: run.id,
+      reviewStatus: status,
+      actorUserId: actor.user.id,
+    },
+  });
+
+  return run;
 }

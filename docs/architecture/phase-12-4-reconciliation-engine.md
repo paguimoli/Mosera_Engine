@@ -180,6 +180,11 @@ Protected APIs:
 - `GET /api/reconciliation/run/{runId}`
 - `GET /api/reconciliation/findings`
 - `GET /api/reconciliation/summary`
+- `GET /api/reconciliation/operations/summary`
+- `GET /api/reconciliation/operations/open-findings`
+- `POST /api/reconciliation/findings/{findingId}/acknowledge`
+- `POST /api/reconciliation/findings/{findingId}/resolve`
+- `POST /api/reconciliation/run/{runId}/review`
 
 Run creation requires the existing `ledger.post_adjustment` permission because it creates persistent audit rows and outbox events. Read endpoints require `reports.view`.
 
@@ -192,6 +197,10 @@ Events:
 - `reconciliation.run.completed`
 - `reconciliation.run.failed`
 - `reconciliation.finding.created`
+- `reconciliation.finding.acknowledged`
+- `reconciliation.finding.resolved`
+- `reconciliation.run.reviewed`
+- `reconciliation.run.requires_attention`
 
 `reconciliation.finding.created` is emitted for warning and failure findings. Passing findings remain queryable in the database without producing extra event volume.
 
@@ -219,6 +228,15 @@ Recommended beta workflow:
 4. Run `ACCOUNTING` after weekly snapshots are generated.
 5. Run `COMMISSION` after commission runs are generated.
 6. Export findings for operator signoff before beta weekly close.
+
+Phase 12.7 adds operational review metadata:
+
+- Run-level review status: `PENDING`, `REVIEWED`, `REQUIRES_ATTENTION`.
+- Finding-level review status: `OPEN`, `ACKNOWLEDGED`, `RESOLVED`.
+- Assigned operator, review timestamps, acknowledgement timestamps, resolution timestamps, and resolution notes.
+- Severity summaries on reconciliation runs.
+
+These controls do not mutate source financial records. They only add operational review metadata, audit records, and outbox events.
 
 ## 13. Limitations
 
