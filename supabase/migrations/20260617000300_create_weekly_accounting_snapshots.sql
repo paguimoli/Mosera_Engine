@@ -168,7 +168,11 @@ begin
       sum(coalesce(pf.net_result, 0))::bigint as net_result,
       sum(coalesce(pf.ticket_count, 0))::integer as ticket_count,
       sum(coalesce(pf.pending_exposure, 0))::bigint as pending_exposure,
-      case when root.account_type = 'PLAYER' then max(pf.wallet_id) else null end as wallet_id,
+      case
+        when root.account_type = 'PLAYER' then
+          (array_agg(pf.wallet_id) filter (where pf.wallet_id is not null))[1]
+        else null
+      end as wallet_id,
       case when root.account_type = 'PLAYER' then max(pf.current_balance) else 0 end as current_balance
     from scoped_accounts root
     left join account_descendants ad on ad.root_id = root.id

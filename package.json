@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "auth:reset-password": "node scripts/run-ts-script.mjs scripts/reset-platform-user-password.ts",
+    "qa:credit-launch": "node scripts/qa/credit-launch-e2e.mjs",
     "docker:build": "docker compose build",
     "docker:up": "docker compose up",
     "docker:down": "docker compose down",
