@@ -14,6 +14,7 @@
     "qa:reconciliation-operations": "node scripts/qa/reconciliation-operations.mjs",
     "qa:financial-audit-completeness": "node scripts/qa/financial-audit-completeness.mjs",
     "qa:workload-isolation": "node scripts/qa/workload-isolation-queue-topology.mjs",
+    "qa:service-boundaries": "node scripts/qa/service-boundary-hardening.mjs",
     "ops:reconcile": "node scripts/operations/run-reconciliation.mjs",
     "ops:audit": "node scripts/operations/audit-correlation-check.mjs",
     "ops:queue-health": "node scripts/operations/queue-health.mjs",

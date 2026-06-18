@@ -7,7 +7,7 @@ import {
 import {
   CreditReservationValidationError,
   releaseCreditExposure,
-} from "@/src/domains/credit/credit-reservation.service";
+} from "@/src/domains/credit/credit.entrypoints";
 import { getOrCreateCorrelationId } from "@/src/lib/observability/correlation";
 import { logger } from "@/src/lib/observability/logger";
 

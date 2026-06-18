@@ -1,6 +1,7 @@
 import { supabaseServerAdmin } from "@/src/lib/supabase/server-admin-client";
 import type {
   ApplyCreditSettlementInput,
+  CancelCreditReservationInput,
   CreditReservation,
   CreditReservationStatus,
   CreditSettlementApplicationResult,
@@ -9,6 +10,8 @@ import type {
   ReserveCreditExposureInput,
 } from "./credit-reservation.types";
 
+// Domain-internal persistence adapter. Routes, workers, and other domains should
+// depend on credit-reservation.service or credit.entrypoints instead.
 type CreditReservationRow = {
   id: string;
   player_id: string;
@@ -171,6 +174,25 @@ export async function releaseCreditExposure(
       p_correlation_id: input.correlationId ?? null,
       p_reason: input.reason ?? null,
       p_metadata: input.metadata ?? {},
+    }
+  );
+
+  if (error) {
+    throw new CreditReservationRepositoryError(error.message);
+  }
+
+  return assertCreditReservation(data as CreditReservationRow | null);
+}
+
+export async function cancelCreditReservation(
+  input: CancelCreditReservationInput
+): Promise<CreditReservation> {
+  const { data, error } = await supabaseServerAdmin.rpc(
+    "cancel_credit_reservation",
+    {
+      p_reservation_id: input.reservationId,
+      p_correlation_id: input.correlationId ?? null,
+      p_reason: input.reason ?? null,
     }
   );
 

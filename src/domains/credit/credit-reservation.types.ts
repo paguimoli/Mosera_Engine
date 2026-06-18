@@ -57,6 +57,12 @@ export type ReleaseCreditExposureInput = {
   metadata?: Record<string, unknown>;
 };
 
+export type CancelCreditReservationInput = {
+  reservationId: string;
+  correlationId?: string | null;
+  reason?: string | null;
+};
+
 export type ApplyCreditSettlementInput = {
   reservationId: string;
   ticketId: string;

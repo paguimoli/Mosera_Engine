@@ -7,6 +7,8 @@ import type {
   LedgerTransactionType,
 } from "./ledger.types";
 
+// Domain-internal persistence adapter. Routes, workers, and other domains should
+// depend on ledger.service or ledger.entrypoints instead.
 type LedgerEntryRow = {
   id: string;
   wallet_id: string;

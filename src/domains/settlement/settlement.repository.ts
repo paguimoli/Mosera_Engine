@@ -1,5 +1,7 @@
 import type { SettlementRecord, SettlementRun } from "./settlement.types";
 
+// Domain-internal persistence adapter. Routes, workers, and other domains should
+// depend on settlement services or settlement.entrypoints instead.
 export function findSettlementRunById(runs: SettlementRun[], settlementRunId: string) {
   return runs.find((run) => run.id === settlementRunId);
 }

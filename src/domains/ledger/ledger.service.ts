@@ -171,6 +171,16 @@ export async function reverseLedgerEntry({
   });
 }
 
+export async function getLedgerTransaction(
+  ledgerEntryId: string
+): Promise<LedgerEntry | null> {
+  if (!ledgerEntryId) {
+    throw new LedgerValidationError(["Ledger entry id is required."]);
+  }
+
+  return findLedgerEntryById(ledgerEntryId);
+}
+
 export async function listLedgerEntriesForWallet(
   walletId: string
 ): Promise<LedgerEntry[]> {

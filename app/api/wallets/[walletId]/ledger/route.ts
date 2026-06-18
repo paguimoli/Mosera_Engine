@@ -13,7 +13,7 @@ import {
   LedgerValidationError,
   listLedgerEntriesForWallet,
   postLedgerEntry,
-} from "@/src/domains/ledger/ledger.service";
+} from "@/src/domains/ledger/ledger.entrypoints";
 import type {
   LedgerDirection,
   LedgerTransactionType,

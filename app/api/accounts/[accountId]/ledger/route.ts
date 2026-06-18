@@ -4,7 +4,7 @@ import {
   AuthMiddlewareError,
   requirePermission,
 } from "@/src/domains/auth/auth-middleware";
-import { listLedgerEntriesForAccount } from "@/src/domains/ledger/ledger.service";
+import { listLedgerEntriesForAccount } from "@/src/domains/ledger/ledger.entrypoints";
 
 export const runtime = "nodejs";
 

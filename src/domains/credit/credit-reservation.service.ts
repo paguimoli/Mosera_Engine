@@ -1,12 +1,14 @@
 import { logger } from "@/src/lib/observability/logger";
 import {
   applyCreditSettlement as applyCreditSettlementRecord,
+  cancelCreditReservation as cancelCreditReservationRecord,
   getPlayerCreditSummary as getPlayerCreditSummaryRecord,
   releaseCreditExposure as releaseCreditExposureRecord,
   reserveCreditExposure as reserveCreditExposureRecord,
 } from "./credit-reservation.repository";
 import type {
   ApplyCreditSettlementInput,
+  CancelCreditReservationInput,
   CreditReservation,
   CreditSettlementApplicationResult,
   CreditSummary,
@@ -75,6 +77,25 @@ export async function releaseCreditExposure(
   });
 
   return releaseCreditExposureRecord(input);
+}
+
+export async function cancelCreditReservation(
+  input: CancelCreditReservationInput
+): Promise<CreditReservation> {
+  if (!input.reservationId) {
+    throw new CreditReservationValidationError(["Reservation id is required."]);
+  }
+
+  logger.info({
+    message: "Credit reservation cancellation requested.",
+    correlationId: input.correlationId,
+    metadata: {
+      reservationId: input.reservationId,
+      reason: input.reason ?? null,
+    },
+  });
+
+  return cancelCreditReservationRecord(input);
 }
 
 export async function applyCreditSettlement(
