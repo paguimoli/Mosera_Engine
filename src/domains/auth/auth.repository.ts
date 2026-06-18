@@ -845,3 +845,17 @@ export async function revokeSessionById(
     throw new AuthRepositoryError();
   }
 }
+
+export async function markBreakGlassAccountUsed(
+  userId: string,
+  usedAt: string
+): Promise<void> {
+  const { error } = await supabaseServerAdmin
+    .from("break_glass_accounts")
+    .update({ last_used_at: usedAt })
+    .eq("user_id", userId);
+
+  if (error) {
+    throw new AuthRepositoryError();
+  }
+}

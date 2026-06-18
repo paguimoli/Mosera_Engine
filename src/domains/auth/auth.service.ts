@@ -16,6 +16,7 @@ import {
   findUserByUsername,
   incrementFailedLoginAttempts,
   lockUser,
+  markBreakGlassAccountUsed,
   markPasswordResetTokenUsed,
   revokeActiveSessionsForUser,
   revokeSessionById,
@@ -100,6 +101,21 @@ async function recordAuthEvent({
     userId,
     eventType,
     metadata,
+  });
+}
+
+async function recordBreakGlassSession(user: AuthUserRecord, createdAt: string) {
+  if (user.identityClass !== "BREAK_GLASS") {
+    return;
+  }
+
+  await markBreakGlassAccountUsed(user.id, createdAt);
+  await recordAuthEvent({
+    userId: user.id,
+    eventType: AUTHENTICATION_EVENT_TYPES.BREAK_GLASS_LOGIN,
+    metadata: {
+      createdAt,
+    },
   });
 }
 
@@ -205,6 +221,7 @@ export async function createAuthenticatedSessionForUser({
     userId: user.id,
     eventType: AUTHENTICATION_EVENT_TYPES.LOGIN_SUCCESS,
   });
+  await recordBreakGlassSession(user, createdAt);
 
   return {
     success: true,
