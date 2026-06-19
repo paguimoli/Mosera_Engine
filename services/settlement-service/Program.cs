@@ -16,7 +16,9 @@ builder.Logging.AddJsonConsole(options =>
 var serviceConfiguration = ServiceConfiguration.FromEnvironment(builder.Environment);
 
 builder.Services.AddSingleton(serviceConfiguration);
+builder.Services.AddHttpClient();
 builder.Services.AddSingleton<InfrastructureReadinessChecks>();
+builder.Services.AddSingleton<SettlementShadowPersistence>();
 builder.Services.AddSingleton<ShadowSettlementCalculator>();
 
 var app = builder.Build();

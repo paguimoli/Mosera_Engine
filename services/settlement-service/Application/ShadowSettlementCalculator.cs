@@ -4,10 +4,20 @@ namespace SettlementService.Application;
 
 public sealed class ShadowSettlementCalculator
 {
-    public ShadowSettlementExecuteResponse Execute(
+    public ShadowCalculationResult Execute(
         ShadowSettlementExecuteRequest request,
         string correlationId)
     {
+        if (request.StakeAmount <= 0)
+        {
+            throw new ArgumentException("Stake amount must be positive.", nameof(request));
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Currency) || request.Currency.Length != 3)
+        {
+            throw new ArgumentException("Currency must be an ISO-4217 code.", nameof(request));
+        }
+
         var selected = request.SelectedNumbers.ToHashSet();
         var winning = request.WinningNumbers.ToHashSet();
         var matchedCount = selected.Count(number => winning.Contains(number));
@@ -28,8 +38,7 @@ public sealed class ShadowSettlementCalculator
                 ? ShadowComparisonStatus.MATCH
                 : ShadowComparisonStatus.MISMATCH;
 
-        return new ShadowSettlementExecuteResponse(
-            true,
+        return new ShadowCalculationResult(
             $"shadow-{request.SettlementRunId}-{request.TicketId}-{Guid.NewGuid():N}",
             outcome,
             grossPayout,
@@ -77,3 +86,14 @@ public sealed class ShadowSettlementCalculator
         }
     }
 }
+
+public sealed record ShadowCalculationResult(
+    string ShadowSettlementId,
+    SettlementOutcome CalculatedOutcome,
+    long GrossPayout,
+    long NetAmount,
+    long StakeAmount,
+    string Currency,
+    ShadowComparisonStatus ComparisonStatus,
+    IReadOnlyList<ShadowSettlementMismatchDto> Mismatches,
+    string CorrelationId);

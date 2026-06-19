@@ -52,6 +52,7 @@ public sealed record ShadowSettlementMismatchDto(
 public sealed record ShadowSettlementExecuteResponse(
     bool Success,
     string ShadowSettlementId,
+    string? PersistedShadowRunId,
     SettlementOutcome CalculatedOutcome,
     long GrossPayout,
     long NetAmount,
