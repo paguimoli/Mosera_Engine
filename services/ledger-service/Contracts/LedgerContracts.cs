@@ -99,6 +99,65 @@ public sealed record LedgerHealthResponse(
     IReadOnlyDictionary<string, string> Dependencies,
     string CorrelationId);
 
+public sealed record LedgerShadowExecuteRequest(
+    string? CorrelationId,
+    string TransactionId,
+    string AccountId,
+    string? WalletId,
+    string EntryType,
+    long AmountMinor,
+    string Currency,
+    string? ActorId,
+    IReadOnlyDictionary<string, object?>? Metadata,
+    LedgerShadowExpectedResult? ExpectedMonolithResult,
+    string? Direction = null,
+    string? IdempotencyKey = null);
+
+public sealed record LedgerShadowExpectedResult(
+    string? TransactionId,
+    string? AccountId,
+    string? WalletId,
+    string? EntryType,
+    string? Direction,
+    long? AmountMinor,
+    string? Currency,
+    string? IdempotencyKey);
+
+public sealed record LedgerShadowCalculatedResult(
+    string TransactionId,
+    string AccountId,
+    string? WalletId,
+    string EntryType,
+    string? Direction,
+    long AmountMinor,
+    string Currency,
+    string? IdempotencyKey,
+    bool IsValid,
+    IReadOnlyList<string> ValidationMessages);
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum LedgerShadowComparisonStatus
+{
+    MATCH,
+    MISMATCH,
+    NOT_COMPARED
+}
+
+public sealed record LedgerShadowMismatchDto(
+    string Field,
+    string Expected,
+    string Actual,
+    string MismatchType,
+    string Severity);
+
+public sealed record LedgerShadowExecuteResponse(
+    bool Success,
+    string? ShadowLedgerRunId,
+    LedgerShadowCalculatedResult CalculatedResult,
+    LedgerShadowComparisonStatus ComparisonStatus,
+    IReadOnlyList<LedgerShadowMismatchDto> Mismatches,
+    string CorrelationId);
+
 public sealed record ErrorResponse(
     ErrorDto Error,
     string CorrelationId);

@@ -4,7 +4,8 @@ public sealed record ServiceConfiguration(
     string ServiceName,
     string Environment,
     RabbitMqConfiguration RabbitMQ,
-    RedisConfiguration Redis)
+    RedisConfiguration Redis,
+    SupabaseConfiguration Supabase)
 {
     public static ServiceConfiguration FromEnvironment(IHostEnvironment environment)
     {
@@ -18,7 +19,10 @@ public sealed record ServiceConfiguration(
             new RabbitMqConfiguration(
                 GetEnvironmentValue("RABBITMQ_URL", string.Empty),
                 GetEnvironmentValue("RABBITMQ_EXCHANGE_NAME", "lottery.events")),
-            new RedisConfiguration(GetEnvironmentValue("REDIS_URL", string.Empty)));
+            new RedisConfiguration(GetEnvironmentValue("REDIS_URL", string.Empty)),
+            new SupabaseConfiguration(
+                GetEnvironmentValue("SUPABASE_URL", string.Empty),
+                GetEnvironmentValue("SUPABASE_SERVICE_ROLE_KEY", string.Empty)));
     }
 
     private static string GetEnvironmentValue(string name, string fallback)
@@ -32,3 +36,5 @@ public sealed record ServiceConfiguration(
 public sealed record RabbitMqConfiguration(string Url, string ExchangeName);
 
 public sealed record RedisConfiguration(string Url);
+
+public sealed record SupabaseConfiguration(string Url, string ServiceRoleKey);

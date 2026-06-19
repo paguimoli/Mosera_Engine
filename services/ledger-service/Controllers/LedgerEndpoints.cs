@@ -1,5 +1,6 @@
 using LedgerService.Application;
 using LedgerService.Contracts;
+using LedgerService.Infrastructure;
 
 namespace LedgerService.Controllers;
 
@@ -136,6 +137,95 @@ public static class LedgerEndpoints
             return Results.Json(
                 ledgerContractService.CreateNotImplementedError(context.GetCorrelationId()),
                 statusCode: StatusCodes.Status501NotImplemented);
+        });
+
+        group.MapPost("/shadow/execute", async (
+            HttpContext context,
+            LedgerShadowExecuteRequest request,
+            LedgerShadowCalculator shadowCalculator,
+            LedgerShadowPersistence shadowPersistence,
+            ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
+        {
+            var correlationId = string.IsNullOrWhiteSpace(request.CorrelationId)
+                ? context.GetCorrelationId()
+                : request.CorrelationId.Trim();
+            var logger = loggerFactory.CreateLogger("LedgerShadowEndpoints");
+
+            logger.LogInformation(
+                "Ledger shadow execution requested. TransactionId: {TransactionId}. EntryType: {EntryType}. CorrelationId: {CorrelationId}.",
+                request.TransactionId,
+                request.EntryType,
+                correlationId);
+
+            var normalizedRequest = request with { CorrelationId = correlationId };
+
+            try
+            {
+                var evaluation = shadowCalculator.Evaluate(normalizedRequest);
+                var persistedRunId = await shadowPersistence.PersistRunAsync(
+                    normalizedRequest,
+                    evaluation,
+                    cancellationToken);
+
+                return Results.Ok(new LedgerShadowExecuteResponse(
+                    true,
+                    persistedRunId,
+                    evaluation.CalculatedResult,
+                    evaluation.ComparisonStatus,
+                    evaluation.Mismatches,
+                    correlationId));
+            }
+            catch (ArgumentException error)
+            {
+                await shadowPersistence.PersistFailureAsync(
+                    normalizedRequest,
+                    correlationId,
+                    "VALIDATION_ERROR",
+                    error.Message,
+                    new Dictionary<string, object?>
+                    {
+                        ["transactionId"] = request.TransactionId,
+                        ["entryType"] = request.EntryType,
+                        ["amountMinor"] = request.AmountMinor,
+                        ["currency"] = request.Currency
+                    },
+                    cancellationToken);
+
+                return Results.BadRequest(new ErrorResponse(
+                    new ErrorDto(
+                        LedgerErrorCodes.ValidationFailed,
+                        error.Message),
+                    correlationId));
+            }
+            catch (Exception error)
+            {
+                logger.LogError(
+                    error,
+                    "Ledger shadow execution failed. TransactionId: {TransactionId}. CorrelationId: {CorrelationId}.",
+                    request.TransactionId,
+                    correlationId);
+
+                await shadowPersistence.PersistFailureAsync(
+                    normalizedRequest,
+                    correlationId,
+                    "INTERNAL_ERROR",
+                    "Ledger shadow execution failed.",
+                    new Dictionary<string, object?>
+                    {
+                        ["transactionId"] = request.TransactionId,
+                        ["error"] = error.Message
+                    },
+                    cancellationToken);
+
+                return Results.Json(
+                    new ErrorResponse(
+                        new ErrorDto(
+                            LedgerErrorCodes.InternalError,
+                            "Ledger shadow execution failed."),
+                        correlationId),
+                    statusCode: StatusCodes.Status500InternalServerError);
+            }
         });
     }
 

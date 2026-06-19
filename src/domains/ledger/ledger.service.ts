@@ -18,6 +18,7 @@ import type {
   LedgerEntry,
   LedgerTransaction,
 } from "./ledger.types";
+import { runLedgerShadowComparison } from "./ledger-shadow-client";
 import { validateCreateLedgerEntryInput } from "./ledger.validation";
 
 export class LedgerValidationError extends Error {
@@ -125,7 +126,11 @@ export async function postLedgerEntry(
   }
 
   try {
-    return await insertLedgerEntry({ input });
+    const ledgerEntry = await insertLedgerEntry({ input });
+
+    await runLedgerShadowComparison({ input, ledgerEntry });
+
+    return ledgerEntry;
   } catch (error) {
     if (
       error instanceof LedgerRepositoryError &&
