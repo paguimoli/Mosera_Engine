@@ -10,6 +10,7 @@ const steps = [
   "qa:shadow-readiness",
   "qa:shadow-analysis",
   "qa:shadow-evidence-lifecycle",
+  "qa:promotion-decision",
   "qa:settlement-authority-dry-run",
   "qa:credit-launch",
   "qa:worker-observability",

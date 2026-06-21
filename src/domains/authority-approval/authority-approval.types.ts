@@ -4,9 +4,13 @@ import type { DomainReadinessStatus } from "../shadow-readiness/shadow-readiness
 export type AuthorityPromotionCandidateState =
   | "BLOCKED"
   | "READY_FOR_REVIEW"
+  | "READY_FOR_DRY_RUN_APPROVAL"
   | "APPROVED_FOR_DRY_RUN"
   | "DRY_RUN_ACTIVE"
+  | "READY_FOR_PROMOTION_APPROVAL"
   | "APPROVED_FOR_PROMOTION"
+  | "READY_FOR_CONTROLLED_PROMOTION"
+  | "ROLLBACK_RECOMMENDED"
   | "PROMOTED";
 
 export type AuthorityApprovalType =

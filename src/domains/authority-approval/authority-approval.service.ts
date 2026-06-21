@@ -1,10 +1,5 @@
-import { getAuthorityStatus } from "../authority-control/authority-control.service";
 import type { AuthorityDomain } from "../authority-control/authority-control.types";
-import {
-  getSettlementAuthorityReadiness,
-} from "../settlement-authority/settlement-authority.service";
-import { getShadowAnalysisSummary } from "../shadow-analysis/shadow-analysis.service";
-import type { ShadowAnalysisSummary } from "../shadow-analysis/shadow-analysis.types";
+import { getPromotionDecision } from "../promotion-decision/promotion-decision.service";
 import type {
   AuthorityApprovalHistory,
   AuthorityApprovalRecord,
@@ -20,61 +15,6 @@ function latestApproval(
   approvalType: AuthorityApprovalType
 ) {
   return approvals.find((approval) => approval.approvalType === approvalType) ?? null;
-}
-
-function getBasePromotionBlockers({
-  settlementReadiness,
-  promotionSettlementReadiness,
-}: {
-  settlementReadiness: Awaited<ReturnType<typeof getSettlementAuthorityReadiness>>;
-  promotionSettlementReadiness: ShadowAnalysisSummary["domains"]["settlement"]["promotionReadiness"];
-}) {
-  const blockers = [...settlementReadiness.remainingBlockers];
-
-  if (promotionSettlementReadiness.readinessStatus !== "READY") {
-    blockers.push(
-      `Promotion settlement readiness is ${promotionSettlementReadiness.readinessStatus}.`
-    );
-  }
-
-  if (settlementReadiness.authority !== "MONOLITH") {
-    blockers.push("Settlement authority is not MONOLITH.");
-  }
-
-  if (settlementReadiness.comparisonMode !== "ENABLED") {
-    blockers.push("Settlement comparison mode is not enabled.");
-  }
-
-  if (settlementReadiness.rollbackReadinessStatus === "BLOCKED") {
-    blockers.push("Settlement rollback readiness is blocked.");
-  }
-
-  return Array.from(new Set(blockers));
-}
-
-function getRecommendedState({
-  authority,
-  dryRunEnabled,
-  hasDryRunApproval,
-  hasPromotionApproval,
-  hasPromotionBlockers,
-  adjustedReady,
-}: {
-  authority: ReturnType<typeof getAuthorityStatus>["settlement"]["authority"];
-  dryRunEnabled: boolean;
-  hasDryRunApproval: boolean;
-  hasPromotionApproval: boolean;
-  hasPromotionBlockers: boolean;
-  adjustedReady: boolean;
-}): AuthorityPromotionCandidateState {
-  if (authority === "SERVICE") return "PROMOTED";
-  if (hasPromotionBlockers) return "BLOCKED";
-  if (hasPromotionApproval && hasDryRunApproval) return "APPROVED_FOR_PROMOTION";
-  if (dryRunEnabled && hasDryRunApproval) return "DRY_RUN_ACTIVE";
-  if (hasDryRunApproval) return "APPROVED_FOR_DRY_RUN";
-  if (adjustedReady) return "READY_FOR_REVIEW";
-
-  return "BLOCKED";
 }
 
 function getApprovalRequirements({
@@ -115,51 +55,28 @@ export async function getAuthorityApprovalHistory(
 }
 
 export async function getAuthorityApprovalStatus(): Promise<AuthorityApprovalStatus> {
-  const [history, settlementReadiness, shadowAnalysis] = await Promise.all([
+  const [history, promotionDecision] = await Promise.all([
     getAuthorityApprovalHistory("SETTLEMENT"),
-    getSettlementAuthorityReadiness(),
-    getShadowAnalysisSummary("all"),
+    getPromotionDecision({ domain: "SETTLEMENT" }),
   ]);
   const approvals = history.approvals;
   const dryRunApproval = latestApproval(approvals, "DRY_RUN_APPROVAL");
   const promotionApproval = latestApproval(approvals, "PROMOTION_APPROVAL");
   const rollbackApproval = latestApproval(approvals, "ROLLBACK_APPROVAL");
-  const promotionSettlementReadiness =
-    shadowAnalysis.domains.settlement.promotionReadiness;
-  const promotionBlockers = getBasePromotionBlockers({
-    settlementReadiness,
-    promotionSettlementReadiness,
-  });
   const hasDryRunApproval = Boolean(dryRunApproval);
   const hasPromotionApproval = Boolean(promotionApproval);
-  const currentState = getRecommendedState({
-    authority: settlementReadiness.authority,
-    dryRunEnabled: settlementReadiness.dryRunMode === "ENABLED",
-    hasDryRunApproval,
-    hasPromotionApproval,
-    hasPromotionBlockers: false,
-    adjustedReady: promotionSettlementReadiness.readinessStatus === "READY",
-  });
-  const recommendedState = getRecommendedState({
-    authority: settlementReadiness.authority,
-    dryRunEnabled: settlementReadiness.dryRunMode === "ENABLED",
-    hasDryRunApproval,
-    hasPromotionApproval,
-    hasPromotionBlockers: promotionBlockers.length > 0,
-    adjustedReady: promotionSettlementReadiness.readinessStatus === "READY",
-  });
 
   return {
     authorityCandidate: "SETTLEMENT",
-    currentState,
-    recommendedState,
+    currentState: promotionDecision.decision,
+    recommendedState: promotionDecision.decision,
     approvalRequirements: getApprovalRequirements({
-      currentState,
+      currentState: promotionDecision.decision,
       hasDryRunApproval,
       hasPromotionApproval,
     }),
-    promotionBlockers,
-    rollbackReadiness: settlementReadiness.rollbackReadinessStatus,
+    promotionBlockers: promotionDecision.blockingReasons,
+    rollbackReadiness: promotionDecision.rollbackReadiness,
     latestApprovals: {
       dryRunApproval,
       promotionApproval,
@@ -170,52 +87,49 @@ export async function getAuthorityApprovalStatus(): Promise<AuthorityApprovalSta
 }
 
 export async function getSettlementDryRunEvaluation(): Promise<SettlementDryRunEvaluation> {
-  const [approvalStatus, settlementReadiness, shadowAnalysis] = await Promise.all([
-    getAuthorityApprovalStatus(),
-    getSettlementAuthorityReadiness(),
-    getShadowAnalysisSummary("all"),
-  ]);
-  const rawEvidence = shadowAnalysis.domains.settlement.rawReadiness;
-  const adjustedEvidence = shadowAnalysis.domains.settlement.adjustedReadiness;
-  const promotionEvidence = shadowAnalysis.domains.settlement.promotionReadiness;
+  const promotionDecision = await getPromotionDecision({ domain: "SETTLEMENT" });
   const wouldThresholdsBeExceeded =
-    rawEvidence.mismatchRate >= settlementReadiness.thresholds.mismatchAlertThreshold ||
-    rawEvidence.failureRate >= settlementReadiness.thresholds.rollbackFailureThreshold ||
-    rawEvidence.criticalMismatchCount > 0;
+    promotionDecision.promotionReadiness.readiness !== "READY";
   const wouldRollbackTrigger =
-    settlementReadiness.rollbackReadinessStatus === "BLOCKED" ||
-    wouldThresholdsBeExceeded;
+    promotionDecision.decision === "ROLLBACK_RECOMMENDED" ||
+    promotionDecision.blockingReasons.length > 0;
   const wouldPromotionBeAllowed =
-    approvalStatus.currentState === "APPROVED_FOR_PROMOTION" &&
+    promotionDecision.decision === "READY_FOR_CONTROLLED_PROMOTION" &&
     !wouldRollbackTrigger &&
-    promotionEvidence.readinessStatus === "READY";
+    promotionDecision.promotionReadiness.readiness === "READY";
 
   return {
     authorityCandidate: "SETTLEMENT",
-    currentState: approvalStatus.currentState,
+    currentState: promotionDecision.decision,
     ifServiceBecameAuthoritativeNow: {
       wouldRollbackTrigger,
       wouldThresholdsBeExceeded,
       wouldPromotionBeAllowed,
     },
     rawEvidence: {
-      readiness: rawEvidence.readinessStatus,
-      mismatchRate: rawEvidence.mismatchRate,
-      failureRate: rawEvidence.failureRate,
+      readiness: promotionDecision.rawReadiness.readiness,
+      mismatchRate: promotionDecision.rawReadiness.mismatchRate,
+      failureRate: promotionDecision.rawReadiness.failureRate,
     },
     adjustedEvidence: {
-      readiness: adjustedEvidence.readinessStatus,
-      mismatchRate: adjustedEvidence.mismatchRate,
-      failureRate: adjustedEvidence.failureRate,
+      readiness: promotionDecision.adjustedReadiness.readiness,
+      mismatchRate: promotionDecision.adjustedReadiness.mismatchRate,
+      failureRate: promotionDecision.adjustedReadiness.failureRate,
     },
     promotionEvidence: {
-      readiness: promotionEvidence.readinessStatus,
-      mismatchRate: promotionEvidence.mismatchRate,
-      failureRate: promotionEvidence.failureRate,
+      readiness: promotionDecision.promotionReadiness.readiness,
+      mismatchRate: promotionDecision.promotionReadiness.mismatchRate,
+      failureRate: promotionDecision.promotionReadiness.failureRate,
     },
-    rollbackReadiness: settlementReadiness.rollbackReadinessStatus,
-    promotionBlockers: approvalStatus.promotionBlockers,
-    approvalRequirements: approvalStatus.approvalRequirements,
+    rollbackReadiness: promotionDecision.rollbackReadiness,
+    promotionBlockers: promotionDecision.blockingReasons,
+    approvalRequirements: getApprovalRequirements({
+      currentState: promotionDecision.decision,
+      hasDryRunApproval: Boolean(promotionDecision.approvalState.dryRunApproval),
+      hasPromotionApproval: Boolean(
+        promotionDecision.approvalState.promotionApproval
+      ),
+    }),
     evaluatedAt: new Date().toISOString(),
   };
 }

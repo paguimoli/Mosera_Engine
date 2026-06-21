@@ -82,7 +82,10 @@ assert(
 );
 assert(
   approvalStatus.currentState === "READY_FOR_REVIEW" ||
-    approvalStatus.currentState === "BLOCKED",
+    approvalStatus.currentState === "BLOCKED" ||
+    approvalStatus.currentState === "READY_FOR_DRY_RUN_APPROVAL" ||
+    approvalStatus.currentState === "READY_FOR_PROMOTION_APPROVAL" ||
+    approvalStatus.currentState === "READY_FOR_CONTROLLED_PROMOTION",
   "Settlement should be ready for review or blocked by promotion evidence.",
   { approvalStatus }
 );
