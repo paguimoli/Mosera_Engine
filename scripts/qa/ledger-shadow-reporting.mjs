@@ -1,3 +1,5 @@
+import "./load-session-env.mjs";
+
 const appUrl = process.env.QA_APP_URL || "http://localhost:3000";
 const ledgerServiceUrl = process.env.QA_LEDGER_SERVICE_URL || "http://localhost:5200";
 const sessionToken = process.env.QA_ADMIN_SESSION_TOKEN;

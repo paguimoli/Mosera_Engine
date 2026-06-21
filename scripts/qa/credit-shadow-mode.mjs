@@ -1,3 +1,5 @@
+import "./load-session-env.mjs";
+
 const creditServiceUrl = process.env.QA_CREDIT_SERVICE_URL || "http://localhost:5300";
 
 function fail(message, metadata = {}) {

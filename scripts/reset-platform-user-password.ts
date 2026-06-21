@@ -22,10 +22,12 @@ type SupabaseError = {
 
 class PasswordResetPersistenceError extends Error {
   readonly diagnostics: SupabaseError;
+  readonly target: string;
 
-  constructor(error: SupabaseError) {
+  constructor(error: SupabaseError, target = getSupabaseTarget()) {
     super("Platform user password update failed.");
     this.name = "PasswordResetPersistenceError";
+    this.target = target;
     this.diagnostics = {
       message: error.message,
       code: error.code,
@@ -33,6 +35,14 @@ class PasswordResetPersistenceError extends Error {
       hint: error.hint,
     };
   }
+}
+
+function getSupabaseTarget() {
+  return (
+    process.env.SUPABASE_URL?.trim() ||
+    process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ||
+    "unknown"
+  );
 }
 
 function getArgValue(args: string[], name: string) {
@@ -174,6 +184,7 @@ async function main() {
 main().catch((error: unknown) => {
   if (error instanceof PasswordResetPersistenceError) {
     console.error(error.message);
+    console.error(`target: ${error.target}`);
     console.error(`message: ${error.diagnostics.message ?? ""}`);
     console.error(`code: ${error.diagnostics.code ?? ""}`);
     console.error(`details: ${error.diagnostics.details ?? ""}`);
@@ -187,5 +198,6 @@ main().catch((error: unknown) => {
       : "Platform user password reset failed.";
 
   console.error(message);
+  console.error(`target: ${getSupabaseTarget()}`);
   process.exit(1);
 });

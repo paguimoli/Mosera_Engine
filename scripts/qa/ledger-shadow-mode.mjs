@@ -1,3 +1,5 @@
+import "./load-session-env.mjs";
+
 const ledgerServiceUrl = process.env.QA_LEDGER_SERVICE_URL || "http://localhost:5200";
 
 function fail(message, metadata = {}) {

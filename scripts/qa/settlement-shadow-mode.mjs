@@ -1,3 +1,5 @@
+import "./load-session-env.mjs";
+
 const settlementServiceUrl =
   process.env.QA_SETTLEMENT_SERVICE_URL || "http://localhost:5400";
 

@@ -1,3 +1,5 @@
+import "./load-session-env.mjs";
+
 const appUrl = process.env.QA_APP_URL || "http://localhost:3000";
 const creditServiceUrl = process.env.QA_CREDIT_SERVICE_URL || "http://localhost:5300";
 const sessionToken = process.env.QA_ADMIN_SESSION_TOKEN;

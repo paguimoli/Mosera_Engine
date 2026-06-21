@@ -1,3 +1,5 @@
+import "./load-session-env.mjs";
+
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
