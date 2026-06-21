@@ -2,7 +2,8 @@ import "./load-session-env.mjs";
 
 const appUrl = process.env.QA_APP_URL || "http://localhost:3000";
 const sessionToken = process.env.QA_ADMIN_SESSION_TOKEN;
-const correlationId = "qa-dry-run-approval-settlement-v1";
+const dryRunCorrelationId = "qa-dry-run-approval-settlement-v1";
+const promotionCorrelationId = "qa-promotion-approval-settlement-v1";
 const rawEvidenceWarning =
   "Raw evidence is not READY and must remain visible for review.";
 
@@ -42,15 +43,29 @@ async function authGet(path) {
   return requestJson(path, { headers: authHeaders() });
 }
 
-async function approve(body) {
+async function approveDryRun() {
   return requestJson("/api/authority/approvals/dry-run", {
+    method: "POST",
+    headers: authHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify({
+      domain: "SETTLEMENT",
+      justification:
+        "QA confirms lifecycle-adjusted shadow evidence is ready and raw evidence remains visible.",
+      acknowledgedWarnings: [rawEvidenceWarning],
+      correlationId: dryRunCorrelationId,
+    }),
+  });
+}
+
+async function approvePromotion(body) {
+  return requestJson("/api/authority/approvals/promotion", {
     method: "POST",
     headers: authHeaders({ "content-type": "application/json" }),
     body: JSON.stringify(body),
   });
 }
 
-const unauthenticated = await requestJson("/api/authority/approvals/dry-run", {
+const unauthenticated = await requestJson("/api/authority/approvals/promotion", {
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify({
@@ -61,10 +76,50 @@ const unauthenticated = await requestJson("/api/authority/approvals/dry-run", {
 });
 assert(
   unauthenticated.response.status === 401,
-  "Dry-run approval endpoint should require authentication.",
+  "Promotion approval endpoint should require authentication.",
   { status: unauthenticated.response.status, body: unauthenticated.body }
 );
-pass("Dry-run approval endpoint requires auth.");
+pass("Promotion approval endpoint requires auth.");
+
+const missingJustification = await approvePromotion({
+  domain: "SETTLEMENT",
+  justification: "",
+  acknowledgedWarnings: [rawEvidenceWarning, "PROMOTION_APPROVAL is missing."],
+});
+assert(
+  missingJustification.response.status >= 400,
+  "Promotion approval should reject missing justification.",
+  { status: missingJustification.response.status, body: missingJustification.body }
+);
+pass("Promotion approval rejects missing justification.");
+
+const missingWarnings = await approvePromotion({
+  domain: "SETTLEMENT",
+  justification: "QA validates missing warning acknowledgement rejection.",
+  acknowledgedWarnings: [],
+});
+assert(
+  missingWarnings.response.status >= 400,
+  "Promotion approval should reject missing warning acknowledgement or non-ready state.",
+  { status: missingWarnings.response.status, body: missingWarnings.body }
+);
+pass("Promotion approval rejects missing warning acknowledgement.");
+
+const dryRunApproval = await approveDryRun();
+assert(
+  dryRunApproval.response.status === 200 && dryRunApproval.body.success,
+  "Dry-run approval should exist before promotion approval.",
+  { status: dryRunApproval.response.status, body: dryRunApproval.body }
+);
+assert(
+  dryRunApproval.body.approval.approvalType === "DRY_RUN_APPROVAL",
+  "Dry-run approval type mismatch.",
+  { approval: dryRunApproval.body.approval }
+);
+pass("Dry-run approval prerequisite exists.", {
+  approvalId: dryRunApproval.body.approval.id,
+  idempotent: dryRunApproval.body.idempotent,
+});
 
 const decisionBeforeResult = await authGet(
   "/api/authority/promotion-decision?domain=settlement"
@@ -75,76 +130,55 @@ assert(
   { status: decisionBeforeResult.response.status, body: decisionBeforeResult.body }
 );
 const decisionBefore = decisionBeforeResult.body.decision;
-
-const missingJustification = await approve({
-  domain: "SETTLEMENT",
-  justification: "",
-  acknowledgedWarnings: [rawEvidenceWarning],
-});
 assert(
-  missingJustification.response.status >= 400,
-  "Dry-run approval should reject missing justification.",
-  { status: missingJustification.response.status, body: missingJustification.body }
+  decisionBefore.decision === "READY_FOR_PROMOTION_APPROVAL" ||
+    decisionBefore.decision === "READY_FOR_CONTROLLED_PROMOTION",
+  "Settlement should be ready for promotion approval or already approved.",
+  { decisionBefore }
 );
-pass("Dry-run approval rejects missing justification.");
 
-const missingWarningAcknowledgement = await approve({
-  domain: "SETTLEMENT",
-  justification: "QA validates missing warning acknowledgement rejection.",
-  acknowledgedWarnings: [],
-});
-assert(
-  missingWarningAcknowledgement.response.status >= 400,
-  "Dry-run approval should reject missing warning acknowledgement or non-ready state.",
-  {
-    status: missingWarningAcknowledgement.response.status,
-    body: missingWarningAcknowledgement.body,
-  }
-);
-pass("Dry-run approval rejects missing warning acknowledgement.");
-
-const validApproval = await approve({
+const validApproval = await approvePromotion({
   domain: "SETTLEMENT",
   justification:
-    "QA confirms lifecycle-adjusted shadow evidence is ready and raw evidence remains visible.",
-  acknowledgedWarnings: [rawEvidenceWarning],
-  correlationId,
+    "QA confirms dry-run approval exists, rollback is ready, and controlled promotion may be planned.",
+  acknowledgedWarnings: decisionBefore.warnings,
+  correlationId: promotionCorrelationId,
 });
 assert(
   validApproval.response.status === 200 && validApproval.body.success,
-  "Dry-run approval capture failed.",
+  "Promotion approval capture failed.",
   { status: validApproval.response.status, body: validApproval.body }
 );
 assert(
-  validApproval.body.approval.approvalType === "DRY_RUN_APPROVAL",
-  "Approval type mismatch.",
+  validApproval.body.approval.approvalType === "PROMOTION_APPROVAL",
+  "Promotion approval type mismatch.",
   { approval: validApproval.body.approval }
 );
 assert(
   validApproval.body.approval.authorityCandidate === "SETTLEMENT",
-  "Approval domain mismatch.",
+  "Promotion approval domain mismatch.",
   { approval: validApproval.body.approval }
 );
-pass("Dry-run approval succeeds when valid.", {
+pass("Promotion approval succeeds when valid.", {
   approvalId: validApproval.body.approval.id,
   idempotent: validApproval.body.idempotent,
 });
 
-const repeatedApproval = await approve({
+const repeatedApproval = await approvePromotion({
   domain: "SETTLEMENT",
   justification:
-    "QA confirms lifecycle-adjusted shadow evidence is ready and raw evidence remains visible.",
-  acknowledgedWarnings: [rawEvidenceWarning],
-  correlationId,
+    "QA confirms dry-run approval exists, rollback is ready, and controlled promotion may be planned.",
+  acknowledgedWarnings: decisionBefore.warnings,
+  correlationId: promotionCorrelationId,
 });
 assert(
   repeatedApproval.response.status === 200 && repeatedApproval.body.success,
-  "Repeated dry-run approval should be idempotent.",
+  "Repeated promotion approval should be idempotent.",
   { status: repeatedApproval.response.status, body: repeatedApproval.body }
 );
 assert(
   repeatedApproval.body.approval.id === validApproval.body.approval.id,
-  "Repeated dry-run approval should return the existing approval record.",
+  "Repeated promotion approval should return the existing approval record.",
   {
     firstApprovalId: validApproval.body.approval.id,
     repeatedApprovalId: repeatedApproval.body.approval.id,
@@ -152,10 +186,10 @@ assert(
 );
 assert(
   repeatedApproval.body.idempotent === true,
-  "Repeated dry-run approval should report idempotent=true.",
+  "Repeated promotion approval should report idempotent=true.",
   { body: repeatedApproval.body }
 );
-pass("Dry-run approval is idempotent and append-only.");
+pass("Promotion approval is idempotent and append-only.");
 
 const decisionAfterResult = await authGet(
   "/api/authority/promotion-decision?domain=settlement"
@@ -167,19 +201,18 @@ assert(
 );
 const decisionAfter = decisionAfterResult.body.decision;
 assert(
-  decisionAfter.decision === "READY_FOR_PROMOTION_APPROVAL" ||
-    decisionAfter.decision === "READY_FOR_CONTROLLED_PROMOTION",
-  "Promotion decision should advance to an approval-ready state.",
+  decisionAfter.decision === "READY_FOR_CONTROLLED_PROMOTION",
+  "Promotion decision should advance to READY_FOR_CONTROLLED_PROMOTION.",
   { decisionBefore, decisionAfter }
 );
 assert(
   decisionAfter.currentAuthority === "MONOLITH",
-  "Dry-run approval must not change authority.",
+  "Promotion approval must not change authority.",
   { decisionAfter }
 );
 assert(
   decisionAfter.comparisonMode === "ENABLED",
-  "Dry-run approval must not disable comparison mode.",
+  "Promotion approval must not disable comparison mode.",
   { decisionAfter }
 );
 pass("Promotion decision advanced without authority transfer.", {
@@ -189,7 +222,7 @@ pass("Promotion decision advanced without authority transfer.", {
   comparisonMode: decisionAfter.comparisonMode,
 });
 
-pass("Dry-run approval QA completed.", {
+pass("Promotion approval QA completed.", {
   approvalId: validApproval.body.approval.id,
   decision: decisionAfter.decision,
 });

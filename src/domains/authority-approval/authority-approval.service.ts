@@ -218,6 +218,142 @@ export async function approveSettlementDryRun({
   };
 }
 
+export async function approveSettlementPromotion({
+  actor,
+  domain,
+  justification,
+  acknowledgedWarnings,
+  correlationId,
+}: {
+  actor: AuthenticatedUser;
+  domain: unknown;
+  justification: unknown;
+  acknowledgedWarnings: unknown;
+  correlationId?: unknown;
+}): Promise<{
+  approval: AuthorityApprovalRecord;
+  idempotent: boolean;
+  promotionDecisionBefore: Awaited<ReturnType<typeof getPromotionDecision>>;
+  promotionDecisionAfter: Awaited<ReturnType<typeof getPromotionDecision>>;
+}> {
+  if (domain !== "SETTLEMENT") {
+    throw new AuthorityApprovalValidationError(
+      "Only SETTLEMENT promotion approval is supported."
+    );
+  }
+
+  const normalizedCorrelationId = normalizeCorrelationId(correlationId);
+  if (normalizedCorrelationId) {
+    const existingApproval = await findAuthorityApprovalRecordByCorrelationId({
+      authorityCandidate: "SETTLEMENT",
+      approvalType: "PROMOTION_APPROVAL",
+      correlationId: normalizedCorrelationId,
+    });
+
+    if (existingApproval) {
+      const promotionDecision = await getPromotionDecision({ domain: "SETTLEMENT" });
+
+      return {
+        approval: existingApproval,
+        idempotent: true,
+        promotionDecisionBefore: promotionDecision,
+        promotionDecisionAfter: promotionDecision,
+      };
+    }
+  }
+
+  const normalizedJustification = normalizeJustification(justification);
+  if (!normalizedJustification) {
+    throw new AuthorityApprovalValidationError("Justification is required.");
+  }
+
+  const normalizedAcknowledgedWarnings =
+    normalizeAcknowledgedWarnings(acknowledgedWarnings);
+  const promotionDecisionBefore = await getPromotionDecision({ domain: "SETTLEMENT" });
+
+  if (promotionDecisionBefore.decision !== "READY_FOR_PROMOTION_APPROVAL") {
+    throw new AuthorityApprovalValidationError(
+      "Settlement is not ready for promotion approval.",
+      409
+    );
+  }
+
+  if (!promotionDecisionBefore.approvalState.dryRunApproval) {
+    throw new AuthorityApprovalValidationError(
+      "DRY_RUN_APPROVAL is required before promotion approval.",
+      409
+    );
+  }
+
+  if (promotionDecisionBefore.rollbackReadiness !== "READY") {
+    throw new AuthorityApprovalValidationError(
+      "Rollback readiness must be READY before promotion approval.",
+      409
+    );
+  }
+
+  if (promotionDecisionBefore.comparisonMode !== "ENABLED") {
+    throw new AuthorityApprovalValidationError(
+      "Settlement comparison mode must be ENABLED before promotion approval.",
+      409
+    );
+  }
+
+  if (promotionDecisionBefore.currentAuthority !== "MONOLITH") {
+    throw new AuthorityApprovalValidationError(
+      "Settlement authority must remain MONOLITH before promotion approval.",
+      409
+    );
+  }
+
+  const missingAcknowledgements = promotionDecisionBefore.warnings.filter(
+    (warning) => !normalizedAcknowledgedWarnings.includes(warning)
+  );
+  if (missingAcknowledgements.length > 0) {
+    throw new AuthorityApprovalValidationError(
+      "All promotion decision warnings must be acknowledged before promotion approval."
+    );
+  }
+
+  const approval = await createAuthorityApprovalRecord({
+    authorityCandidate: "SETTLEMENT",
+    approvalType: "PROMOTION_APPROVAL",
+    approverUserId: actor.id,
+    approverUsername: actor.username,
+    justification: normalizedJustification,
+    metadata: {
+      acknowledgedWarnings: normalizedAcknowledgedWarnings,
+      approvalCapturedAt: new Date().toISOString(),
+      correlationId: normalizedCorrelationId,
+      dryRunApprovalId: promotionDecisionBefore.approvalState.dryRunApproval.id,
+      promotionDecisionBefore: promotionDecisionBefore.decision,
+    },
+  });
+
+  await createOutboxEvent({
+    eventType: "authority.promotion.approved",
+    aggregateType: "authority_candidate",
+    aggregateId: "SETTLEMENT",
+    correlationId: normalizedCorrelationId,
+    payload: {
+      domain: "SETTLEMENT",
+      actorUserId: actor.id,
+      approvalId: approval.id,
+      correlationId: normalizedCorrelationId,
+      createdAt: approval.createdAt,
+    },
+  });
+
+  const promotionDecisionAfter = await getPromotionDecision({ domain: "SETTLEMENT" });
+
+  return {
+    approval,
+    idempotent: false,
+    promotionDecisionBefore,
+    promotionDecisionAfter,
+  };
+}
+
 export async function getAuthorityApprovalStatus(): Promise<AuthorityApprovalStatus> {
   const [history, promotionDecision] = await Promise.all([
     getAuthorityApprovalHistory("SETTLEMENT"),

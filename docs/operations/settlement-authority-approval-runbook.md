@@ -13,6 +13,10 @@ npm run ops:promotion-decision
 npm run ops:approve-settlement-dry-run -- \
   --justification "Operator reviewed lifecycle-adjusted evidence and approves dry-run readiness." \
   --acknowledge-warning "Raw evidence is not READY and must remain visible for review."
+npm run ops:approve-settlement-promotion -- \
+  --justification "Operator reviewed dry-run evidence and approves controlled promotion planning." \
+  --acknowledge-warning "Raw evidence is not READY and must remain visible for review." \
+  --acknowledge-warning "PROMOTION_APPROVAL is missing."
 npm run ops:authority-approval-status
 npm run ops:authority-approval-history
 npm run ops:settlement-dry-run-evaluation
@@ -64,9 +68,33 @@ Capturing dry-run approval does not:
 2. Confirm the promotion decision is `READY_FOR_PROMOTION_APPROVAL` before recording promotion approval.
 3. Confirm no unexplained critical mismatch exists.
 4. Confirm no unexplained failure exists.
-5. Confirm `PROMOTION_APPROVAL` exists.
-6. Confirm rollback operator and rollback window are assigned.
-7. Keep rollback approval process available.
+5. Confirm `DRY_RUN_APPROVAL` exists.
+6. Record `PROMOTION_APPROVAL` through `npm run ops:approve-settlement-promotion`.
+7. Confirm the promotion decision advances to `READY_FOR_CONTROLLED_PROMOTION`.
+8. Confirm rollback operator and rollback window are assigned.
+9. Keep rollback approval process available.
+
+## Promotion Approval Capture
+
+Promotion approval may only be captured by an authorized operator with administrative permissions.
+
+The approval request must include:
+
+- non-empty justification
+- acknowledgement of every current promotion decision warning
+- optional correlation ID for idempotent retry
+
+Promotion approval records are append-only. Operators must not edit or delete approval history.
+
+Capturing promotion approval does not:
+
+- promote Settlement Service
+- change `SETTLEMENT_AUTHORITY`
+- route settlements to Settlement Service
+- disable monolith settlement
+- complete the authority transfer
+
+After promotion approval, the next state is `READY_FOR_CONTROLLED_PROMOTION`.
 
 ## Operator Rules
 

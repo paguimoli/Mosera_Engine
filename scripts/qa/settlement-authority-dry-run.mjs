@@ -135,12 +135,21 @@ assert(
   "Dry-run rollback trigger evaluation missing.",
   { dryRunEvaluation }
 );
-assert(
-  dryRunEvaluation.ifServiceBecameAuthoritativeNow.wouldPromotionBeAllowed ===
-    false,
-  "Dry-run evaluation must not allow promotion without approvals.",
-  { dryRunEvaluation }
-);
+if (approvalStatus.latestApprovals.promotionApproval === null) {
+  assert(
+    dryRunEvaluation.ifServiceBecameAuthoritativeNow.wouldPromotionBeAllowed ===
+      false,
+    "Dry-run evaluation must not allow promotion without promotion approval.",
+    { dryRunEvaluation, approvalStatus }
+  );
+} else {
+  assert(
+    dryRunEvaluation.ifServiceBecameAuthoritativeNow.wouldPromotionBeAllowed ===
+      true,
+    "Dry-run evaluation should allow controlled promotion planning after promotion approval.",
+    { dryRunEvaluation, approvalStatus }
+  );
+}
 pass("Dry-run evaluation reports promotion and rollback conditions.", {
   currentState: dryRunEvaluation.currentState,
   evaluation: dryRunEvaluation.ifServiceBecameAuthoritativeNow,
