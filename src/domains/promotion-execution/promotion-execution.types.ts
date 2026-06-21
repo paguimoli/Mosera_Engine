@@ -50,12 +50,41 @@ export type SettlementRollbackSimulation = {
   simulatedAt: string;
 };
 
+export type SettlementAuthorityPromotion = {
+  domain: "SETTLEMENT";
+  previousAuthority: AuthorityValue;
+  newAuthority: "SERVICE";
+  comparisonMode: "ENABLED";
+  rollbackReadiness: RollbackReadinessStatus;
+  promotionApprovalId: string | null;
+  promotedAt: string;
+  correlationId: string | null;
+  idempotent: boolean;
+  auditEvent: PromotionExecutionAuditEvent | null;
+};
+
+export type SettlementPromotionStatus = {
+  domain: "SETTLEMENT";
+  authority: AuthorityValue;
+  comparisonMode: ComparisonMode;
+  promotedAt: string | null;
+  rollbackReady: boolean;
+  rollbackReadiness: RollbackReadinessStatus;
+  promotionApprovalId: string | null;
+  evaluatedAt: string;
+};
+
 export type PromotionSimulationInput = {
   domain: AuthorityDomain;
   correlationId?: string | null;
 };
 
 export type RollbackSimulationInput = {
+  domain: AuthorityDomain;
+  correlationId?: string | null;
+};
+
+export type PromotionExecutionInput = {
   domain: AuthorityDomain;
   correlationId?: string | null;
 };

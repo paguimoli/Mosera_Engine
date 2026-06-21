@@ -81,11 +81,15 @@ export async function resolveSettlementAuthorityRoute(): Promise<SettlementAutho
   if (authority.authority === "MONOLITH") {
     reasons.push("Monolith remains authoritative.");
   } else {
-    reasons.push("Settlement Service authority is configured but not cut over by this phase.");
+    reasons.push("Settlement Service is authoritative.");
   }
 
   if (authority.comparisonMode === "ENABLED") {
-    reasons.push("Settlement Service remains available for comparison.");
+    reasons.push(
+      authority.authority === "SERVICE"
+        ? "Monolith settlement engine remains available for comparison."
+        : "Settlement Service remains available for comparison."
+    );
   } else {
     reasons.push("Comparison mode is disabled.");
   }
@@ -98,9 +102,13 @@ export async function resolveSettlementAuthorityRoute(): Promise<SettlementAutho
     authoritativePath: authority.authority,
     comparisonMode: authority.comparisonMode,
     comparisonPath:
-      authority.comparisonMode === "ENABLED" ? "SETTLEMENT_SERVICE" : null,
+      authority.comparisonMode === "ENABLED"
+        ? authority.authority === "SERVICE"
+          ? "MONOLITH"
+          : "SETTLEMENT_SERVICE"
+        : null,
     dryRunMode,
-    productionCutoverActive: false,
+    productionCutoverActive: authority.authority === "SERVICE",
     reasons,
   };
 

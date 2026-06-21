@@ -65,8 +65,8 @@ assert(decision.domain === "SETTLEMENT", "Promotion decision domain mismatch.", 
   decision,
 });
 assert(
-  decision.currentAuthority === "MONOLITH",
-  "Promotion decision must not transfer authority.",
+  decision.currentAuthority === "MONOLITH" || decision.currentAuthority === "SERVICE",
+  "Promotion decision has unsupported authority.",
   { decision }
 );
 assert(
@@ -91,7 +91,8 @@ if (decision.promotionReadiness.readiness === "READY") {
   assert(
     decision.decision === "READY_FOR_DRY_RUN_APPROVAL" ||
       decision.decision === "READY_FOR_PROMOTION_APPROVAL" ||
-      decision.decision === "READY_FOR_CONTROLLED_PROMOTION",
+      decision.decision === "READY_FOR_CONTROLLED_PROMOTION" ||
+      decision.decision === "PROMOTED",
     "Promotion-ready evidence should advance to an approval state.",
     { decision }
   );

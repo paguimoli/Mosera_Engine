@@ -47,14 +47,22 @@ assert(
 );
 
 const authority = statusResult.body.authority;
+assert(
+  authority.settlement.authority === "MONOLITH" ||
+    authority.settlement.authority === "SERVICE",
+  "Settlement authority has an unsupported value.",
+  { config: authority.settlement }
+);
+assert(authority.ledger.authority === "MONOLITH", "Ledger authority changed.", {
+  config: authority.ledger,
+});
+assert(authority.credit.authority === "MONOLITH", "Credit authority changed.", {
+  config: authority.credit,
+});
 for (const domain of ["settlement", "ledger", "credit"]) {
-  assert(authority[domain].authority === "MONOLITH", "Authority default changed.", {
-    domain,
-    config: authority[domain],
-  });
   assert(
     authority[domain].comparisonMode === "ENABLED",
-    "Comparison mode default changed.",
+    "Comparison mode changed.",
     { domain, config: authority[domain] }
   );
   assert(
@@ -63,7 +71,7 @@ for (const domain of ["settlement", "ledger", "credit"]) {
     { domain, config: authority[domain] }
   );
 }
-pass("Authority defaults are safe.", {
+pass("Authority controls are safe.", {
   settlement: authority.settlement.authority,
   ledger: authority.ledger.authority,
   credit: authority.credit.authority,

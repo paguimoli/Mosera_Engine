@@ -47,6 +47,18 @@ function normalizeComparisonMode(value: string | undefined): ComparisonMode {
   return value === "DISABLED" ? "DISABLED" : "ENABLED";
 }
 
+function assertAuthority(value: AuthorityValue) {
+  if (value !== "MONOLITH" && value !== "SERVICE") {
+    throw new Error("Unsupported authority value.");
+  }
+}
+
+function assertComparisonMode(value: ComparisonMode) {
+  if (value !== "ENABLED" && value !== "DISABLED") {
+    throw new Error("Unsupported comparison mode.");
+  }
+}
+
 function getNumberEnv(name: string, fallback: number) {
   const value = Number(process.env[name]);
 
@@ -76,4 +88,28 @@ export function readAuthorityConfigurations() {
     ledger: readAuthorityDomainConfiguration("LEDGER"),
     credit: readAuthorityDomainConfiguration("CREDIT"),
   };
+}
+
+export function setRuntimeAuthorityDomainConfiguration({
+  domain,
+  authority,
+  comparisonMode,
+}: {
+  domain: AuthorityDomain;
+  authority?: AuthorityValue;
+  comparisonMode?: ComparisonMode;
+}) {
+  const env = DOMAIN_ENV[domain];
+
+  if (authority) {
+    assertAuthority(authority);
+    process.env[env.authorityEnv] = authority;
+  }
+
+  if (comparisonMode) {
+    assertComparisonMode(comparisonMode);
+    process.env[env.comparisonModeEnv] = comparisonMode;
+  }
+
+  return readAuthorityDomainConfiguration(domain);
 }

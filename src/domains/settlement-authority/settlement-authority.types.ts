@@ -7,9 +7,9 @@ export type SettlementAuthorityDryRunMode = "ENABLED" | "DISABLED";
 export type SettlementAuthorityRuntimeRoute = {
   authoritativePath: AuthorityValue;
   comparisonMode: ComparisonMode;
-  comparisonPath: "SETTLEMENT_SERVICE" | null;
+  comparisonPath: "MONOLITH" | "SETTLEMENT_SERVICE" | null;
   dryRunMode: SettlementAuthorityDryRunMode;
-  productionCutoverActive: false;
+  productionCutoverActive: boolean;
   reasons: string[];
 };
 

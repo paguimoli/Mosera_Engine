@@ -85,7 +85,8 @@ assert(
     approvalStatus.currentState === "BLOCKED" ||
     approvalStatus.currentState === "READY_FOR_DRY_RUN_APPROVAL" ||
     approvalStatus.currentState === "READY_FOR_PROMOTION_APPROVAL" ||
-    approvalStatus.currentState === "READY_FOR_CONTROLLED_PROMOTION",
+    approvalStatus.currentState === "READY_FOR_CONTROLLED_PROMOTION" ||
+    approvalStatus.currentState === "PROMOTED",
   "Settlement should be ready for review or blocked by promotion evidence.",
   { approvalStatus }
 );
@@ -107,7 +108,8 @@ if (approvalStatus.latestApprovals.dryRunApproval === null) {
 } else {
   assert(
     approvalStatus.currentState === "READY_FOR_PROMOTION_APPROVAL" ||
-      approvalStatus.currentState === "READY_FOR_CONTROLLED_PROMOTION",
+      approvalStatus.currentState === "READY_FOR_CONTROLLED_PROMOTION" ||
+      approvalStatus.currentState === "PROMOTED",
     "Captured dry-run approval should advance the approval state.",
     { approvalStatus }
   );
@@ -145,8 +147,9 @@ if (approvalStatus.latestApprovals.promotionApproval === null) {
 } else {
   assert(
     dryRunEvaluation.ifServiceBecameAuthoritativeNow.wouldPromotionBeAllowed ===
-      true,
-    "Dry-run evaluation should allow controlled promotion planning after promotion approval.",
+      true ||
+      dryRunEvaluation.currentState === "PROMOTED",
+    "Dry-run evaluation should allow promotion planning or report promoted state.",
     { dryRunEvaluation, approvalStatus }
   );
 }

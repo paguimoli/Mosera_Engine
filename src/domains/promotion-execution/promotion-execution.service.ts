@@ -1,14 +1,22 @@
-import { validateRollbackReadiness } from "../authority-control/authority-control.service";
+import {
+  getAuthorityStatus,
+  validateRollbackReadiness,
+} from "../authority-control/authority-control.service";
+import { setRuntimeAuthorityDomainConfiguration } from "../authority-control/authority-control.repository";
 import type { AuthorityDomain } from "../authority-control/authority-control.types";
-import { createOutboxEvent } from "../outbox/outbox.service";
+import type { AuthenticatedUser } from "../auth/auth-context.types";
+import { createOutboxEvent, listRecentOutboxEvents } from "../outbox/outbox.service";
 import { getPromotionDecision } from "../promotion-decision/promotion-decision.service";
 import {
   assertSupportedPromotionExecutionDomain,
 } from "./promotion-execution.repository";
 import type {
+  PromotionExecutionInput,
   PromotionExecutionValidationResult,
   PromotionSimulationInput,
   RollbackSimulationInput,
+  SettlementAuthorityPromotion,
+  SettlementPromotionStatus,
   SettlementPromotionSimulation,
   SettlementRollbackSimulation,
 } from "./promotion-execution.types";
@@ -53,6 +61,35 @@ function collectBlockers(results: PromotionExecutionValidationResult[]) {
   return results
     .filter((result) => !result.passed)
     .map((result) => result.message);
+}
+
+function getPromotionMetadata() {
+  return {
+    promotedAt: process.env.SETTLEMENT_PROMOTED_AT || null,
+    promotionApprovalId: process.env.SETTLEMENT_PROMOTION_APPROVAL_ID || null,
+  };
+}
+
+async function getLatestPromotionEventMetadata() {
+  const events = await listRecentOutboxEvents({ limit: 100 });
+  const promotionEvent = events.find(
+    (event) =>
+      event.eventType === "authority.promoted" &&
+      event.aggregateType === "authority_candidate" &&
+      event.aggregateId === "SETTLEMENT"
+  );
+  const payload = promotionEvent?.payload ?? {};
+
+  return {
+    promotedAt:
+      typeof payload.promotedAt === "string"
+        ? payload.promotedAt
+        : promotionEvent?.createdAt ?? null,
+    promotionApprovalId:
+      typeof payload.promotionApprovalId === "string"
+        ? payload.promotionApprovalId
+        : null,
+  };
 }
 
 export async function simulateSettlementPromotion(
@@ -216,5 +253,132 @@ export async function simulateSettlementRollback(
       correlationId: auditEvent.correlationId ?? null,
     },
     simulatedAt,
+  };
+}
+
+export async function promoteSettlementAuthority({
+  actor,
+  domain,
+  correlationId,
+}: PromotionExecutionInput & {
+  actor: AuthenticatedUser;
+}): Promise<SettlementAuthorityPromotion> {
+  assertSupportedPromotionExecutionDomain(domain);
+
+  const normalizedCorrelationId = normalizeCorrelationId(correlationId);
+  const authorityStatusBefore = getAuthorityStatus().settlement;
+  const promotionDecisionBefore = await getPromotionDecision({ domain: "SETTLEMENT" });
+  const promotionApproval =
+    promotionDecisionBefore.approvalState.promotionApproval;
+
+  if (authorityStatusBefore.authority === "SERVICE") {
+    const rollbackReadiness = await validateRollbackReadiness();
+    const metadata = getPromotionMetadata();
+
+    return {
+      domain: "SETTLEMENT",
+      previousAuthority: "SERVICE",
+      newAuthority: "SERVICE",
+      comparisonMode: "ENABLED",
+      rollbackReadiness: rollbackReadiness.settlement.rollbackStatus,
+      promotionApprovalId:
+        metadata.promotionApprovalId ?? promotionApproval?.id ?? null,
+      promotedAt: metadata.promotedAt ?? nowIso(),
+      correlationId: normalizedCorrelationId,
+      idempotent: true,
+      auditEvent: null,
+    };
+  }
+
+  const simulation = await simulateSettlementPromotion({
+    domain,
+    correlationId: normalizedCorrelationId,
+  });
+
+  if (!simulation.promotionAllowed) {
+    throw new PromotionExecutionValidationError(
+      "Settlement authority promotion preconditions are not satisfied.",
+      409
+    );
+  }
+
+  if (!promotionApproval) {
+    throw new PromotionExecutionValidationError(
+      "PROMOTION_APPROVAL is required before controlled promotion.",
+      409
+    );
+  }
+
+  const promotedAt = nowIso();
+  setRuntimeAuthorityDomainConfiguration({
+    domain: "SETTLEMENT",
+    authority: "SERVICE",
+    comparisonMode: "ENABLED",
+  });
+  process.env.SETTLEMENT_PROMOTED_AT = promotedAt;
+  process.env.SETTLEMENT_PROMOTION_APPROVAL_ID = promotionApproval.id;
+
+  const auditEvent = await createOutboxEvent({
+    eventType: "authority.promoted",
+    aggregateType: "authority_candidate",
+    aggregateId: "SETTLEMENT",
+    correlationId: normalizedCorrelationId,
+    payload: {
+      domain: "SETTLEMENT",
+      previousAuthority: authorityStatusBefore.authority,
+      newAuthority: "SERVICE",
+      actorUserId: actor.id,
+      promotionApprovalId: promotionApproval.id,
+      correlationId: normalizedCorrelationId,
+      promotedAt,
+    },
+  });
+
+  return {
+    domain: "SETTLEMENT",
+    previousAuthority: authorityStatusBefore.authority,
+    newAuthority: "SERVICE",
+    comparisonMode: "ENABLED",
+    rollbackReadiness: simulation.rollbackReadiness,
+    promotionApprovalId: promotionApproval.id,
+    promotedAt,
+    correlationId: normalizedCorrelationId,
+    idempotent: false,
+    auditEvent: {
+      id: auditEvent.id,
+      eventType: auditEvent.eventType,
+      correlationId: auditEvent.correlationId ?? null,
+    },
+  };
+}
+
+export async function getSettlementPromotionStatus(): Promise<SettlementPromotionStatus> {
+  const [authorityStatus, rollbackReadiness, promotionDecision, eventMetadata] =
+    await Promise.all([
+      Promise.resolve(getAuthorityStatus()),
+      validateRollbackReadiness(),
+      getPromotionDecision({ domain: "SETTLEMENT" }),
+      getLatestPromotionEventMetadata(),
+    ]);
+  const settlementAuthority = authorityStatus.settlement;
+  const settlementRollback = rollbackReadiness.settlement;
+  const metadata = getPromotionMetadata();
+
+  return {
+    domain: "SETTLEMENT",
+    authority: settlementAuthority.authority,
+    comparisonMode: settlementAuthority.comparisonMode,
+    promotedAt:
+      settlementAuthority.authority === "SERVICE"
+        ? metadata.promotedAt ?? eventMetadata.promotedAt
+        : null,
+    rollbackReady: settlementRollback.rollbackStatus === "READY",
+    rollbackReadiness: settlementRollback.rollbackStatus,
+    promotionApprovalId:
+      metadata.promotionApprovalId ??
+      eventMetadata.promotionApprovalId ??
+      promotionDecision.approvalState.promotionApproval?.id ??
+      null,
+    evaluatedAt: nowIso(),
   };
 }

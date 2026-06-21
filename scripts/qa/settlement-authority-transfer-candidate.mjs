@@ -47,23 +47,28 @@ assert(
 );
 
 const readiness = result.body.readiness;
+const expectedComparisonPath =
+  readiness.authority === "SERVICE" ? "MONOLITH" : "SETTLEMENT_SERVICE";
 
-assert(readiness.authority === "MONOLITH", "Settlement authority must remain MONOLITH.", {
-  readiness,
-});
 assert(
-  readiness.runtimeRoute.productionCutoverActive === false,
-  "Settlement production cutover must remain inactive.",
+  readiness.authority === "MONOLITH" || readiness.authority === "SERVICE",
+  "Settlement authority has an unsupported value.",
   { readiness }
 );
 assert(
-  readiness.runtimeRoute.authoritativePath === "MONOLITH",
-  "Settlement runtime route should keep monolith authoritative.",
+  readiness.runtimeRoute.productionCutoverActive ===
+    (readiness.authority === "SERVICE"),
+  "Settlement production cutover flag does not match authority.",
   { readiness }
 );
 assert(
-  readiness.runtimeRoute.comparisonPath === "SETTLEMENT_SERVICE",
-  "Settlement Service should remain comparison-only.",
+  readiness.runtimeRoute.authoritativePath === readiness.authority,
+  "Settlement runtime route does not match configured authority.",
+  { readiness }
+);
+assert(
+  readiness.runtimeRoute.comparisonPath === expectedComparisonPath,
+  "Settlement comparison path does not match authority.",
   { readiness }
 );
 assert(readiness.thresholds.mismatchAlertThreshold >= 0, "Mismatch threshold missing.", {
@@ -76,7 +81,9 @@ assert(
 );
 assert(readiness.metrics, "Settlement authority metrics missing.", { readiness });
 
-pass("Settlement authority transfer candidate controls are advisory only.", {
+pass("Settlement authority controls reflect the active promotion phase.", {
+  authority: readiness.authority,
+  comparisonPath: readiness.runtimeRoute.comparisonPath,
   readinessStatus: readiness.status,
   rollbackReadinessStatus: readiness.rollbackReadinessStatus,
   rollbackTrigger: readiness.rollbackTrigger.shouldTriggerRollback,

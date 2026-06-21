@@ -85,20 +85,32 @@ assert(
 const promotion = promotionResult.body.simulation;
 const rollback = rollbackResult.body.simulation;
 
-assert(promotion.promotionAllowed === true, "Promotion simulation should pass.", {
-  promotion,
-});
 assert(rollback.rollbackAllowed === true, "Rollback simulation should pass.", {
   rollback,
 });
 assert(
-  promotion.currentAuthority === "MONOLITH",
-  "Promotion simulation must not change authority.",
+  promotion.currentAuthority === "MONOLITH" ||
+    promotion.currentAuthority === "SERVICE",
+  "Promotion simulation returned unsupported authority.",
   { promotion }
 );
+if (promotion.currentAuthority === "MONOLITH") {
+  assert(promotion.promotionAllowed === true, "Promotion simulation should pass.", {
+    promotion,
+  });
+} else {
+  assert(
+    promotion.promotionAllowed === false &&
+      promotion.blockers.includes(
+        "Settlement authority must remain MONOLITH before controlled promotion."
+      ),
+    "Promotion simulation should recognize Settlement as already promoted.",
+    { promotion }
+  );
+}
 assert(
-  rollback.authorityState === "MONOLITH",
-  "Rollback simulation must leave authority MONOLITH.",
+  rollback.authorityState === promotion.currentAuthority,
+  "Rollback simulation must preserve current authority.",
   { rollback }
 );
 assert(
@@ -142,8 +154,8 @@ assert(
   { status: authorityStatus.response.status, body: authorityStatus.body }
 );
 assert(
-  authorityStatus.body.authority.settlement.authority === "MONOLITH",
-  "Authority changed after simulation.",
+  authorityStatus.body.authority.settlement.authority === promotion.currentAuthority,
+  "Authority changed unexpectedly after simulation.",
   { authorityStatus: authorityStatus.body.authority }
 );
 assert(
