@@ -54,6 +54,23 @@ export type ShadowReadinessSummary = {
     credit: DomainReadinessMetrics;
   };
   platform: PlatformExtractionReadiness;
+  evidenceReadiness?: {
+    rawReadiness: {
+      readiness: DomainReadinessStatus;
+      mismatchRate: number;
+      failureRate: number;
+    };
+    adjustedReadiness: {
+      readiness: DomainReadinessStatus;
+      mismatchRate: number;
+      failureRate: number;
+    };
+    promotionReadiness: {
+      readiness: DomainReadinessStatus;
+      mismatchRate: number;
+      failureRate: number;
+    };
+  };
   recommendations: ExtractionRecommendation[];
   extractionRecommendation: ExtractionRecommendation;
 };

@@ -1,4 +1,5 @@
 import type { DomainReadinessStatus } from "../shadow-readiness/shadow-readiness.types";
+import type { ShadowEvidenceLifecycleStatus } from "../shadow-evidence-lifecycle/shadow-evidence-lifecycle.types";
 
 export type ShadowAnalysisDomain = "SETTLEMENT" | "LEDGER" | "CREDIT";
 
@@ -20,7 +21,10 @@ export type ShadowEvidenceSeverity = "INFO" | "WARNING" | "CRITICAL";
 
 export type ShadowAnalysisWindow = "24h" | "7d" | "30d" | "all";
 
-export type ShadowReadinessMode = "RAW_READINESS" | "ADJUSTED_READINESS";
+export type ShadowReadinessMode =
+  | "RAW_READINESS"
+  | "ADJUSTED_READINESS"
+  | "PROMOTION_READINESS";
 
 export type ClassifiedShadowEvidence = {
   id: string;
@@ -36,6 +40,7 @@ export type ClassifiedShadowEvidence = {
   shadowRunId?: string | null;
   entityId?: string | null;
   evidenceType: string;
+  lifecycleStatus: ShadowEvidenceLifecycleStatus;
   fieldName?: string | null;
   failureReason?: string | null;
   createdAt: string;
@@ -66,6 +71,7 @@ export type ShadowDomainAnalysis = {
   classifiedCauses: ShadowCauseCounts;
   rawReadiness: ShadowAnalysisReadinessMetrics;
   adjustedReadiness: ShadowAnalysisReadinessMetrics;
+  promotionReadiness: ShadowAnalysisReadinessMetrics;
   affectedRoutes: string[];
   authorityCandidate: ShadowAnalysisDomain;
 };
@@ -77,6 +83,11 @@ export type ShadowPlatformAnalysis = {
     failureRate: number;
   };
   adjusted: {
+    readiness: DomainReadinessStatus;
+    mismatchRate: number;
+    failureRate: number;
+  };
+  promotion: {
     readiness: DomainReadinessStatus;
     mismatchRate: number;
     failureRate: number;

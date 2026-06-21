@@ -63,6 +63,11 @@ export type SettlementDryRunEvaluation = {
     mismatchRate: number;
     failureRate: number;
   };
+  promotionEvidence: {
+    readiness: DomainReadinessStatus;
+    mismatchRate: number;
+    failureRate: number;
+  };
   rollbackReadiness: DomainReadinessStatus;
   promotionBlockers: string[];
   approvalRequirements: string[];

@@ -2,6 +2,7 @@ import {
   fetchShadowDomainRawMetrics,
   ShadowReadinessRepositoryError,
 } from "./shadow-readiness.repository";
+import { getShadowAnalysisSummary } from "../shadow-analysis/shadow-analysis.service";
 import type {
   DomainReadinessMetrics,
   DomainReadinessStatus,
@@ -273,6 +274,7 @@ export async function getShadowReadinessSummary(
     credit.readinessStatus,
   ]);
   const recommendations = getRecommendations([settlement, ledger, credit]);
+  const evidenceAnalysis = await getShadowAnalysisSummary(window);
 
   return {
     window,
@@ -287,6 +289,11 @@ export async function getShadowReadinessSummary(
       creditStatus: credit.readinessStatus,
       platformStatus,
       evaluatedAt: new Date().toISOString(),
+    },
+    evidenceReadiness: {
+      rawReadiness: evidenceAnalysis.platform.raw,
+      adjustedReadiness: evidenceAnalysis.platform.adjusted,
+      promotionReadiness: evidenceAnalysis.platform.promotion,
     },
     recommendations,
     extractionRecommendation: getPrimaryRecommendation(recommendations),

@@ -81,8 +81,9 @@ assert(
   { approvalStatus }
 );
 assert(
-  approvalStatus.currentState === "READY_FOR_REVIEW",
-  "Settlement should remain ready for review by default.",
+  approvalStatus.currentState === "READY_FOR_REVIEW" ||
+    approvalStatus.currentState === "BLOCKED",
+  "Settlement should be ready for review or blocked by promotion evidence.",
   { approvalStatus }
 );
 assert(

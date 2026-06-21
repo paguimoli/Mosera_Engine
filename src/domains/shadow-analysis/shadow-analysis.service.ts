@@ -29,6 +29,14 @@ import type {
   SettlementShadowRun,
 } from "../settlement-shadow/settlement-shadow.types";
 import type { DomainReadinessStatus } from "../shadow-readiness/shadow-readiness.types";
+import {
+  getEffectiveLifecycleStatusMap,
+  getLifecycleKey,
+} from "../shadow-evidence-lifecycle/shadow-evidence-lifecycle.repository";
+import type {
+  ShadowEvidenceLifecycleKey,
+  ShadowEvidenceLifecycleStatus,
+} from "../shadow-evidence-lifecycle/shadow-evidence-lifecycle.types";
 import type {
   ClassifiedShadowEvidence,
   ShadowAnalysisDomain,
@@ -328,7 +336,8 @@ function classifyFailure(
 
 function classifyMismatchEvidence(
   domain: ShadowAnalysisDomain,
-  mismatch: ShadowMismatch
+  mismatch: ShadowMismatch,
+  lifecycleStatus: ShadowEvidenceLifecycleStatus
 ): ClassifiedShadowEvidence {
   const classification = classifyMismatch(domain, mismatch);
   const run = mismatch.run ?? null;
@@ -347,6 +356,7 @@ function classifyMismatchEvidence(
     shadowRunId: mismatch.shadowRunId,
     entityId: getRunEntityId(domain, run),
     evidenceType: mismatch.mismatchType,
+    lifecycleStatus,
     fieldName: mismatch.fieldName,
     createdAt: mismatch.createdAt,
   };
@@ -354,7 +364,8 @@ function classifyMismatchEvidence(
 
 function classifyFailureEvidence(
   domain: ShadowAnalysisDomain,
-  failure: ShadowFailure
+  failure: ShadowFailure,
+  lifecycleStatus: ShadowEvidenceLifecycleStatus
 ): ClassifiedShadowEvidence {
   const classification = classifyFailure(domain, failure);
 
@@ -371,6 +382,7 @@ function classifyFailureEvidence(
     correlationId: failure.correlationId ?? null,
     entityId: getFailureEntityId(domain, failure),
     evidenceType: failure.failureType,
+    lifecycleStatus,
     failureReason: failure.failureReason,
     createdAt: failure.createdAt,
   };
@@ -391,25 +403,37 @@ function calculateReadiness({
   runs,
   mismatches,
   failures,
-  adjusted,
+  mode,
 }: {
   domain: ShadowAnalysisDomain;
   runs: ShadowRun[];
   mismatches: ClassifiedShadowEvidence[];
   failures: ClassifiedShadowEvidence[];
-  adjusted: boolean;
+  mode: "RAW_READINESS" | "ADJUSTED_READINESS" | "PROMOTION_READINESS";
 }): ShadowAnalysisReadinessMetrics {
   const thresholds = getThresholds(domain);
-  const includedMismatches = adjusted
-    ? mismatches.filter(
-        (mismatch) => mismatch.evidenceClass !== "QA_INTENTIONAL_MISMATCH"
-      )
-    : mismatches;
-  const includedFailures = adjusted
-    ? failures.filter(
-        (failure) => failure.evidenceClass !== "QA_INTENTIONAL_FAILURE"
-      )
-    : failures;
+  const includedMismatches = mismatches.filter((mismatch) => {
+    if (mode === "RAW_READINESS") return true;
+    if (mode === "ADJUSTED_READINESS") {
+      return mismatch.evidenceClass !== "QA_INTENTIONAL_MISMATCH";
+    }
+
+    return (
+      mismatch.lifecycleStatus === "ACTIVE" ||
+      mismatch.lifecycleStatus === "REVIEW_REQUIRED"
+    );
+  });
+  const includedFailures = failures.filter((failure) => {
+    if (mode === "RAW_READINESS") return true;
+    if (mode === "ADJUSTED_READINESS") {
+      return failure.evidenceClass !== "QA_INTENTIONAL_FAILURE";
+    }
+
+    return (
+      failure.lifecycleStatus === "ACTIVE" ||
+      failure.lifecycleStatus === "REVIEW_REQUIRED"
+    );
+  });
   const mismatchRunIds = new Set(
     includedMismatches
       .map((mismatch) => mismatch.shadowRunId)
@@ -453,15 +477,17 @@ function calculateReadiness({
   }
 
   if (reasons.length === 0) {
-    reasons.push(
-      adjusted
-        ? "Adjusted shadow evidence is within ready thresholds."
-        : "Raw shadow evidence is within ready thresholds."
-    );
+    if (mode === "RAW_READINESS") {
+      reasons.push("Raw shadow evidence is within ready thresholds.");
+    } else if (mode === "ADJUSTED_READINESS") {
+      reasons.push("Adjusted shadow evidence is within ready thresholds.");
+    } else {
+      reasons.push("Promotion lifecycle evidence is within ready thresholds.");
+    }
   }
 
   return {
-    mode: adjusted ? "ADJUSTED_READINESS" : "RAW_READINESS",
+    mode,
     totalRuns: runs.length,
     matches,
     mismatches: mismatchesCount,
@@ -478,10 +504,21 @@ function calculateReadiness({
 async function loadDomainEvidence({
   domain,
   windowStart,
+  lifecycleMap,
 }: {
   domain: ShadowAnalysisDomain;
   windowStart: string | null;
+  lifecycleMap: Map<ShadowEvidenceLifecycleKey, { newStatus: ShadowEvidenceLifecycleStatus }>;
 }): Promise<DomainEvidence> {
+  const getLifecycleStatus = (kind: "MISMATCH" | "FAILURE", evidenceId: string) =>
+    lifecycleMap.get(
+      getLifecycleKey({
+        domain,
+        evidenceType: kind,
+        evidenceId,
+      })
+    )?.newStatus ?? "ACTIVE";
+
   if (domain === "SETTLEMENT") {
     const [runs, mismatches, failures] = await Promise.all([
       listSettlementShadowRuns(),
@@ -494,10 +531,22 @@ async function loadDomainEvidence({
       runs: runs.filter((run) => inWindow(run.createdAt, windowStart)),
       mismatches: mismatches
         .filter((mismatch) => inWindow(mismatch.createdAt, windowStart))
-        .map((mismatch) => classifyMismatchEvidence(domain, mismatch)),
+        .map((mismatch) =>
+          classifyMismatchEvidence(
+            domain,
+            mismatch,
+            getLifecycleStatus("MISMATCH", mismatch.id)
+          )
+        ),
       failures: failures
         .filter((failure) => inWindow(failure.createdAt, windowStart))
-        .map((failure) => classifyFailureEvidence(domain, failure)),
+        .map((failure) =>
+          classifyFailureEvidence(
+            domain,
+            failure,
+            getLifecycleStatus("FAILURE", failure.id)
+          )
+        ),
     };
   }
 
@@ -513,10 +562,22 @@ async function loadDomainEvidence({
       runs: runs.filter((run) => inWindow(run.createdAt, windowStart)),
       mismatches: mismatches
         .filter((mismatch) => inWindow(mismatch.createdAt, windowStart))
-        .map((mismatch) => classifyMismatchEvidence(domain, mismatch)),
+        .map((mismatch) =>
+          classifyMismatchEvidence(
+            domain,
+            mismatch,
+            getLifecycleStatus("MISMATCH", mismatch.id)
+          )
+        ),
       failures: failures
         .filter((failure) => inWindow(failure.createdAt, windowStart))
-        .map((failure) => classifyFailureEvidence(domain, failure)),
+        .map((failure) =>
+          classifyFailureEvidence(
+            domain,
+            failure,
+            getLifecycleStatus("FAILURE", failure.id)
+          )
+        ),
     };
   }
 
@@ -531,10 +592,22 @@ async function loadDomainEvidence({
     runs: runs.filter((run) => inWindow(run.createdAt, windowStart)),
     mismatches: mismatches
       .filter((mismatch) => inWindow(mismatch.createdAt, windowStart))
-      .map((mismatch) => classifyMismatchEvidence(domain, mismatch)),
+      .map((mismatch) =>
+        classifyMismatchEvidence(
+          domain,
+          mismatch,
+          getLifecycleStatus("MISMATCH", mismatch.id)
+        )
+      ),
     failures: failures
       .filter((failure) => inWindow(failure.createdAt, windowStart))
-      .map((failure) => classifyFailureEvidence(domain, failure)),
+      .map((failure) =>
+        classifyFailureEvidence(
+          domain,
+          failure,
+          getLifecycleStatus("FAILURE", failure.id)
+        )
+      ),
   };
 }
 
@@ -550,14 +623,21 @@ function summarizeDomain(evidence: DomainEvidence) {
     runs: evidence.runs,
     mismatches: evidence.mismatches,
     failures: evidence.failures,
-    adjusted: false,
+    mode: "RAW_READINESS",
   });
   const adjustedReadiness = calculateReadiness({
     domain: evidence.domain,
     runs: evidence.runs,
     mismatches: evidence.mismatches,
     failures: evidence.failures,
-    adjusted: true,
+    mode: "ADJUSTED_READINESS",
+  });
+  const promotionReadiness = calculateReadiness({
+    domain: evidence.domain,
+    runs: evidence.runs,
+    mismatches: evidence.mismatches,
+    failures: evidence.failures,
+    mode: "PROMOTION_READINESS",
   });
 
   return {
@@ -569,6 +649,7 @@ function summarizeDomain(evidence: DomainEvidence) {
     classifiedCauses,
     rawReadiness,
     adjustedReadiness,
+    promotionReadiness,
     affectedRoutes: [getRoute(evidence.domain)],
     authorityCandidate: evidence.domain,
   };
@@ -585,6 +666,10 @@ function combineCauseCounts(evidence: ClassifiedShadowEvidence[]) {
 }
 
 function getRecommendation(summary: Pick<ShadowAnalysisSummary, "platform">) {
+  if (summary.platform.promotion.readiness === "READY") {
+    return "Promotion lifecycle evidence is ready; operator approvals and raw evidence review are still required before any authority transfer.";
+  }
+
   if (summary.platform.adjusted.readiness === "READY") {
     return "Adjusted evidence removes QA blockers; continue shadowing until raw evidence is clean enough for transfer review.";
   }
@@ -600,10 +685,11 @@ export async function getShadowAnalysisSummary(
   window: ShadowAnalysisWindow = "7d"
 ): Promise<ShadowAnalysisSummary> {
   const windowStart = getWindowStart(window);
+  const lifecycleMap = await getEffectiveLifecycleStatusMap();
   const [settlementEvidence, ledgerEvidence, creditEvidence] = await Promise.all([
-    loadDomainEvidence({ domain: "SETTLEMENT", windowStart }),
-    loadDomainEvidence({ domain: "LEDGER", windowStart }),
-    loadDomainEvidence({ domain: "CREDIT", windowStart }),
+    loadDomainEvidence({ domain: "SETTLEMENT", windowStart, lifecycleMap }),
+    loadDomainEvidence({ domain: "LEDGER", windowStart, lifecycleMap }),
+    loadDomainEvidence({ domain: "CREDIT", windowStart, lifecycleMap }),
   ]);
   const settlement = summarizeDomain(settlementEvidence);
   const ledger = summarizeDomain(ledgerEvidence);
@@ -628,6 +714,11 @@ export async function getShadowAnalysisSummary(
     ledger.adjustedReadiness.readinessStatus,
     credit.adjustedReadiness.readinessStatus,
   ]);
+  const promotionStatus = statusFromDomains([
+    settlement.promotionReadiness.readinessStatus,
+    ledger.promotionReadiness.readinessStatus,
+    credit.promotionReadiness.readinessStatus,
+  ]);
   const rawTotalEvents =
     settlement.rawReadiness.totalRuns +
     ledger.rawReadiness.totalRuns +
@@ -642,6 +733,13 @@ export async function getShadowAnalysisSummary(
     settlement.adjustedReadiness.failures +
     ledger.adjustedReadiness.failures +
     credit.adjustedReadiness.failures;
+  const promotionTotalEvents =
+    settlement.promotionReadiness.totalRuns +
+    ledger.promotionReadiness.totalRuns +
+    credit.promotionReadiness.totalRuns +
+    settlement.promotionReadiness.failures +
+    ledger.promotionReadiness.failures +
+    credit.promotionReadiness.failures;
   const summary: ShadowAnalysisSummary = {
     window,
     evaluatedAt: new Date().toISOString(),
@@ -674,6 +772,21 @@ export async function getShadowAnalysisSummary(
             ledger.adjustedReadiness.failures +
             credit.adjustedReadiness.failures,
           adjustedTotalEvents
+        ),
+      },
+      promotion: {
+        readiness: promotionStatus,
+        mismatchRate: rate(
+          settlement.promotionReadiness.mismatches +
+            ledger.promotionReadiness.mismatches +
+            credit.promotionReadiness.mismatches,
+          promotionTotalEvents
+        ),
+        failureRate: rate(
+          settlement.promotionReadiness.failures +
+            ledger.promotionReadiness.failures +
+            credit.promotionReadiness.failures,
+          promotionTotalEvents
         ),
       },
     },
@@ -711,10 +824,11 @@ export async function listShadowAnalysisMismatches(
   window: ShadowAnalysisWindow = "7d"
 ): Promise<ClassifiedShadowEvidence[]> {
   const windowStart = getWindowStart(window);
+  const lifecycleMap = await getEffectiveLifecycleStatusMap();
   const domains = await Promise.all([
-    loadDomainEvidence({ domain: "SETTLEMENT", windowStart }),
-    loadDomainEvidence({ domain: "LEDGER", windowStart }),
-    loadDomainEvidence({ domain: "CREDIT", windowStart }),
+    loadDomainEvidence({ domain: "SETTLEMENT", windowStart, lifecycleMap }),
+    loadDomainEvidence({ domain: "LEDGER", windowStart, lifecycleMap }),
+    loadDomainEvidence({ domain: "CREDIT", windowStart, lifecycleMap }),
   ]);
 
   return domains.flatMap((domain) => domain.mismatches);
@@ -724,10 +838,11 @@ export async function listShadowAnalysisFailures(
   window: ShadowAnalysisWindow = "7d"
 ): Promise<ClassifiedShadowEvidence[]> {
   const windowStart = getWindowStart(window);
+  const lifecycleMap = await getEffectiveLifecycleStatusMap();
   const domains = await Promise.all([
-    loadDomainEvidence({ domain: "SETTLEMENT", windowStart }),
-    loadDomainEvidence({ domain: "LEDGER", windowStart }),
-    loadDomainEvidence({ domain: "CREDIT", windowStart }),
+    loadDomainEvidence({ domain: "SETTLEMENT", windowStart, lifecycleMap }),
+    loadDomainEvidence({ domain: "LEDGER", windowStart, lifecycleMap }),
+    loadDomainEvidence({ domain: "CREDIT", windowStart, lifecycleMap }),
   ]);
 
   return domains.flatMap((domain) => domain.failures);
