@@ -8,6 +8,7 @@ const steps = [
   "qa:authority-control",
   "qa:settlement-authority",
   "qa:shadow-readiness",
+  "qa:shadow-analysis",
   "qa:credit-launch",
   "qa:worker-observability",
 ];
