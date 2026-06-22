@@ -6,6 +6,7 @@ import type {
   ServiceHealthStatus,
 } from "../authority-control/authority-control.types";
 import type { PromotionDecisionState } from "../promotion-decision/promotion-decision.types";
+import type { DomainReadinessStatus } from "../shadow-readiness/shadow-readiness.types";
 
 export type PromotionExecutionValidationResult = {
   name: string;
@@ -91,6 +92,38 @@ export type SettlementPromotionStatus = {
   evaluatedAt: string;
 };
 
+export type RollbackTriggerEvidenceSource =
+  | "RAW_EVIDENCE"
+  | "PROMOTION_EVIDENCE"
+  | "POST_PROMOTION_EVIDENCE";
+
+export type RollbackTriggerEvidenceSummary = {
+  source: RollbackTriggerEvidenceSource;
+  totalRuns: number;
+  matches: number;
+  mismatches: number;
+  failures: number;
+  criticalMismatchCount: number;
+  mismatchRate: number;
+  failureRate: number;
+  readiness: DomainReadinessStatus;
+  effectiveMismatchCount: number;
+  effectiveFailureCount: number;
+  excludedMismatchCount: number;
+  excludedFailureCount: number;
+  reasons: string[];
+};
+
+export type RollbackEvaluationDetails = {
+  triggerSource: RollbackTriggerEvidenceSource;
+  rawTriggerActive: boolean;
+  promotionTriggerActive: boolean;
+  postPromotionTriggerActive: boolean;
+  blockers: string[];
+  warnings: string[];
+  evaluatedAt: string;
+};
+
 export type SettlementPostPromotionStatus = {
   domain: "SETTLEMENT";
   authority: AuthorityValue;
@@ -100,9 +133,14 @@ export type SettlementPostPromotionStatus = {
   rollbackReadiness: RollbackReadinessStatus;
   rollbackTrigger: {
     shouldTriggerRollback: boolean;
-    status: RollbackReadinessStatus;
+    status: DomainReadinessStatus;
     reasons: string[];
   };
+  triggerSource: RollbackTriggerEvidenceSource;
+  rawEvidenceSummary: RollbackTriggerEvidenceSummary;
+  promotionEvidenceSummary: RollbackTriggerEvidenceSummary;
+  postPromotionEvidenceSummary: RollbackTriggerEvidenceSummary;
+  rollbackEvaluationDetails: RollbackEvaluationDetails;
   latestSettlementShadowComparison: {
     id: string;
     comparisonStatus: string;

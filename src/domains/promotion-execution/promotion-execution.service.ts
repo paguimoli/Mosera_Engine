@@ -8,12 +8,16 @@ import type { AuthenticatedUser } from "../auth/auth-context.types";
 import { createOutboxEvent, listRecentOutboxEvents } from "../outbox/outbox.service";
 import { getPromotionDecision } from "../promotion-decision/promotion-decision.service";
 import {
-  getSettlementAuthorityReadiness,
-} from "../settlement-authority/settlement-authority.service";
+  getShadowAnalysisSummary,
+  listShadowAnalysisFailures,
+  listShadowAnalysisMismatches,
+} from "../shadow-analysis/shadow-analysis.service";
+import type { ClassifiedShadowEvidence } from "../shadow-analysis/shadow-analysis.types";
 import {
   getLatestSettlementShadowRun,
   getSettlementShadowFailures,
   getSettlementShadowMismatches,
+  getSettlementShadowRuns,
 } from "../settlement-shadow/settlement-shadow-reporting.service";
 import {
   assertSupportedPromotionExecutionDomain,
@@ -21,7 +25,10 @@ import {
 import type {
   PromotionExecutionInput,
   PromotionExecutionValidationResult,
+  RollbackEvaluationDetails,
   RollbackDrillInput,
+  RollbackTriggerEvidenceSource,
+  RollbackTriggerEvidenceSummary,
   PromotionSimulationInput,
   RollbackSimulationInput,
   SettlementAuthorityPromotion,
@@ -82,7 +89,7 @@ function getPromotionMetadata() {
 }
 
 async function getLatestPromotionEventMetadata() {
-  const events = await listRecentOutboxEvents({ limit: 100 });
+  const events = await listRecentOutboxEvents({ limit: 10000 });
   const promotionEvent = events.find(
     (event) =>
       event.eventType === "authority.promoted" &&
@@ -381,7 +388,10 @@ export async function getSettlementPromotionStatus(): Promise<SettlementPromotio
     comparisonMode: settlementAuthority.comparisonMode,
     promotedAt:
       settlementAuthority.authority === "SERVICE"
-        ? metadata.promotedAt ?? eventMetadata.promotedAt
+        ? metadata.promotedAt ??
+          eventMetadata.promotedAt ??
+          promotionDecision.approvalState.promotionApproval?.createdAt ??
+          null
         : null,
     rollbackReady: settlementRollback.rollbackStatus === "READY",
     rollbackReadiness: settlementRollback.rollbackStatus,
@@ -398,17 +408,13 @@ function getPostPromotionRecommendation({
   authority,
   comparisonMode,
   rollbackReady,
-  rollbackTriggerActive,
-  mismatchCount,
-  failureCount,
+  rollbackTrigger,
   serviceAvailable,
 }: {
   authority: string;
   comparisonMode: string;
   rollbackReady: boolean;
-  rollbackTriggerActive: boolean;
-  mismatchCount: number;
-  failureCount: number;
+  rollbackTrigger: SettlementPostPromotionStatus["rollbackTrigger"];
   serviceAvailable: boolean;
 }) {
   if (authority !== "SERVICE") {
@@ -423,39 +429,288 @@ function getPostPromotionRecommendation({
   if (!rollbackReady) {
     return "REVIEW_REQUIRED: Rollback readiness is not READY.";
   }
-  if (rollbackTriggerActive) {
-    return "REVIEW_REQUIRED: Rollback trigger conditions are active.";
+  if (rollbackTrigger.shouldTriggerRollback) {
+    return "ROLLBACK_RECOMMENDED: Aligned rollback trigger conditions are active.";
   }
-  if (mismatchCount > 0 || failureCount > 0) {
-    return "REVIEW_REQUIRED: Post-promotion shadow evidence needs operator review.";
+  if (rollbackTrigger.status === "WARNING") {
+    return "REVIEW_REQUIRED: Aligned rollback evidence needs operator review.";
   }
 
-  return "CONTINUE_MONITORING: Settlement Service remains authoritative with no post-promotion mismatches or failures.";
+  return "CONTINUE_MONITORING: Settlement Service remains authoritative with aligned rollback evidence ready.";
+}
+
+function rate(part: number, total: number) {
+  if (total === 0) return 0;
+
+  return Number((part / total).toFixed(6));
+}
+
+function summarizeReadiness({
+  source,
+  totalRuns,
+  matches,
+  mismatches,
+  failures,
+  criticalMismatchCount,
+  effectiveMismatchCount,
+  effectiveFailureCount,
+  excludedMismatchCount,
+  excludedFailureCount,
+  reasons,
+}: Omit<
+  RollbackTriggerEvidenceSummary,
+  "mismatchRate" | "failureRate" | "readiness"
+>): RollbackTriggerEvidenceSummary {
+  const totalEvents = totalRuns + failures;
+  const mismatchRate = rate(mismatches, totalEvents);
+  const failureRate = rate(failures, totalEvents);
+  let readiness: RollbackTriggerEvidenceSummary["readiness"] = "READY";
+
+  if (criticalMismatchCount > 0 || mismatches > 0 || failures > 0) {
+    readiness = criticalMismatchCount > 0 ? "BLOCKED" : "WARNING";
+  }
+
+  return {
+    source,
+    totalRuns,
+    matches,
+    mismatches,
+    failures,
+    criticalMismatchCount,
+    mismatchRate,
+    failureRate,
+    readiness,
+    effectiveMismatchCount,
+    effectiveFailureCount,
+    excludedMismatchCount,
+    excludedFailureCount,
+    reasons: reasons.length > 0 ? reasons : [`${source} is within ready thresholds.`],
+  };
+}
+
+function rawEvidenceHasTrigger(summary: RollbackTriggerEvidenceSummary) {
+  return summary.readiness !== "READY";
+}
+
+function effectiveEvidenceHasTrigger(summary: RollbackTriggerEvidenceSummary) {
+  return summary.readiness === "BLOCKED";
+}
+
+function lifecycleParticipatesInRollback(evidence: ClassifiedShadowEvidence) {
+  return (
+    evidence.lifecycleStatus === "ACTIVE" ||
+    evidence.lifecycleStatus === "REVIEW_REQUIRED"
+  );
+}
+
+function isOnOrAfter(value: string, floor: string | null) {
+  if (!floor) return true;
+
+  return new Date(value).getTime() >= new Date(floor).getTime();
+}
+
+function uniqueShadowRunCount(evidence: ClassifiedShadowEvidence[]) {
+  return new Set(
+    evidence
+      .map((item) => item.shadowRunId)
+      .filter((shadowRunId): shadowRunId is string => Boolean(shadowRunId))
+  ).size;
+}
+
+function getAlignedRollbackEvaluation({
+  authority,
+  rollbackReady,
+  rawEvidence,
+  promotionEvidence,
+  postPromotionEvidence,
+}: {
+  authority: string;
+  rollbackReady: boolean;
+  rawEvidence: RollbackTriggerEvidenceSummary;
+  promotionEvidence: RollbackTriggerEvidenceSummary;
+  postPromotionEvidence: RollbackTriggerEvidenceSummary;
+}): {
+  rollbackTrigger: SettlementPostPromotionStatus["rollbackTrigger"];
+  triggerSource: RollbackTriggerEvidenceSource;
+  details: RollbackEvaluationDetails;
+} {
+  const blockers: string[] = [];
+  const warnings: string[] = [];
+  const rawTriggerActive = rawEvidenceHasTrigger(rawEvidence);
+  const promotionTriggerActive = effectiveEvidenceHasTrigger(promotionEvidence);
+  const postPromotionTriggerActive = effectiveEvidenceHasTrigger(postPromotionEvidence);
+  const triggerSource: RollbackTriggerEvidenceSource =
+    authority === "SERVICE" ? "POST_PROMOTION_EVIDENCE" : "PROMOTION_EVIDENCE";
+
+  if (!rollbackReady) {
+    blockers.push("Rollback readiness is not READY.");
+  }
+  if (postPromotionTriggerActive) {
+    blockers.push("Post-promotion evidence has blocking mismatches or failures.");
+  }
+  if (promotionTriggerActive) {
+    blockers.push("Promotion lifecycle evidence has blocking mismatches or failures.");
+  }
+  if (rawTriggerActive && !promotionTriggerActive && !postPromotionTriggerActive) {
+    warnings.push(
+      "Raw historical evidence is not READY but is excluded from aligned rollback trigger evaluation."
+    );
+  }
+  if (postPromotionEvidence.readiness === "WARNING") {
+    warnings.push("Post-promotion evidence has warning-level mismatches or failures.");
+  }
+
+  const shouldTriggerRollback = authority === "SERVICE" && blockers.length > 0;
+  const status: RollbackTriggerEvidenceSummary["readiness"] = shouldTriggerRollback
+    ? "BLOCKED"
+    : warnings.length > 0
+      ? "WARNING"
+      : "READY";
+  const reasons =
+    blockers.length > 0 || warnings.length > 0
+      ? [...blockers, ...warnings]
+      : ["Aligned rollback evidence is within ready thresholds."];
+
+  return {
+    triggerSource,
+    rollbackTrigger: {
+      shouldTriggerRollback,
+      status,
+      reasons,
+    },
+    details: {
+      triggerSource,
+      rawTriggerActive,
+      promotionTriggerActive,
+      postPromotionTriggerActive,
+      blockers,
+      warnings,
+      evaluatedAt: nowIso(),
+    },
+  };
 }
 
 export async function getSettlementPostPromotionStatus(): Promise<SettlementPostPromotionStatus> {
-  const [promotionStatus, rollbackReadiness, authorityReadiness] =
+  const [promotionStatus, rollbackReadiness, shadowAnalysis] =
     await Promise.all([
       getSettlementPromotionStatus(),
       validateRollbackReadiness(),
-      getSettlementAuthorityReadiness(),
+      getShadowAnalysisSummary("all"),
     ]);
   const promotedAt = promotionStatus.promotedAt;
   const sinceFilter = promotedAt ? { from: promotedAt, limit: 10000 } : { limit: 10000 };
-  const [latestShadowRun, mismatches, failures] = await Promise.all([
+  const [
+    latestShadowRun,
+    runs,
+    mismatches,
+    failures,
+    classifiedMismatches,
+    classifiedFailures,
+  ] = await Promise.all([
     getLatestSettlementShadowRun(),
+    getSettlementShadowRuns(sinceFilter),
     getSettlementShadowMismatches(sinceFilter),
     getSettlementShadowFailures(sinceFilter),
+    listShadowAnalysisMismatches("all"),
+    listShadowAnalysisFailures("all"),
   ]);
   const settlementRollback = rollbackReadiness.settlement;
-  const rollbackTrigger = authorityReadiness.rollbackTrigger;
+  const settlementEvidence = shadowAnalysis.domains.settlement;
+  const rawEvidenceSummary = summarizeReadiness({
+    source: "RAW_EVIDENCE",
+    totalRuns: settlementEvidence.rawReadiness.totalRuns,
+    matches: settlementEvidence.rawReadiness.matches,
+    mismatches: settlementEvidence.rawReadiness.mismatches,
+    failures: settlementEvidence.rawReadiness.failures,
+    criticalMismatchCount: settlementEvidence.rawReadiness.criticalMismatchCount,
+    effectiveMismatchCount: settlementEvidence.rawReadiness.mismatches,
+    effectiveFailureCount: settlementEvidence.rawReadiness.failures,
+    excludedMismatchCount:
+      settlementEvidence.rawReadiness.mismatches -
+      settlementEvidence.promotionReadiness.mismatches,
+    excludedFailureCount:
+      settlementEvidence.rawReadiness.failures -
+      settlementEvidence.promotionReadiness.failures,
+    reasons: settlementEvidence.rawReadiness.reasons,
+  });
+  const promotionEvidenceSummary = summarizeReadiness({
+    source: "PROMOTION_EVIDENCE",
+    totalRuns: settlementEvidence.promotionReadiness.totalRuns,
+    matches: settlementEvidence.promotionReadiness.matches,
+    mismatches: settlementEvidence.promotionReadiness.mismatches,
+    failures: settlementEvidence.promotionReadiness.failures,
+    criticalMismatchCount:
+      settlementEvidence.promotionReadiness.criticalMismatchCount,
+    effectiveMismatchCount: settlementEvidence.promotionReadiness.mismatches,
+    effectiveFailureCount: settlementEvidence.promotionReadiness.failures,
+    excludedMismatchCount:
+      settlementEvidence.rawReadiness.mismatches -
+      settlementEvidence.promotionReadiness.mismatches,
+    excludedFailureCount:
+      settlementEvidence.rawReadiness.failures -
+      settlementEvidence.promotionReadiness.failures,
+    reasons: settlementEvidence.promotionReadiness.reasons,
+  });
+  const postPromotionClassifiedMismatches = classifiedMismatches.filter(
+    (mismatch) =>
+      mismatch.domain === "SETTLEMENT" &&
+      isOnOrAfter(mismatch.createdAt, promotedAt)
+  );
+  const postPromotionClassifiedFailures = classifiedFailures.filter(
+    (failure) =>
+      failure.domain === "SETTLEMENT" &&
+      isOnOrAfter(failure.createdAt, promotedAt)
+  );
+  const postPromotionEffectiveMismatches =
+    postPromotionClassifiedMismatches.filter(lifecycleParticipatesInRollback);
+  const postPromotionEffectiveFailures =
+    postPromotionClassifiedFailures.filter(lifecycleParticipatesInRollback);
+  const postPromotionEffectiveMismatchCount = uniqueShadowRunCount(
+    postPromotionEffectiveMismatches
+  );
+  const postPromotionEffectiveFailureCount =
+    postPromotionEffectiveFailures.length;
+  const postPromotionMatches = runs.filter(
+    (run) => run.comparisonStatus === "MATCH"
+  ).length;
+  const postPromotionCriticalMismatchCount = postPromotionEffectiveMismatches.filter(
+    (mismatch) => mismatch.severity === "CRITICAL"
+  ).length;
+  const postPromotionEvidenceSummary = summarizeReadiness({
+    source: "POST_PROMOTION_EVIDENCE",
+    totalRuns: runs.length,
+    matches: postPromotionMatches,
+    mismatches: postPromotionEffectiveMismatchCount,
+    failures: postPromotionEffectiveFailureCount,
+    criticalMismatchCount: postPromotionCriticalMismatchCount,
+    effectiveMismatchCount: postPromotionEffectiveMismatchCount,
+    effectiveFailureCount: postPromotionEffectiveFailureCount,
+    excludedMismatchCount: Math.max(
+      0,
+      mismatches.length - postPromotionEffectiveMismatches.length
+    ),
+    excludedFailureCount: Math.max(
+      0,
+      failures.length - postPromotionEffectiveFailureCount
+    ),
+    reasons:
+      postPromotionEffectiveMismatchCount === 0 &&
+      postPromotionEffectiveFailureCount === 0
+        ? ["Post-promotion evidence is within ready thresholds."]
+        : ["Post-promotion lifecycle-effective evidence contains mismatches or failures."],
+  });
+  const alignedEvaluation = getAlignedRollbackEvaluation({
+    authority: promotionStatus.authority,
+    rollbackReady: promotionStatus.rollbackReady,
+    rawEvidence: rawEvidenceSummary,
+    promotionEvidence: promotionEvidenceSummary,
+    postPromotionEvidence: postPromotionEvidenceSummary,
+  });
   const recommendation = getPostPromotionRecommendation({
     authority: promotionStatus.authority,
     comparisonMode: promotionStatus.comparisonMode,
     rollbackReady: promotionStatus.rollbackReady,
-    rollbackTriggerActive: rollbackTrigger.shouldTriggerRollback,
-    mismatchCount: mismatches.length,
-    failureCount: failures.length,
+    rollbackTrigger: alignedEvaluation.rollbackTrigger,
     serviceAvailable: settlementRollback.serviceHealth.available,
   });
 
@@ -466,7 +721,12 @@ export async function getSettlementPostPromotionStatus(): Promise<SettlementPost
     promotedAt,
     serviceHealth: settlementRollback.serviceHealth,
     rollbackReadiness: settlementRollback.rollbackStatus,
-    rollbackTrigger,
+    rollbackTrigger: alignedEvaluation.rollbackTrigger,
+    triggerSource: alignedEvaluation.triggerSource,
+    rawEvidenceSummary,
+    promotionEvidenceSummary,
+    postPromotionEvidenceSummary,
+    rollbackEvaluationDetails: alignedEvaluation.details,
     latestSettlementShadowComparison: latestShadowRun
       ? {
           id: latestShadowRun.id,
@@ -476,8 +736,8 @@ export async function getSettlementPostPromotionStatus(): Promise<SettlementPost
           createdAt: latestShadowRun.createdAt,
         }
       : null,
-    postPromotionMismatchCount: mismatches.length,
-    postPromotionFailureCount: failures.length,
+    postPromotionMismatchCount: postPromotionEffectiveMismatchCount,
+    postPromotionFailureCount: postPromotionEffectiveFailureCount,
     recommendation,
     evaluatedAt: nowIso(),
   };

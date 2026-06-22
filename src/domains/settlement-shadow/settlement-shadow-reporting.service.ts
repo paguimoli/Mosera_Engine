@@ -100,6 +100,12 @@ export async function getLatestSettlementShadowRun() {
   return runs[0] ?? null;
 }
 
+export async function getSettlementShadowRuns(
+  filters: SettlementShadowListFilters = {}
+) {
+  return listShadowRuns(filters);
+}
+
 export async function getSettlementShadowMismatches(
   filters: SettlementShadowListFilters
 ) {

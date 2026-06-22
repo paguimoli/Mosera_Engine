@@ -88,6 +88,31 @@ Expected:
 - post-promotion mismatch and failure counts are reviewed
 - recommendation is recorded in the release evidence package
 
+## Rollback Trigger Analysis
+
+Run:
+
+```bash
+npm run ops:rollback-trigger-analysis
+```
+
+Expected:
+
+- `triggerSource=POST_PROMOTION_EVIDENCE` while Settlement authority is `SERVICE`
+- raw evidence remains visible
+- lifecycle-excluded QA evidence is reported in excluded counts
+- promotion evidence is `READY`
+- post-promotion evidence is reviewed
+- rollback does not trigger solely because of excluded QA evidence
+
+Rollback trigger hierarchy:
+
+1. Post-promotion evidence
+2. Promotion lifecycle evidence
+3. Raw evidence for audit visibility only
+
+Raw evidence must never be deleted to make trigger state look clean.
+
 ## Rollback Simulation
 
 Run:
@@ -136,8 +161,9 @@ The rollback drill is simulation-only. It must not change authority.
 9. Verify rollback readiness remains `READY`.
 10. Run post-promotion monitoring.
 11. Run rollback drill.
-12. Verify post-promotion QA.
-13. Record results in the release evidence package.
+12. Run rollback trigger analysis.
+13. Verify post-promotion QA.
+14. Record results in the release evidence package.
 
 ## Emergency Rollback Procedure
 
