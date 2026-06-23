@@ -70,10 +70,30 @@ const promotion = promotionResult.body.simulation;
 const rollback = rollbackResult.body.simulation;
 assert(promotion.domain === "LEDGER", "Promotion simulation domain mismatch.", { promotion });
 assert(rollback.domain === "LEDGER", "Rollback simulation domain mismatch.", { rollback });
-assert(promotion.currentAuthority === "MONOLITH", "Ledger simulation must preserve MONOLITH authority.", {
-  promotion,
-});
-assert(promotion.simulatedAuthority === "SERVICE", "Promotion simulation should model SERVICE authority.", {
+assert(
+  promotion.currentAuthority === "MONOLITH" || promotion.currentAuthority === "SERVICE",
+  "Ledger simulation must report a supported authority state.",
+  {
+    promotion,
+  }
+);
+assert(
+  promotion.currentAuthority === "SERVICE" || promotion.simulatedAuthority === "SERVICE",
+  "Promotion simulation should model SERVICE authority before promotion.",
+  {
+    promotion,
+  }
+);
+assert(
+  promotion.currentAuthority === "MONOLITH"
+    ? promotion.promotionAllowed === true
+    : promotion.promotionAllowed === false,
+  "Ledger promotion simulation should reflect the current authority state.",
+  {
+    promotion,
+  }
+);
+assert(promotion.currentAuthority !== "SERVICE" || promotion.blockers.length > 0, "Already-promoted simulation should remain advisory.", {
   promotion,
 });
 assert(promotion.comparisonMode === "ENABLED", "Ledger simulation must preserve comparison mode.", {
@@ -108,8 +128,16 @@ assert(
 
 const authority = authorityResult.body.authority;
 const settlementStatus = settlementStatusResult.body.stabilizationStatus;
-assert(authority.ledger.authority === "MONOLITH", "Ledger authority changed after simulation.", {
+assert(
+  authority.ledger.authority === "MONOLITH" || authority.ledger.authority === "SERVICE",
+  "Ledger authority must remain in a supported state after simulation.",
+  {
+    authority,
+  }
+);
+assert(authority.ledger.authority === promotion.currentAuthority, "Ledger authority changed during simulation.", {
   authority,
+  promotion,
 });
 assert(authority.ledger.comparisonMode === "ENABLED", "Ledger comparison changed after simulation.", {
   authority,

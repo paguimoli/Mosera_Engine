@@ -8,7 +8,7 @@ Ledger approval workflows are append-only and auditable. They do not change auth
 
 ## Current Phase
 
-Phase 16.3 supports Ledger dry-run approval capture, promotion approval capture, and simulation-only controlled promotion/rollback evaluation.
+Phase 16.4 supports Ledger dry-run approval capture, promotion approval capture, simulation-only controlled promotion/rollback evaluation, and explicit controlled promotion execution.
 
 ## Preconditions
 
@@ -140,3 +140,80 @@ Rollback simulation does not:
 - execute rollback;
 - modify approvals;
 - mutate financial records.
+
+## Controlled Promotion Command
+
+```bash
+npm run ops:ledger-promote -- \
+  --justification "Reviewed Ledger controlled promotion readiness and rollback readiness." \
+  --correlation-id "operator-selected-correlation-id"
+```
+
+Promotion execution requires:
+
+- `domain = LEDGER`;
+- explicit `mode = EXECUTE`;
+- non-empty justification;
+- Ledger decision is `READY_FOR_CONTROLLED_PROMOTION`;
+- Ledger rollback readiness is `READY`;
+- Ledger authority is `MONOLITH`;
+- Ledger comparison mode is `ENABLED`;
+- Ledger Service health is available;
+- Ledger dry-run and promotion approvals exist.
+
+When valid, promotion execution:
+
+- changes runtime Ledger authority to `SERVICE`;
+- keeps Ledger comparison mode `ENABLED`;
+- keeps Settlement `SERVICE`;
+- keeps Credit `MONOLITH`;
+- emits `authority.ledger.promoted`;
+- records actor, justification, approval id, correlation id, and timestamp.
+
+If Ledger is already `SERVICE`, the command is idempotent and does not emit a duplicate promotion event.
+
+The operations script persists these local runtime settings to `.env.local`:
+
+```text
+LEDGER_AUTHORITY=SERVICE
+LEDGER_COMPARISON_MODE=ENABLED
+```
+
+No unrelated `.env.local` values are changed.
+
+## Promotion Status Command
+
+```bash
+npm run ops:ledger-promotion-status
+```
+
+The status output includes:
+
+- domain;
+- authority;
+- comparison mode;
+- promoted timestamp;
+- rollback readiness;
+- promotion approval id;
+- evaluation timestamp.
+
+## Rollback Sequence
+
+Ledger rollback execution is not part of Phase 16.4. Until rollback execution support exists, operators should:
+
+1. Run `npm run ops:rollback-readiness`.
+2. Run `npm run ops:simulate-ledger-rollback`.
+3. Follow the incident runbook before changing runtime authority.
+4. Preserve comparison mode and append-only audit evidence.
+
+## Post-Promotion Validation
+
+After controlled promotion, verify:
+
+- Ledger authority is `SERVICE`.
+- Ledger comparison mode remains `ENABLED`.
+- Settlement remains `SERVICE` and `CERTIFIED`.
+- Credit remains `MONOLITH`.
+- rollback readiness remains `READY`.
+- credit launch QA passes.
+- worker observability QA passes.

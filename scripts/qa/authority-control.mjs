@@ -53,9 +53,11 @@ assert(
   "Settlement authority has an unsupported value.",
   { config: authority.settlement }
 );
-assert(authority.ledger.authority === "MONOLITH", "Ledger authority changed.", {
-  config: authority.ledger,
-});
+assert(
+  authority.ledger.authority === "MONOLITH" || authority.ledger.authority === "SERVICE",
+  "Ledger authority has an unsupported value.",
+  { config: authority.ledger }
+);
 assert(authority.credit.authority === "MONOLITH", "Credit authority changed.", {
   config: authority.credit,
 });

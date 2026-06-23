@@ -42,17 +42,26 @@ assert(result.response.status === 200 && result.body.success, "Ledger promotion 
 const decision = result.body.decision;
 
 assert(decision.domain === "LEDGER", "Ledger promotion decision domain mismatch.", { decision });
-assert(decision.currentAuthority === "MONOLITH", "Ledger authority must remain MONOLITH.", {
-  decision,
-});
+assert(
+  decision.currentAuthority === "MONOLITH" || decision.currentAuthority === "SERVICE",
+  "Ledger authority has an unsupported value.",
+  { decision }
+);
 assert(decision.comparisonMode === "ENABLED", "Ledger comparison must remain ENABLED.", {
   decision,
 });
-assert(decision.decision !== "PROMOTED", "Ledger must not be promoted.", { decision });
+assert(
+  decision.currentAuthority === "SERVICE"
+    ? decision.decision === "PROMOTED"
+    : decision.decision !== "PROMOTED",
+  "Ledger decision does not match authority state.",
+  { decision }
+);
 assert(decision.promotionReadiness, "Ledger promotion readiness missing.", { decision });
 
-pass("Ledger promotion decision is available without authority transfer.", {
+pass("Ledger promotion decision is available.", {
   decision: decision.decision,
+  authority: decision.currentAuthority,
   raw: decision.rawReadiness,
   promotion: decision.promotionReadiness,
   blockers: decision.blockingReasons,

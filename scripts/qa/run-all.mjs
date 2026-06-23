@@ -29,6 +29,7 @@ const steps = [
   "qa:ledger-promotion-approval",
   "qa:ledger-dry-run",
   "qa:ledger-promotion-simulation",
+  "qa:ledger-promotion-execution",
   "qa:credit-launch",
   "qa:worker-observability",
 ];

@@ -2,7 +2,9 @@ import {
   getAuthorityStatus,
   validateRollbackReadiness,
 } from "../authority-control/authority-control.service";
-import { createOutboxEvent } from "../outbox/outbox.service";
+import { setRuntimeAuthorityDomainConfiguration } from "../authority-control/authority-control.repository";
+import type { AuthenticatedUser } from "../auth/auth-context.types";
+import { createOutboxEvent, listRecentOutboxEvents } from "../outbox/outbox.service";
 import { getPromotionDecision } from "../promotion-decision/promotion-decision.service";
 import {
   getLedgerShadowMismatches,
@@ -17,9 +19,11 @@ import type {
   LedgerAuthorityCandidateStatus,
   LedgerAuthorityDryRunMode,
   LedgerAuthorityMetrics,
+  LedgerAuthorityPromotion,
   LedgerAuthorityReadiness,
   LedgerAuthorityRuntimeRoute,
   LedgerDryRunEvaluation,
+  LedgerPromotionStatus,
   LedgerRollbackTriggerEvaluation,
   LedgerSimulationResult,
 } from "./ledger-authority.types";
@@ -84,6 +88,49 @@ function collectBlockers(
 
 function normalizeCorrelationId(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeJustification(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function getPromotionMetadata() {
+  return {
+    promotedAt: process.env.LEDGER_PROMOTED_AT || null,
+    promotionApprovalId: process.env.LEDGER_PROMOTION_APPROVAL_ID || null,
+  };
+}
+
+async function getLatestPromotionEventMetadata() {
+  const events = await listRecentOutboxEvents({ limit: 10000 });
+  const promotionEvent = events.find(
+    (event) =>
+      event.eventType === "authority.ledger.promoted" &&
+      event.aggregateType === "authority_candidate" &&
+      event.aggregateId === "LEDGER"
+  );
+  const payload = promotionEvent?.payload ?? {};
+
+  return {
+    promotedAt:
+      typeof payload.promotedAt === "string"
+        ? payload.promotedAt
+        : promotionEvent?.createdAt ?? null,
+    promotionApprovalId:
+      typeof payload.promotionApprovalId === "string"
+        ? payload.promotionApprovalId
+        : null,
+  };
+}
+
+export class LedgerAuthorityValidationError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status = 400) {
+    super(message);
+    this.name = "LedgerAuthorityValidationError";
+    this.status = status;
+  }
 }
 
 export async function resolveLedgerAuthorityRoute(): Promise<LedgerAuthorityRuntimeRoute> {
@@ -528,5 +575,152 @@ export async function simulateLedgerRollback({
       correlationId: auditEvent.correlationId ?? null,
     },
     simulatedAt,
+  };
+}
+
+export async function promoteLedgerAuthority({
+  actor,
+  domain,
+  mode,
+  justification,
+  correlationId,
+}: {
+  actor: AuthenticatedUser;
+  domain: unknown;
+  mode: unknown;
+  justification: unknown;
+  correlationId?: unknown;
+}): Promise<LedgerAuthorityPromotion> {
+  if (domain !== "LEDGER") {
+    throw new LedgerAuthorityValidationError("Only LEDGER promotion is supported.");
+  }
+
+  if (mode !== "EXECUTE") {
+    throw new LedgerAuthorityValidationError("Promotion mode must be EXECUTE.");
+  }
+
+  const normalizedJustification = normalizeJustification(justification);
+  if (!normalizedJustification) {
+    throw new LedgerAuthorityValidationError("Justification is required.");
+  }
+
+  const normalizedCorrelationId = normalizeCorrelationId(correlationId);
+  const authorityStatusBefore = getAuthorityStatus().ledger;
+  const promotionDecisionBefore = await getPromotionDecision({ domain: "LEDGER" });
+  const promotionApproval = promotionDecisionBefore.approvalState.promotionApproval;
+
+  if (authorityStatusBefore.authority === "SERVICE") {
+    const rollbackReadiness = await validateRollbackReadiness();
+    const metadata = getPromotionMetadata();
+
+    return {
+      domain: "LEDGER",
+      previousAuthority: "SERVICE",
+      newAuthority: "SERVICE",
+      comparisonMode: "ENABLED",
+      rollbackReadiness: rollbackReadiness.ledger.rollbackStatus,
+      promotionApprovalId:
+        metadata.promotionApprovalId ?? promotionApproval?.id ?? null,
+      promotedAt: metadata.promotedAt ?? nowIso(),
+      correlationId: normalizedCorrelationId,
+      idempotent: true,
+      auditEvent: null,
+    };
+  }
+
+  const simulation = await simulateLedgerPromotion({
+    actorUserId: actor.id,
+    correlationId: normalizedCorrelationId,
+  });
+
+  if (!simulation.promotionAllowed) {
+    throw new LedgerAuthorityValidationError(
+      "Ledger authority promotion preconditions are not satisfied.",
+      409
+    );
+  }
+
+  if (!promotionApproval) {
+    throw new LedgerAuthorityValidationError(
+      "PROMOTION_APPROVAL is required before controlled promotion.",
+      409
+    );
+  }
+
+  const promotedAt = nowIso();
+  setRuntimeAuthorityDomainConfiguration({
+    domain: "LEDGER",
+    authority: "SERVICE",
+    comparisonMode: "ENABLED",
+  });
+  process.env.LEDGER_PROMOTED_AT = promotedAt;
+  process.env.LEDGER_PROMOTION_APPROVAL_ID = promotionApproval.id;
+
+  const auditEvent = await createOutboxEvent({
+    eventType: "authority.ledger.promoted",
+    aggregateType: "authority_candidate",
+    aggregateId: "LEDGER",
+    correlationId: normalizedCorrelationId,
+    payload: {
+      domain: "LEDGER",
+      previousAuthority: authorityStatusBefore.authority,
+      newAuthority: "SERVICE",
+      actorUserId: actor.id,
+      promotionApprovalId: promotionApproval.id,
+      justification: normalizedJustification,
+      correlationId: normalizedCorrelationId,
+      promotedAt,
+    },
+  });
+
+  return {
+    domain: "LEDGER",
+    previousAuthority: authorityStatusBefore.authority,
+    newAuthority: "SERVICE",
+    comparisonMode: "ENABLED",
+    rollbackReadiness: simulation.rollbackReadiness,
+    promotionApprovalId: promotionApproval.id,
+    promotedAt,
+    correlationId: normalizedCorrelationId,
+    idempotent: false,
+    auditEvent: {
+      id: auditEvent.id,
+      eventType: auditEvent.eventType,
+      correlationId: auditEvent.correlationId ?? null,
+    },
+  };
+}
+
+export async function getLedgerPromotionStatus(): Promise<LedgerPromotionStatus> {
+  const [authorityStatus, rollbackReadiness, promotionDecision, eventMetadata] =
+    await Promise.all([
+      Promise.resolve(getAuthorityStatus()),
+      validateRollbackReadiness(),
+      getPromotionDecision({ domain: "LEDGER" }),
+      getLatestPromotionEventMetadata(),
+    ]);
+  const ledgerAuthority = authorityStatus.ledger;
+  const ledgerRollback = rollbackReadiness.ledger;
+  const metadata = getPromotionMetadata();
+
+  return {
+    domain: "LEDGER",
+    authority: ledgerAuthority.authority,
+    comparisonMode: ledgerAuthority.comparisonMode,
+    promotedAt:
+      ledgerAuthority.authority === "SERVICE"
+        ? metadata.promotedAt ??
+          eventMetadata.promotedAt ??
+          promotionDecision.approvalState.promotionApproval?.createdAt ??
+          null
+        : null,
+    rollbackReady: ledgerRollback.rollbackStatus === "READY",
+    rollbackReadiness: ledgerRollback.rollbackStatus,
+    promotionApprovalId:
+      metadata.promotionApprovalId ??
+      eventMetadata.promotionApprovalId ??
+      promotionDecision.approvalState.promotionApproval?.id ??
+      null,
+    evaluatedAt: nowIso(),
   };
 }

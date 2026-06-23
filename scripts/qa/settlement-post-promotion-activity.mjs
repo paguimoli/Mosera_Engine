@@ -178,9 +178,11 @@ assert(
   "Settlement comparison mode must be ENABLED.",
   { authority }
 );
-assert(authority.ledger.authority === "MONOLITH", "Ledger authority changed.", {
-  authority,
-});
+assert(
+  authority.ledger.authority === "MONOLITH" || authority.ledger.authority === "SERVICE",
+  "Ledger authority has an unsupported value.",
+  { authority }
+);
 assert(authority.credit.authority === "MONOLITH", "Credit authority changed.", {
   authority,
 });

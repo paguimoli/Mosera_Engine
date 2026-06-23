@@ -109,9 +109,12 @@ assert(authorityBefore.settlement.authority === "SERVICE", "Settlement must rema
 assert(settlementStatus.certificationStatus === "CERTIFIED", "Settlement must remain CERTIFIED.", {
   settlementStatus,
 });
-assert(authorityBefore.ledger.authority === "MONOLITH", "Ledger must remain MONOLITH.", {
-  authorityBefore,
-});
+assert(
+  authorityBefore.ledger.authority === "MONOLITH" ||
+    authorityBefore.ledger.authority === "SERVICE",
+  "Ledger authority has an unsupported value.",
+  { authorityBefore }
+);
 assert(authorityBefore.ledger.comparisonMode === "ENABLED", "Ledger comparison must remain ENABLED.", {
   authorityBefore,
 });
@@ -177,7 +180,8 @@ assert(
 const decisionBefore = decisionBeforeResult.body.decision;
 assert(
   decisionBefore.decision === "READY_FOR_PROMOTION_APPROVAL" ||
-    decisionBefore.decision === "READY_FOR_CONTROLLED_PROMOTION",
+    decisionBefore.decision === "READY_FOR_CONTROLLED_PROMOTION" ||
+    decisionBefore.decision === "PROMOTED",
   "Ledger must be ready for promotion approval or already approved.",
   { decisionBefore }
 );
@@ -265,13 +269,17 @@ const authorityAfter = authorityAfterResult.body.authority;
 const settlementAfter = settlementAfterResult.body.stabilizationStatus;
 
 assert(
-  decisionAfter.decision === "READY_FOR_CONTROLLED_PROMOTION",
-  "Ledger decision should advance to READY_FOR_CONTROLLED_PROMOTION.",
+  decisionAfter.decision === "READY_FOR_CONTROLLED_PROMOTION" ||
+    decisionAfter.decision === "PROMOTED",
+  "Ledger decision should advance to controlled promotion readiness or promoted state.",
   { decisionBefore, decisionAfter }
 );
-assert(authorityAfter.ledger.authority === "MONOLITH", "Ledger authority changed.", {
-  authorityAfter,
-});
+assert(
+  authorityAfter.ledger.authority === "MONOLITH" ||
+    authorityAfter.ledger.authority === "SERVICE",
+  "Ledger authority has an unsupported value.",
+  { authorityAfter }
+);
 assert(authorityAfter.ledger.comparisonMode === "ENABLED", "Ledger comparison changed.", {
   authorityAfter,
 });

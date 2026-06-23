@@ -46,22 +46,27 @@ assert(result.response.status === 200 && result.body.success, "Ledger readiness 
 });
 
 const readiness = result.body.readiness;
-assert(readiness.authority === "MONOLITH", "Ledger authority must remain MONOLITH.", {
-  readiness,
-});
+assert(
+  readiness.authority === "MONOLITH" || readiness.authority === "SERVICE",
+  "Ledger authority has an unsupported value.",
+  { readiness }
+);
 assert(readiness.comparisonMode === "ENABLED", "Ledger comparison must remain ENABLED.", {
   readiness,
 });
 assert(
-  readiness.runtimeRoute.productionCutoverActive === false,
-  "Ledger production cutover must remain inactive.",
+  readiness.runtimeRoute.productionCutoverActive === (readiness.authority === "SERVICE"),
+  "Ledger production cutover flag does not match authority.",
   { readiness }
 );
-assert(readiness.runtimeRoute.comparisonPath === "LEDGER_SERVICE", "Ledger comparison path mismatch.", {
-  readiness,
-});
+assert(
+  readiness.runtimeRoute.comparisonPath ===
+    (readiness.authority === "SERVICE" ? "MONOLITH" : "LEDGER_SERVICE"),
+  "Ledger comparison path mismatch.",
+  { readiness }
+);
 
-pass("Ledger authority candidate readiness is advisory-only.", {
+pass("Ledger authority readiness is reported.", {
   authority: readiness.authority,
   comparisonMode: readiness.comparisonMode,
   readinessStatus: readiness.status,

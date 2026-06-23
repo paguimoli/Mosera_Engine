@@ -111,3 +111,31 @@ export type LedgerSimulationResult = {
   };
   simulatedAt: string;
 };
+
+export type LedgerAuthorityPromotion = {
+  domain: "LEDGER";
+  previousAuthority: AuthorityValue;
+  newAuthority: "SERVICE";
+  comparisonMode: "ENABLED";
+  rollbackReadiness: DomainReadinessStatus;
+  promotionApprovalId: string | null;
+  promotedAt: string;
+  correlationId: string | null;
+  idempotent: boolean;
+  auditEvent: {
+    id: string;
+    eventType: string;
+    correlationId: string | null;
+  } | null;
+};
+
+export type LedgerPromotionStatus = {
+  domain: "LEDGER";
+  authority: AuthorityValue;
+  comparisonMode: ComparisonMode;
+  promotedAt: string | null;
+  rollbackReady: boolean;
+  rollbackReadiness: DomainReadinessStatus;
+  promotionApprovalId: string | null;
+  evaluatedAt: string;
+};
