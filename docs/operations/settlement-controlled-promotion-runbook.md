@@ -113,6 +113,38 @@ Rollback trigger hierarchy:
 
 Raw evidence must never be deleted to make trigger state look clean.
 
+## Stabilization Window
+
+Run:
+
+```bash
+npm run ops:settlement-stabilization-status -- --window 7d
+```
+
+Supported windows:
+
+- `24h`
+- `7d`
+- `30d`
+- `all`
+
+Expected:
+
+- Settlement authority remains `SERVICE`
+- comparison mode remains `ENABLED`
+- rollback readiness remains `READY`
+- stabilization status is recorded
+- post-promotion metrics are reviewed
+
+Stabilization statuses:
+
+- `STABILIZING`: evidence is still accumulating.
+- `STABLE`: service authority is healthy and no active rollback condition exists.
+- `REVIEW_REQUIRED`: warning-level conditions require operator review.
+- `ROLLBACK_RECOMMENDED`: rollback trigger or critical parity failures are active.
+
+Exit the stabilization window only after sustained `STABLE` status over the agreed monitoring period.
+
 ## Rollback Simulation
 
 Run:
@@ -162,8 +194,9 @@ The rollback drill is simulation-only. It must not change authority.
 10. Run post-promotion monitoring.
 11. Run rollback drill.
 12. Run rollback trigger analysis.
-13. Verify post-promotion QA.
-14. Record results in the release evidence package.
+13. Run stabilization status.
+14. Verify post-promotion QA.
+15. Record results in the release evidence package.
 
 ## Emergency Rollback Procedure
 
