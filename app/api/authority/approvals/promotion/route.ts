@@ -5,7 +5,7 @@ import {
   requirePermission,
 } from "@/src/domains/auth/auth-middleware";
 import {
-  approveSettlementPromotion,
+  approveAuthorityPromotion,
   AuthorityApprovalValidationError,
 } from "@/src/domains/authority-approval/authority-approval.service";
 import { logger } from "@/src/lib/observability/logger";
@@ -40,7 +40,7 @@ export async function POST(request: Request) {
   try {
     const authContext = await requirePermission(request, "system.admin");
     const body = await request.json().catch(() => ({}));
-    const result = await approveSettlementPromotion({
+    const result = await approveAuthorityPromotion({
       actor: authContext.user,
       domain: body.domain,
       justification: body.justification,

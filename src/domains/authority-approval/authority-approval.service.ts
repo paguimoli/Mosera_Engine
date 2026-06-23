@@ -221,7 +221,7 @@ export async function approveAuthorityDryRun({
   };
 }
 
-export async function approveSettlementPromotion({
+export async function approveAuthorityPromotion({
   actor,
   domain,
   justification,
@@ -239,22 +239,24 @@ export async function approveSettlementPromotion({
   promotionDecisionBefore: Awaited<ReturnType<typeof getPromotionDecision>>;
   promotionDecisionAfter: Awaited<ReturnType<typeof getPromotionDecision>>;
 }> {
-  if (domain !== "SETTLEMENT") {
+  if (domain !== "SETTLEMENT" && domain !== "LEDGER") {
     throw new AuthorityApprovalValidationError(
-      "Only SETTLEMENT promotion approval is supported."
+      "Only SETTLEMENT and LEDGER promotion approval are supported."
     );
   }
 
+  const authorityCandidate = domain;
+  const label = authorityCandidate === "LEDGER" ? "Ledger" : "Settlement";
   const normalizedCorrelationId = normalizeCorrelationId(correlationId);
   if (normalizedCorrelationId) {
     const existingApproval = await findAuthorityApprovalRecordByCorrelationId({
-      authorityCandidate: "SETTLEMENT",
+      authorityCandidate,
       approvalType: "PROMOTION_APPROVAL",
       correlationId: normalizedCorrelationId,
     });
 
     if (existingApproval) {
-      const promotionDecision = await getPromotionDecision({ domain: "SETTLEMENT" });
+      const promotionDecision = await getPromotionDecision({ domain: authorityCandidate });
 
       return {
         approval: existingApproval,
@@ -272,11 +274,11 @@ export async function approveSettlementPromotion({
 
   const normalizedAcknowledgedWarnings =
     normalizeAcknowledgedWarnings(acknowledgedWarnings);
-  const promotionDecisionBefore = await getPromotionDecision({ domain: "SETTLEMENT" });
+  const promotionDecisionBefore = await getPromotionDecision({ domain: authorityCandidate });
 
   if (promotionDecisionBefore.decision !== "READY_FOR_PROMOTION_APPROVAL") {
     throw new AuthorityApprovalValidationError(
-      "Settlement is not ready for promotion approval.",
+      `${label} is not ready for promotion approval.`,
       409
     );
   }
@@ -297,14 +299,14 @@ export async function approveSettlementPromotion({
 
   if (promotionDecisionBefore.comparisonMode !== "ENABLED") {
     throw new AuthorityApprovalValidationError(
-      "Settlement comparison mode must be ENABLED before promotion approval.",
+      `${label} comparison mode must be ENABLED before promotion approval.`,
       409
     );
   }
 
   if (promotionDecisionBefore.currentAuthority !== "MONOLITH") {
     throw new AuthorityApprovalValidationError(
-      "Settlement authority must remain MONOLITH before promotion approval.",
+      `${label} authority must remain MONOLITH before promotion approval.`,
       409
     );
   }
@@ -319,7 +321,7 @@ export async function approveSettlementPromotion({
   }
 
   const approval = await createAuthorityApprovalRecord({
-    authorityCandidate: "SETTLEMENT",
+    authorityCandidate,
     approvalType: "PROMOTION_APPROVAL",
     approverUserId: actor.id,
     approverUsername: actor.username,
@@ -334,12 +336,15 @@ export async function approveSettlementPromotion({
   });
 
   await createOutboxEvent({
-    eventType: "authority.promotion.approved",
+    eventType:
+      authorityCandidate === "LEDGER"
+        ? "authority.ledger.promotion.approved"
+        : "authority.promotion.approved",
     aggregateType: "authority_candidate",
-    aggregateId: "SETTLEMENT",
+    aggregateId: authorityCandidate,
     correlationId: normalizedCorrelationId,
     payload: {
-      domain: "SETTLEMENT",
+      domain: authorityCandidate,
       actorUserId: actor.id,
       approvalId: approval.id,
       correlationId: normalizedCorrelationId,
@@ -347,7 +352,7 @@ export async function approveSettlementPromotion({
     },
   });
 
-  const promotionDecisionAfter = await getPromotionDecision({ domain: "SETTLEMENT" });
+  const promotionDecisionAfter = await getPromotionDecision({ domain: authorityCandidate });
 
   return {
     approval,
@@ -356,6 +361,8 @@ export async function approveSettlementPromotion({
     promotionDecisionAfter,
   };
 }
+
+export const approveSettlementPromotion = approveAuthorityPromotion;
 
 export async function getAuthorityApprovalStatus(
   authorityCandidate: AuthorityDomain = "SETTLEMENT"
