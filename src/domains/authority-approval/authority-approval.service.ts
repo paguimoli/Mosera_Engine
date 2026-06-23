@@ -16,9 +16,6 @@ import {
   listAuthorityApprovalRecords,
 } from "./authority-approval.repository";
 
-const RAW_EVIDENCE_WARNING =
-  "Raw evidence is not READY and must remain visible for review.";
-
 export class AuthorityApprovalValidationError extends Error {
   readonly status: number;
 
@@ -90,7 +87,7 @@ export async function getAuthorityApprovalHistory(
   };
 }
 
-export async function approveSettlementDryRun({
+export async function approveAuthorityDryRun({
   actor,
   domain,
   justification,
@@ -108,22 +105,24 @@ export async function approveSettlementDryRun({
   promotionDecisionBefore: Awaited<ReturnType<typeof getPromotionDecision>>;
   promotionDecisionAfter: Awaited<ReturnType<typeof getPromotionDecision>>;
 }> {
-  if (domain !== "SETTLEMENT") {
+  if (domain !== "SETTLEMENT" && domain !== "LEDGER") {
     throw new AuthorityApprovalValidationError(
-      "Only SETTLEMENT dry-run approval is supported."
+      "Only SETTLEMENT and LEDGER dry-run approval are supported."
     );
   }
 
+  const authorityCandidate = domain;
+  const label = authorityCandidate === "LEDGER" ? "Ledger" : "Settlement";
   const normalizedCorrelationId = normalizeCorrelationId(correlationId);
   if (normalizedCorrelationId) {
     const existingApproval = await findAuthorityApprovalRecordByCorrelationId({
-      authorityCandidate: "SETTLEMENT",
+      authorityCandidate,
       approvalType: "DRY_RUN_APPROVAL",
       correlationId: normalizedCorrelationId,
     });
 
     if (existingApproval) {
-      const promotionDecision = await getPromotionDecision({ domain: "SETTLEMENT" });
+      const promotionDecision = await getPromotionDecision({ domain: authorityCandidate });
 
       return {
         approval: existingApproval,
@@ -141,47 +140,48 @@ export async function approveSettlementDryRun({
 
   const normalizedAcknowledgedWarnings =
     normalizeAcknowledgedWarnings(acknowledgedWarnings);
-  const promotionDecisionBefore = await getPromotionDecision({ domain: "SETTLEMENT" });
+  const promotionDecisionBefore = await getPromotionDecision({ domain: authorityCandidate });
 
   if (promotionDecisionBefore.decision !== "READY_FOR_DRY_RUN_APPROVAL") {
     throw new AuthorityApprovalValidationError(
-      "Settlement is not ready for dry-run approval.",
+      `${label} is not ready for dry-run approval.`,
       409
     );
   }
 
   if (promotionDecisionBefore.rollbackReadiness !== "READY") {
     throw new AuthorityApprovalValidationError(
-      "Rollback readiness must be READY before dry-run approval.",
+      `${label} rollback readiness must be READY before dry-run approval.`,
       409
     );
   }
 
   if (promotionDecisionBefore.comparisonMode !== "ENABLED") {
     throw new AuthorityApprovalValidationError(
-      "Settlement comparison mode must be ENABLED before dry-run approval.",
+      `${label} comparison mode must be ENABLED before dry-run approval.`,
       409
     );
   }
 
   if (promotionDecisionBefore.currentAuthority !== "MONOLITH") {
     throw new AuthorityApprovalValidationError(
-      "Settlement authority must remain MONOLITH before dry-run approval.",
+      `${label} authority must remain MONOLITH before dry-run approval.`,
       409
     );
   }
 
-  if (
-    promotionDecisionBefore.warnings.includes(RAW_EVIDENCE_WARNING) &&
-    !normalizedAcknowledgedWarnings.includes(RAW_EVIDENCE_WARNING)
-  ) {
+  const missingAcknowledgements = promotionDecisionBefore.warnings.filter(
+    (warning) => !normalizedAcknowledgedWarnings.includes(warning)
+  );
+
+  if (missingAcknowledgements.length > 0) {
     throw new AuthorityApprovalValidationError(
-      "Raw evidence warning must be acknowledged before dry-run approval."
+      "All dry-run approval warnings must be acknowledged before approval."
     );
   }
 
   const approval = await createAuthorityApprovalRecord({
-    authorityCandidate: "SETTLEMENT",
+    authorityCandidate,
     approvalType: "DRY_RUN_APPROVAL",
     approverUserId: actor.id,
     approverUsername: actor.username,
@@ -195,12 +195,15 @@ export async function approveSettlementDryRun({
   });
 
   await createOutboxEvent({
-    eventType: "authority.dry_run.approved",
+    eventType:
+      authorityCandidate === "LEDGER"
+        ? "authority.ledger.dry_run.approved"
+        : "authority.dry_run.approved",
     aggregateType: "authority_candidate",
-    aggregateId: "SETTLEMENT",
+    aggregateId: authorityCandidate,
     correlationId: normalizedCorrelationId,
     payload: {
-      domain: "SETTLEMENT",
+      domain: authorityCandidate,
       actorUserId: actor.id,
       approvalId: approval.id,
       correlationId: normalizedCorrelationId,
@@ -208,7 +211,7 @@ export async function approveSettlementDryRun({
     },
   });
 
-  const promotionDecisionAfter = await getPromotionDecision({ domain: "SETTLEMENT" });
+  const promotionDecisionAfter = await getPromotionDecision({ domain: authorityCandidate });
 
   return {
     approval,
