@@ -1,5 +1,6 @@
 import { getSettlementPostPromotionStatus } from "../promotion-execution/promotion-execution.service";
 import type {
+  SettlementCertificationStatus,
   SettlementStabilizationMetrics,
   SettlementStabilizationStatus,
   SettlementStabilizationSummary,
@@ -131,6 +132,83 @@ function getRecommendation(status: SettlementStabilizationStatus) {
   return "STABILIZING: Continue collecting post-promotion evidence.";
 }
 
+function getCertificationState({
+  authority,
+  comparisonMode,
+  rollbackReady,
+  serviceHealthy,
+  settlementsProcessed,
+  mismatchCount,
+  failureCount,
+  criticalMismatchCount,
+}: {
+  authority: string;
+  comparisonMode: string;
+  rollbackReady: boolean;
+  serviceHealthy: boolean;
+  settlementsProcessed: number;
+  mismatchCount: number;
+  failureCount: number;
+  criticalMismatchCount: number;
+}): {
+  certificationStatus: SettlementCertificationStatus;
+  certificationBlockers: string[];
+  certificationWarnings: string[];
+} {
+  const certificationBlockers: string[] = [];
+  const certificationWarnings: string[] = [];
+
+  if (authority !== "SERVICE") {
+    certificationBlockers.push("Settlement authority must be SERVICE.");
+  }
+  if (comparisonMode !== "ENABLED") {
+    certificationBlockers.push("Settlement comparison mode must be ENABLED.");
+  }
+  if (!rollbackReady) {
+    certificationBlockers.push("Rollback readiness must be READY.");
+  }
+  if (!serviceHealthy) {
+    certificationBlockers.push("Settlement Service health must be healthy.");
+  }
+  if (settlementsProcessed <= 0) {
+    certificationBlockers.push(
+      "At least one post-promotion settlement must be processed."
+    );
+  }
+  if (mismatchCount > 0) {
+    certificationBlockers.push("Post-promotion mismatch count must be zero.");
+  }
+  if (failureCount > 0) {
+    certificationBlockers.push("Post-promotion failure count must be zero.");
+  }
+  if (criticalMismatchCount > 0) {
+    certificationBlockers.push(
+      "Post-promotion critical mismatch count must be zero."
+    );
+  }
+
+  if (certificationBlockers.length > 0) {
+    return {
+      certificationStatus:
+        mismatchCount > 0 || failureCount > 0 || criticalMismatchCount > 0
+          ? "REVIEW_REQUIRED"
+          : "NOT_READY",
+      certificationBlockers,
+      certificationWarnings,
+    };
+  }
+
+  certificationWarnings.push(
+    "Operator certification is still required before marking Settlement as CERTIFIED."
+  );
+
+  return {
+    certificationStatus: "READY_FOR_CERTIFICATION",
+    certificationBlockers,
+    certificationWarnings,
+  };
+}
+
 export async function getSettlementStabilizationStatus({
   window = "7d",
 }: {
@@ -161,6 +239,16 @@ export async function getSettlementStabilizationStatus({
     criticalMismatchCount: metrics.criticalMismatchCount,
     warningCount,
   });
+  const certification = getCertificationState({
+    authority: postPromotionStatus.authority,
+    comparisonMode: postPromotionStatus.comparisonMode,
+    rollbackReady: postPromotionStatus.rollbackReadiness === "READY",
+    serviceHealthy: postPromotionStatus.serviceHealth.available,
+    settlementsProcessed: metrics.settlementsProcessed,
+    mismatchCount: metrics.mismatchCount,
+    failureCount: metrics.failureCount,
+    criticalMismatchCount: metrics.criticalMismatchCount,
+  });
 
   return {
     window,
@@ -179,6 +267,9 @@ export async function getSettlementStabilizationStatus({
     rollbackReadiness: postPromotionStatus.rollbackReadiness,
     rollbackTrigger: postPromotionStatus.rollbackTrigger,
     stabilizationStatus,
+    certificationStatus: certification.certificationStatus,
+    certificationBlockers: certification.certificationBlockers,
+    certificationWarnings: certification.certificationWarnings,
     recommendation: getRecommendation(stabilizationStatus),
     generatedAt,
     evidence: {

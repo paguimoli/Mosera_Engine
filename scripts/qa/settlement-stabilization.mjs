@@ -91,8 +91,22 @@ assert(
   { status }
 );
 assert(status.recommendation, "Stabilization recommendation missing.", { status });
+assert(
+  ["NOT_READY", "READY_FOR_CERTIFICATION", "CERTIFIED", "REVIEW_REQUIRED"].includes(
+    status.certificationStatus
+  ),
+  "Unknown certification status.",
+  { status }
+);
+assert(
+  Array.isArray(status.certificationBlockers) &&
+    Array.isArray(status.certificationWarnings),
+  "Certification details missing.",
+  { status }
+);
 pass("Settlement stabilization status generated.", {
   stabilizationStatus: status.stabilizationStatus,
+  certificationStatus: status.certificationStatus,
   recommendation: status.recommendation,
   metrics: {
     settlementsProcessed: status.settlementsProcessed,

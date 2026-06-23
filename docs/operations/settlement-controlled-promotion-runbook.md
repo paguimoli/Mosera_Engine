@@ -145,6 +145,36 @@ Stabilization statuses:
 
 Exit the stabilization window only after sustained `STABLE` status over the agreed monitoring period.
 
+## Post-Promotion Activity Certification
+
+Run:
+
+```bash
+npm run qa:settlement-post-promotion-activity
+npm run ops:settlement-certification-status -- --window 7d
+```
+
+Expected:
+
+- Settlement authority remains `SERVICE`
+- comparison mode remains `ENABLED`
+- Ledger remains `MONOLITH`
+- Credit remains `MONOLITH`
+- at least one post-promotion settlement comparison exists
+- post-promotion mismatch count is `0`
+- post-promotion failure count is `0`
+- critical mismatch count is `0`
+- certification status is `READY_FOR_CERTIFICATION`
+
+Certification statuses:
+
+- `NOT_READY`: activity or control preconditions are missing.
+- `READY_FOR_CERTIFICATION`: clean post-promotion activity exists and operator certification can be considered.
+- `CERTIFIED`: reserved for a future explicit operator certification action.
+- `REVIEW_REQUIRED`: post-promotion parity evidence requires review.
+
+Do not mark Settlement as certified automatically. Certification requires a future explicit operator action.
+
 ## Rollback Simulation
 
 Run:
@@ -195,8 +225,9 @@ The rollback drill is simulation-only. It must not change authority.
 11. Run rollback drill.
 12. Run rollback trigger analysis.
 13. Run stabilization status.
-14. Verify post-promotion QA.
-15. Record results in the release evidence package.
+14. Generate post-promotion activity certification evidence.
+15. Verify post-promotion QA.
+16. Record results in the release evidence package.
 
 ## Emergency Rollback Procedure
 

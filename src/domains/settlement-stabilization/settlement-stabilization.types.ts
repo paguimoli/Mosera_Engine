@@ -15,6 +15,12 @@ export type SettlementStabilizationStatus =
   | "REVIEW_REQUIRED"
   | "ROLLBACK_RECOMMENDED";
 
+export type SettlementCertificationStatus =
+  | "NOT_READY"
+  | "READY_FOR_CERTIFICATION"
+  | "CERTIFIED"
+  | "REVIEW_REQUIRED";
+
 export type SettlementStabilizationMetrics = {
   settlementsProcessed: number;
   mismatchCount: number;
@@ -38,6 +44,9 @@ export type SettlementStabilizationSummary = {
   rollbackReadiness: RollbackReadinessStatus;
   rollbackTrigger: SettlementPostPromotionStatus["rollbackTrigger"];
   stabilizationStatus: SettlementStabilizationStatus;
+  certificationStatus: SettlementCertificationStatus;
+  certificationBlockers: string[];
+  certificationWarnings: string[];
   recommendation: string;
   generatedAt: string;
   evidence: {
