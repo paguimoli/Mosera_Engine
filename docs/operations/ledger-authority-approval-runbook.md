@@ -8,7 +8,7 @@ Ledger approval workflows are append-only and auditable. They do not change auth
 
 ## Current Phase
 
-Phase 16.2 supports Ledger dry-run approval capture and Ledger promotion approval capture.
+Phase 16.3 supports Ledger dry-run approval capture, promotion approval capture, and simulation-only controlled promotion/rollback evaluation.
 
 ## Preconditions
 
@@ -94,3 +94,49 @@ Promotion approval does not:
 ## Next Operator Action
 
 After promotion approval, run Ledger promotion simulation and rollback simulation before any controlled promotion phase.
+
+## Promotion Simulation Command
+
+```bash
+npm run ops:simulate-ledger-promotion
+```
+
+Promotion simulation verifies:
+
+- Ledger decision is `READY_FOR_CONTROLLED_PROMOTION`.
+- Ledger rollback readiness is `READY`.
+- Ledger authority is `MONOLITH`.
+- Ledger comparison mode is `ENABLED`.
+- Ledger Service health is available.
+
+Promotion simulation emits `authority.ledger.promotion.simulated`.
+
+Promotion simulation does not:
+
+- change `LEDGER_AUTHORITY`;
+- route ledger posting to Ledger Service;
+- change balances;
+- change ledger posting logic;
+- promote Ledger.
+
+## Rollback Simulation Command
+
+```bash
+npm run ops:simulate-ledger-rollback
+```
+
+Rollback simulation verifies:
+
+- monolith ledger path is available;
+- comparison mode is enabled;
+- authority controls are available;
+- rollback readiness is `READY`.
+
+Rollback simulation emits `authority.ledger.rollback.simulated`.
+
+Rollback simulation does not:
+
+- change `LEDGER_AUTHORITY`;
+- execute rollback;
+- modify approvals;
+- mutate financial records.

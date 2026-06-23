@@ -31,6 +31,18 @@ async function requestJson(path, body, authenticated = true) {
   return { response, body: parsed };
 }
 
+async function getJson(path, authenticated = true) {
+  const response = await fetch(`${appUrl}${path}`, {
+    headers: {
+      ...(authenticated && sessionToken ? { authorization: `Bearer ${sessionToken}` } : {}),
+    },
+  });
+  const text = await response.text();
+  const parsed = text ? JSON.parse(text) : null;
+
+  return { response, body: parsed };
+}
+
 const unauthenticated = await requestJson("/api/authority/ledger-promotion/simulate", {}, false);
 assert(unauthenticated.response.status === 401, "Ledger simulation should require auth.", {
   status: unauthenticated.response.status,
@@ -61,8 +73,17 @@ assert(rollback.domain === "LEDGER", "Rollback simulation domain mismatch.", { r
 assert(promotion.currentAuthority === "MONOLITH", "Ledger simulation must preserve MONOLITH authority.", {
   promotion,
 });
+assert(promotion.simulatedAuthority === "SERVICE", "Promotion simulation should model SERVICE authority.", {
+  promotion,
+});
 assert(promotion.comparisonMode === "ENABLED", "Ledger simulation must preserve comparison mode.", {
   promotion,
+});
+assert(promotion.rollbackReady === true, "Ledger promotion simulation should report rollbackReady=true.", {
+  promotion,
+});
+assert(rollback.rollbackReady === true, "Ledger rollback simulation should report rollbackReady=true.", {
+  rollback,
 });
 assert(promotion.auditEvent?.eventType === "authority.ledger.promotion.simulated", "Promotion audit event missing.", {
   promotion,
@@ -71,9 +92,43 @@ assert(rollback.auditEvent?.eventType === "authority.ledger.rollback.simulated",
   rollback,
 });
 
+const [authorityResult, settlementStatusResult] = await Promise.all([
+  getJson("/api/authority/status"),
+  getJson("/api/authority/settlement-stabilization-status?window=7d"),
+]);
+assert(authorityResult.response.status === 200 && authorityResult.body.success, "Authority status failed.", {
+  status: authorityResult.response.status,
+  body: authorityResult.body,
+});
+assert(
+  settlementStatusResult.response.status === 200 && settlementStatusResult.body.success,
+  "Settlement certification status failed.",
+  { status: settlementStatusResult.response.status, body: settlementStatusResult.body }
+);
+
+const authority = authorityResult.body.authority;
+const settlementStatus = settlementStatusResult.body.stabilizationStatus;
+assert(authority.ledger.authority === "MONOLITH", "Ledger authority changed after simulation.", {
+  authority,
+});
+assert(authority.ledger.comparisonMode === "ENABLED", "Ledger comparison changed after simulation.", {
+  authority,
+});
+assert(authority.settlement.authority === "SERVICE", "Settlement authority changed after simulation.", {
+  authority,
+});
+assert(settlementStatus.certificationStatus === "CERTIFIED", "Settlement certification changed after simulation.", {
+  settlementStatus,
+});
+assert(authority.credit.authority === "MONOLITH", "Credit authority changed after simulation.", {
+  authority,
+});
+
 pass("Ledger promotion and rollback simulations are audit-only.", {
   promotionAllowed: promotion.promotionAllowed,
   rollbackAllowed: rollback.rollbackAllowed,
   promotionBlockers: promotion.blockers,
   rollbackBlockers: rollback.blockers,
+  promotionAuditEventId: promotion.auditEvent.id,
+  rollbackAuditEventId: rollback.auditEvent.id,
 });

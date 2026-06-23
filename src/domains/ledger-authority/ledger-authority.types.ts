@@ -88,10 +88,12 @@ export type LedgerSimulationResult = {
   domain: "LEDGER";
   currentAuthority?: AuthorityValue;
   proposedAuthority?: "SERVICE";
+  simulatedAuthority?: AuthorityValue;
   authorityState?: AuthorityValue;
   comparisonMode: ComparisonMode;
   promotionDecision?: string;
   rollbackReadiness: DomainReadinessStatus;
+  rollbackReady: boolean;
   serviceHealth: ServiceHealthStatus;
   validationResults: Array<{
     name: string;

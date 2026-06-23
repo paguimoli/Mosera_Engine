@@ -14,9 +14,10 @@ function authErrorResponse(error: AuthMiddlewareError) {
 
 export async function POST(request: Request) {
   try {
-    await requirePermission(request, "system.admin");
+    const authContext = await requirePermission(request, "system.admin");
     const body = await request.json().catch(() => ({}));
     const simulation = await simulateLedgerRollback({
+      actorUserId: authContext.user.id,
       correlationId: body?.correlationId,
     });
 

@@ -346,8 +346,10 @@ function ledgerRollbackReadiness(summary: Awaited<ReturnType<typeof validateRoll
 }
 
 export async function simulateLedgerPromotion({
+  actorUserId,
   correlationId,
 }: {
+  actorUserId?: string | null;
   correlationId?: unknown;
 } = {}): Promise<LedgerSimulationResult> {
   const normalizedCorrelationId = normalizeCorrelationId(correlationId);
@@ -404,13 +406,20 @@ export async function simulateLedgerPromotion({
     correlationId: normalizedCorrelationId,
     payload: {
       domain: "LEDGER",
+      actorUserId: actorUserId ?? null,
       currentAuthority: promotionDecision.currentAuthority,
       proposedAuthority: "SERVICE",
+      simulatedAuthority: "SERVICE",
       comparisonMode: promotionDecision.comparisonMode,
+      decision: promotionDecision.decision,
       rollbackReadiness: promotionDecision.rollbackReadiness,
+      rollbackReady:
+        promotionDecision.rollbackReadiness === "READY" &&
+        ledgerRollback.rollbackStatus === "READY",
       promotionAllowed: blockers.length === 0,
       blockers,
       warnings,
+      timestamp: simulatedAt,
       simulatedAt,
     },
   });
@@ -419,9 +428,13 @@ export async function simulateLedgerPromotion({
     domain: "LEDGER",
     currentAuthority: promotionDecision.currentAuthority,
     proposedAuthority: "SERVICE",
+    simulatedAuthority: "SERVICE",
     comparisonMode: promotionDecision.comparisonMode,
     promotionDecision: promotionDecision.decision,
     rollbackReadiness: promotionDecision.rollbackReadiness,
+    rollbackReady:
+      promotionDecision.rollbackReadiness === "READY" &&
+      ledgerRollback.rollbackStatus === "READY",
     serviceHealth: ledgerRollback.serviceHealth,
     validationResults,
     blockers,
@@ -437,12 +450,17 @@ export async function simulateLedgerPromotion({
 }
 
 export async function simulateLedgerRollback({
+  actorUserId,
   correlationId,
 }: {
+  actorUserId?: string | null;
   correlationId?: unknown;
 } = {}): Promise<LedgerSimulationResult> {
   const normalizedCorrelationId = normalizeCorrelationId(correlationId);
-  const rollbackReadiness = await validateRollbackReadiness();
+  const [rollbackReadiness, promotionDecision] = await Promise.all([
+    validateRollbackReadiness(),
+    getPromotionDecision({ domain: "LEDGER" }),
+  ]);
   const ledgerRollback = ledgerRollbackReadiness(rollbackReadiness);
   const validationResults = [
     validationResult(
@@ -478,12 +496,16 @@ export async function simulateLedgerRollback({
     correlationId: normalizedCorrelationId,
     payload: {
       domain: "LEDGER",
+      actorUserId: actorUserId ?? null,
       authorityState: ledgerRollback.authority,
       comparisonMode: ledgerRollback.comparisonMode,
+      decision: promotionDecision.decision,
       rollbackReadiness: ledgerRollback.rollbackStatus,
+      rollbackReady: ledgerRollback.rollbackStatus === "READY",
       rollbackAllowed: blockers.length === 0,
       blockers,
       warnings,
+      timestamp: simulatedAt,
       simulatedAt,
     },
   });
@@ -491,8 +513,10 @@ export async function simulateLedgerRollback({
   return {
     domain: "LEDGER",
     authorityState: ledgerRollback.authority,
+    simulatedAuthority: "MONOLITH",
     comparisonMode: ledgerRollback.comparisonMode,
     rollbackReadiness: ledgerRollback.rollbackStatus,
+    rollbackReady: ledgerRollback.rollbackStatus === "READY",
     serviceHealth: ledgerRollback.serviceHealth,
     validationResults,
     blockers,
