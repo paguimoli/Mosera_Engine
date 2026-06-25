@@ -17,7 +17,8 @@ export type AuthorityApprovalType =
   | "DRY_RUN_APPROVAL"
   | "PROMOTION_APPROVAL"
   | "ROLLBACK_APPROVAL"
-  | "SETTLEMENT_CERTIFICATION";
+  | "SETTLEMENT_CERTIFICATION"
+  | "LEDGER_CERTIFICATION";
 
 export type AuthorityApprovalRecord = {
   id: string;

@@ -40,6 +40,7 @@ import type {
   LedgerRollbackTriggerEvidenceSummary,
   LedgerRollbackTriggerEvaluation,
   LedgerSimulationResult,
+  LedgerStabilizationStatus,
 } from "./ledger-authority.types";
 
 function nowIso() {
@@ -1063,6 +1064,164 @@ export async function getLedgerPostPromotionStatus(): Promise<LedgerPostPromotio
     postPromotionFailureCount: postPromotionEffectiveFailureCount,
     recommendation,
     evaluatedAt: nowIso(),
+  };
+}
+
+function getLedgerCertificationState({
+  authority,
+  comparisonMode,
+  rollbackReadiness,
+  serviceHealthy,
+  ledgerEntriesProcessed,
+  mismatchCount,
+  failureCount,
+  criticalMismatchCount,
+  existingCertification,
+}: {
+  authority: string;
+  comparisonMode: string;
+  rollbackReadiness: string;
+  serviceHealthy: boolean;
+  ledgerEntriesProcessed: number;
+  mismatchCount: number;
+  failureCount: number;
+  criticalMismatchCount: number;
+  existingCertification: AuthorityApprovalRecord | null;
+}): {
+  certificationStatus: LedgerStabilizationStatus["certificationStatus"];
+  certificationBlockers: string[];
+  certificationWarnings: string[];
+} {
+  const certificationBlockers: string[] = [];
+  const certificationWarnings: string[] = [];
+
+  if (existingCertification) {
+    return {
+      certificationStatus: "CERTIFIED",
+      certificationBlockers,
+      certificationWarnings,
+    };
+  }
+
+  if (authority !== "SERVICE") {
+    certificationBlockers.push("Ledger authority must be SERVICE.");
+  }
+  if (comparisonMode !== "ENABLED") {
+    certificationBlockers.push("Ledger comparison mode must be ENABLED.");
+  }
+  if (rollbackReadiness !== "READY") {
+    certificationBlockers.push("Rollback readiness must be READY.");
+  }
+  if (!serviceHealthy) {
+    certificationBlockers.push("Ledger Service health must be healthy.");
+  }
+  if (ledgerEntriesProcessed <= 0) {
+    certificationBlockers.push(
+      "At least one post-promotion ledger entry must be processed."
+    );
+  }
+  if (mismatchCount > 0) {
+    certificationBlockers.push("Post-promotion mismatch count must be zero.");
+  }
+  if (failureCount > 0) {
+    certificationBlockers.push("Post-promotion failure count must be zero.");
+  }
+  if (criticalMismatchCount > 0) {
+    certificationBlockers.push(
+      "Post-promotion critical mismatch count must be zero."
+    );
+  }
+
+  if (certificationBlockers.length > 0) {
+    return {
+      certificationStatus:
+        mismatchCount > 0 || failureCount > 0 || criticalMismatchCount > 0
+          ? "REVIEW_REQUIRED"
+          : "NOT_READY",
+      certificationBlockers,
+      certificationWarnings,
+    };
+  }
+
+  certificationWarnings.push(
+    "Operator certification is still required before marking Ledger as CERTIFIED."
+  );
+
+  return {
+    certificationStatus: "READY_FOR_CERTIFICATION",
+    certificationBlockers,
+    certificationWarnings,
+  };
+}
+
+function getLedgerCertificationRecommendation({
+  certificationStatus,
+  rollbackTrigger,
+}: {
+  certificationStatus: LedgerStabilizationStatus["certificationStatus"];
+  rollbackTrigger: LedgerRollbackTriggerEvaluation;
+}) {
+  if (rollbackTrigger.shouldTriggerRollback) {
+    return "ROLLBACK_RECOMMENDED: Execute the rollback runbook after operator confirmation.";
+  }
+  if (certificationStatus === "CERTIFIED") {
+    return "CERTIFIED: Continue post-promotion monitoring and preserve certification evidence.";
+  }
+  if (certificationStatus === "READY_FOR_CERTIFICATION") {
+    return "READY_FOR_CERTIFICATION: Operator review may proceed; do not mark Ledger CERTIFIED without explicit approval.";
+  }
+  if (certificationStatus === "REVIEW_REQUIRED") {
+    return "REVIEW_REQUIRED: Investigate post-promotion Ledger evidence before certification.";
+  }
+
+  return "NOT_READY: Continue collecting clean post-promotion Ledger activity.";
+}
+
+export async function getLedgerStabilizationStatus(): Promise<LedgerStabilizationStatus> {
+  const [postPromotionStatus, approvals] = await Promise.all([
+    getLedgerPostPromotionStatus(),
+    listLedgerAuthorityApprovalRecords(),
+  ]);
+  const certificationApproval = latestApproval(approvals, "LEDGER_CERTIFICATION");
+  const ledgerEntriesProcessed =
+    postPromotionStatus.postPromotionEvidenceSummary.totalRuns;
+  const certification = getLedgerCertificationState({
+    authority: postPromotionStatus.authority,
+    comparisonMode: postPromotionStatus.comparisonMode,
+    rollbackReadiness: postPromotionStatus.rollbackReadiness,
+    serviceHealthy: postPromotionStatus.serviceHealth.available,
+    ledgerEntriesProcessed,
+    mismatchCount: postPromotionStatus.postPromotionMismatchCount,
+    failureCount: postPromotionStatus.postPromotionFailureCount,
+    criticalMismatchCount:
+      postPromotionStatus.postPromotionEvidenceSummary.criticalMismatchCount,
+    existingCertification: certificationApproval,
+  });
+
+  return {
+    domain: "LEDGER",
+    authority: postPromotionStatus.authority,
+    comparisonMode: postPromotionStatus.comparisonMode,
+    promotedAt: postPromotionStatus.promotedAt,
+    ledgersProcessed: ledgerEntriesProcessed,
+    ledgerEntriesProcessed,
+    mismatchCount: postPromotionStatus.postPromotionMismatchCount,
+    failureCount: postPromotionStatus.postPromotionFailureCount,
+    criticalMismatchCount:
+      postPromotionStatus.postPromotionEvidenceSummary.criticalMismatchCount,
+    serviceHealth: postPromotionStatus.serviceHealth,
+    rollbackReadiness: postPromotionStatus.rollbackReadiness,
+    rollbackTrigger: postPromotionStatus.rollbackTrigger,
+    certificationStatus: certification.certificationStatus,
+    certificationBlockers: certification.certificationBlockers,
+    certificationWarnings: certification.certificationWarnings,
+    certificationApprovalId: certificationApproval?.id ?? null,
+    certifiedAt: certificationApproval?.createdAt ?? null,
+    recommendation: getLedgerCertificationRecommendation({
+      certificationStatus: certification.certificationStatus,
+      rollbackTrigger: postPromotionStatus.rollbackTrigger,
+    }),
+    generatedAt: nowIso(),
   };
 }
 

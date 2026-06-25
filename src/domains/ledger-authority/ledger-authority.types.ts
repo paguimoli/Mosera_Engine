@@ -198,6 +198,34 @@ export type LedgerPostPromotionStatus = {
   evaluatedAt: string;
 };
 
+export type LedgerCertificationStatus =
+  | "NOT_READY"
+  | "READY_FOR_CERTIFICATION"
+  | "CERTIFIED"
+  | "REVIEW_REQUIRED";
+
+export type LedgerStabilizationStatus = {
+  domain: "LEDGER";
+  authority: AuthorityValue;
+  comparisonMode: ComparisonMode;
+  promotedAt: string | null;
+  ledgersProcessed: number;
+  ledgerEntriesProcessed: number;
+  mismatchCount: number;
+  failureCount: number;
+  criticalMismatchCount: number;
+  serviceHealth: ServiceHealthStatus;
+  rollbackReadiness: DomainReadinessStatus;
+  rollbackTrigger: LedgerRollbackTriggerEvaluation;
+  certificationStatus: LedgerCertificationStatus;
+  certificationBlockers: string[];
+  certificationWarnings: string[];
+  certificationApprovalId: string | null;
+  certifiedAt: string | null;
+  recommendation: string;
+  generatedAt: string;
+};
+
 export type LedgerRollbackDrill = {
   domain: "LEDGER";
   mode: "SIMULATION";

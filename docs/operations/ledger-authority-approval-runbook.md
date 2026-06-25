@@ -264,3 +264,25 @@ Escalate if:
 - comparison mode is disabled;
 - the drill reports an authority change;
 - lifecycle-effective post-promotion mismatches or failures appear.
+
+## Post-Promotion Activity Certification
+
+Run:
+
+```bash
+npm run qa:ledger-post-promotion-activity
+npm run ops:ledger-certification-status
+```
+
+The activity harness posts a deterministic Ledger Service comparison request after the Ledger promotion timestamp. The expected response is a persisted `MATCH` shadow run, which proves the Ledger Service path can process post-promotion activity while monolith comparison remains active.
+
+Certification status meanings:
+
+- `NOT_READY`: certification preconditions are not yet met.
+- `READY_FOR_CERTIFICATION`: clean post-promotion activity exists and operator review can proceed.
+- `CERTIFIED`: a separate explicit Ledger certification approval already exists.
+- `REVIEW_REQUIRED`: post-promotion mismatches, failures, or critical evidence require investigation.
+
+Operators must review authority, comparison mode, rollback readiness, service health, processed activity count, mismatch count, failure count, and critical mismatch count before any certification approval.
+
+After `READY_FOR_CERTIFICATION`, proceed to the explicit Ledger operator certification phase. Do not treat activity readiness as automatic operational certification.
