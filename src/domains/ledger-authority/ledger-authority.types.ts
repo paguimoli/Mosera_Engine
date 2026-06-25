@@ -3,6 +3,8 @@ import type {
   ComparisonMode,
   ServiceHealthStatus,
 } from "../authority-control/authority-control.types";
+import type { AuthorityApprovalRecord } from "../authority-approval/authority-approval.types";
+import type { AuthenticatedUser } from "../auth/auth-context.types";
 import type { DomainReadinessStatus } from "../shadow-readiness/shadow-readiness.types";
 
 export type LedgerAuthorityCandidateStatus = "READY" | "WARNING" | "BLOCKED";
@@ -224,6 +226,20 @@ export type LedgerStabilizationStatus = {
   certifiedAt: string | null;
   recommendation: string;
   generatedAt: string;
+};
+
+export type LedgerCertificationInput = {
+  actor: AuthenticatedUser;
+  justification: unknown;
+  acknowledgedWarnings: unknown;
+  correlationId?: unknown;
+};
+
+export type LedgerCertificationResult = {
+  approval: AuthorityApprovalRecord;
+  idempotent: boolean;
+  stabilizationBefore: LedgerStabilizationStatus;
+  stabilizationAfter: LedgerStabilizationStatus;
 };
 
 export type LedgerRollbackDrill = {

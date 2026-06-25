@@ -5,6 +5,11 @@ import {
 import { setRuntimeAuthorityDomainConfiguration } from "../authority-control/authority-control.repository";
 import type { AuthenticatedUser } from "../auth/auth-context.types";
 import { createOutboxEvent, listRecentOutboxEvents } from "../outbox/outbox.service";
+import {
+  createAuthorityApprovalRecord,
+  findAuthorityApprovalRecordByCorrelationId,
+} from "../authority-approval/authority-approval.repository";
+import { getSettlementStabilizationStatus } from "../settlement-stabilization/settlement-stabilization.service";
 import { getPromotionDecision } from "../promotion-decision/promotion-decision.service";
 import {
   getShadowAnalysisSummary,
@@ -30,6 +35,8 @@ import type {
   LedgerAuthorityMetrics,
   LedgerAuthorityPromotion,
   LedgerAuthorityReadiness,
+  LedgerCertificationInput,
+  LedgerCertificationResult,
   LedgerAuthorityRuntimeRoute,
   LedgerDryRunEvaluation,
   LedgerPostPromotionStatus,
@@ -107,6 +114,15 @@ function normalizeCorrelationId(value: unknown) {
 
 function normalizeJustification(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeAcknowledgedWarnings(value: unknown) {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((warning): warning is string => typeof warning === "string")
+    .map((warning) => warning.trim())
+    .filter(Boolean);
 }
 
 function getPromotionMetadata() {
@@ -1222,6 +1238,156 @@ export async function getLedgerStabilizationStatus(): Promise<LedgerStabilizatio
       rollbackTrigger: postPromotionStatus.rollbackTrigger,
     }),
     generatedAt: nowIso(),
+  };
+}
+
+export async function certifyLedgerAuthority({
+  actor,
+  justification,
+  acknowledgedWarnings,
+  correlationId,
+}: LedgerCertificationInput): Promise<LedgerCertificationResult> {
+  const normalizedCorrelationId = normalizeCorrelationId(correlationId);
+
+  if (normalizedCorrelationId) {
+    const existingApproval = await findAuthorityApprovalRecordByCorrelationId({
+      authorityCandidate: "LEDGER",
+      approvalType: "LEDGER_CERTIFICATION",
+      correlationId: normalizedCorrelationId,
+    });
+
+    if (existingApproval) {
+      const stabilization = await getLedgerStabilizationStatus();
+
+      return {
+        approval: existingApproval,
+        idempotent: true,
+        stabilizationBefore: stabilization,
+        stabilizationAfter: stabilization,
+      };
+    }
+  }
+
+  const normalizedJustification = normalizeJustification(justification);
+  if (!normalizedJustification) {
+    throw new LedgerAuthorityValidationError("Justification is required.");
+  }
+
+  const normalizedAcknowledgedWarnings =
+    normalizeAcknowledgedWarnings(acknowledgedWarnings);
+  const [stabilizationBefore, settlementStatus, authorityStatus] =
+    await Promise.all([
+      getLedgerStabilizationStatus(),
+      getSettlementStabilizationStatus({ window: "7d" }),
+      Promise.resolve(getAuthorityStatus()),
+    ]);
+  const missingWarnings = stabilizationBefore.certificationWarnings.filter(
+    (warning) => !normalizedAcknowledgedWarnings.includes(warning)
+  );
+
+  if (missingWarnings.length > 0) {
+    throw new LedgerAuthorityValidationError(
+      "Certification warnings must be acknowledged before certification."
+    );
+  }
+  if (stabilizationBefore.certificationStatus !== "READY_FOR_CERTIFICATION") {
+    throw new LedgerAuthorityValidationError(
+      "Ledger is not ready for certification.",
+      409
+    );
+  }
+  if (stabilizationBefore.authority !== "SERVICE") {
+    throw new LedgerAuthorityValidationError(
+      "Ledger authority must be SERVICE before certification.",
+      409
+    );
+  }
+  if (stabilizationBefore.comparisonMode !== "ENABLED") {
+    throw new LedgerAuthorityValidationError(
+      "Ledger comparison mode must be ENABLED before certification.",
+      409
+    );
+  }
+  if (stabilizationBefore.rollbackReadiness !== "READY") {
+    throw new LedgerAuthorityValidationError(
+      "Rollback readiness must be READY before certification.",
+      409
+    );
+  }
+  if (!stabilizationBefore.serviceHealth.available) {
+    throw new LedgerAuthorityValidationError(
+      "Ledger Service health must be healthy before certification.",
+      409
+    );
+  }
+  if (
+    stabilizationBefore.failureCount !== 0 ||
+    stabilizationBefore.criticalMismatchCount !== 0
+  ) {
+    throw new LedgerAuthorityValidationError(
+      "Post-promotion failures and critical mismatches must be zero before certification.",
+      409
+    );
+  }
+  if (settlementStatus.authority !== "SERVICE") {
+    throw new LedgerAuthorityValidationError(
+      "Settlement authority must remain SERVICE before Ledger certification.",
+      409
+    );
+  }
+  if (settlementStatus.certificationStatus !== "CERTIFIED") {
+    throw new LedgerAuthorityValidationError(
+      "Settlement must remain CERTIFIED before Ledger certification.",
+      409
+    );
+  }
+  if (authorityStatus.credit.authority !== "MONOLITH") {
+    throw new LedgerAuthorityValidationError(
+      "Credit authority must remain MONOLITH before Ledger certification.",
+      409
+    );
+  }
+
+  const approval = await createAuthorityApprovalRecord({
+    authorityCandidate: "LEDGER",
+    approvalType: "LEDGER_CERTIFICATION",
+    approverUserId: actor.id,
+    approverUsername: actor.username,
+    justification: normalizedJustification,
+    metadata: {
+      acknowledgedWarnings: normalizedAcknowledgedWarnings,
+      certificationCapturedAt: new Date().toISOString(),
+      correlationId: normalizedCorrelationId,
+      certificationStatusBefore: stabilizationBefore.certificationStatus,
+      ledgerEntriesProcessed: stabilizationBefore.ledgerEntriesProcessed,
+      mismatchCount: stabilizationBefore.mismatchCount,
+      failureCount: stabilizationBefore.failureCount,
+      criticalMismatchCount: stabilizationBefore.criticalMismatchCount,
+      settlementCertificationStatus: settlementStatus.certificationStatus,
+      creditAuthority: authorityStatus.credit.authority,
+    },
+  });
+
+  await createOutboxEvent({
+    eventType: "authority.ledger.certified",
+    aggregateType: "authority_candidate",
+    aggregateId: "LEDGER",
+    correlationId: normalizedCorrelationId,
+    payload: {
+      approvalId: approval.id,
+      actorUserId: actor.id,
+      correlationId: normalizedCorrelationId,
+      certifiedAt: approval.createdAt,
+    },
+  });
+
+  const stabilizationAfter = await getLedgerStabilizationStatus();
+
+  return {
+    approval,
+    idempotent: false,
+    stabilizationBefore,
+    stabilizationAfter,
   };
 }
 

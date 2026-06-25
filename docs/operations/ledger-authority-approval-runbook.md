@@ -286,3 +286,38 @@ Certification status meanings:
 Operators must review authority, comparison mode, rollback readiness, service health, processed activity count, mismatch count, failure count, and critical mismatch count before any certification approval.
 
 After `READY_FOR_CERTIFICATION`, proceed to the explicit Ledger operator certification phase. Do not treat activity readiness as automatic operational certification.
+
+## Operator Certification Capture
+
+Run certification status first:
+
+```bash
+npm run ops:ledger-certification-status
+```
+
+Certification prerequisites:
+
+- Ledger authority is `SERVICE`;
+- Ledger comparison mode is `ENABLED`;
+- rollback readiness is `READY`;
+- certification status is `READY_FOR_CERTIFICATION`;
+- Ledger Service health is healthy;
+- post-promotion failures are zero;
+- post-promotion critical mismatches are zero;
+- Settlement remains `SERVICE` and `CERTIFIED`;
+- Credit remains `MONOLITH`.
+
+Capture certification:
+
+```bash
+npm run ops:certify-ledger -- \
+  --justification "Reviewed Ledger post-promotion activity evidence and rollback readiness." \
+  --acknowledge-warning "Operator certification is still required before marking Ledger as CERTIFIED." \
+  --correlation-id "operator-selected-correlation-id"
+```
+
+Certification creates an append-only `LEDGER_CERTIFICATION` approval and emits `authority.ledger.certified` through the outbox with approval id, actor user id, correlation id, and certification timestamp.
+
+`CERTIFIED` means the operator has formally accepted Ledger Service as the certified Ledger authority after post-promotion activity validation. It does not change authority, disable comparison, disable rollback, or alter financial calculations.
+
+After Ledger certification, the next authority domain is Credit Wallet. Begin Phase 17.0 planning with Settlement and Ledger remaining service-authoritative and certified.
