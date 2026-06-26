@@ -510,17 +510,17 @@ export async function getAuthorityBaselineStatus(): Promise<AuthorityBaselineSta
     rollbackReadiness,
   });
   const settlement = domainStatus({
-    authority: settlementStatus.authority,
+    authority: rollbackReadiness.settlement.authority,
     certificationStatus: settlementStatus.certificationStatus,
     rollback: rollbackReadiness.settlement,
   });
   const ledger = domainStatus({
-    authority: ledgerStatus.authority,
+    authority: rollbackReadiness.ledger.authority,
     certificationStatus: ledgerStatus.certificationStatus,
     rollback: rollbackReadiness.ledger,
   });
   const credit = domainStatus({
-    authority: creditStatus.authority,
+    authority: rollbackReadiness.credit.authority,
     certificationStatus: creditStatus.certificationStatus,
     rollback: rollbackReadiness.credit,
   });
