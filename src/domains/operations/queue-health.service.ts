@@ -10,6 +10,11 @@ type RabbitMqQueueResponse = {
   messages_ready?: number;
   messages_unacknowledged?: number;
   consumers?: number;
+  message_stats?: {
+    publish_details?: { rate?: number };
+    deliver_get_details?: { rate?: number };
+    ack_details?: { rate?: number };
+  };
 };
 
 function getErrorMessage(error: unknown) {
@@ -30,8 +35,14 @@ async function countRowsByStatus(table: string, status: string) {
 }
 
 async function getOutboxHealth(now: Date): Promise<OutboxHealthSummary> {
-  const [pendingCount, failedCount, deadLetterCount, failedJobCount, oldest] =
-    await Promise.all([
+  const [
+    pendingCount,
+    failedCount,
+    deadLetterCount,
+    failedJobCount,
+    oldest,
+    retryRows,
+  ] = await Promise.all([
       countRowsByStatus("outbox_events", "PENDING"),
       countRowsByStatus("outbox_events", "FAILED"),
       countRowsByStatus("outbox_events", "DEAD_LETTER"),
@@ -43,10 +54,18 @@ async function getOutboxHealth(now: Date): Promise<OutboxHealthSummary> {
         .order("created_at", { ascending: true })
         .limit(1)
         .maybeSingle(),
+      supabaseServerAdmin
+        .from("outbox_events")
+        .select("attempt_count")
+        .gt("attempt_count", 0)
+        .limit(1000),
     ]);
 
   if (oldest.error) {
     throw new Error(oldest.error.message);
+  }
+  if (retryRows.error) {
+    throw new Error(retryRows.error.message);
   }
 
   const oldestCreatedAt =
@@ -62,6 +81,10 @@ async function getOutboxHealth(now: Date): Promise<OutboxHealthSummary> {
     pendingCount,
     failedCount,
     deadLetterCount,
+    retryCount: (retryRows.data ?? []).reduce(
+      (sum, row) => sum + Math.max(0, Number(row.attempt_count ?? 0)),
+      0
+    ),
     oldestUnpublishedCreatedAt: oldestCreatedAt,
     oldestUnpublishedAgeSeconds: oldestAgeSeconds,
     failedJobCount,
@@ -94,7 +117,13 @@ function getRabbitMqManagementConfig() {
 
 async function fetchRabbitMqQueue(
   queueName: string
-): Promise<{ ready: number; unacked: number; consumers: number }> {
+): Promise<{
+  ready: number;
+  unacked: number;
+  consumers: number;
+  publishRate: number | null;
+  consumeRate: number | null;
+}> {
   const config = getRabbitMqManagementConfig();
 
   if (!config) {
@@ -120,6 +149,11 @@ async function fetchRabbitMqQueue(
     ready: body.messages_ready ?? 0,
     unacked: body.messages_unacknowledged ?? 0,
     consumers: body.consumers ?? 0,
+    publishRate: body.message_stats?.publish_details?.rate ?? null,
+    consumeRate:
+      body.message_stats?.deliver_get_details?.rate ??
+      body.message_stats?.ack_details?.rate ??
+      null,
   };
 }
 
@@ -168,8 +202,13 @@ async function getRabbitMqHealth(): Promise<RabbitMqQueueHealth[]> {
           messagesReady: queue.ready,
           messagesUnacked: queue.unacked,
           consumerCount: queue.consumers,
+          publishRate: queue.publishRate,
+          consumeRate: queue.consumeRate,
+          queueDepth: queue.ready + queue.unacked,
+          oldestQueuedMessageAgeSeconds: null,
           deadLetterMessagesReady: dlq.ready,
           deadLetterMessagesUnacked: dlq.unacked,
+          deadLetterStatus: dlq.ready + dlq.unacked > 0 ? "HAS_MESSAGES" : "EMPTY",
           status: getQueueStatus({
             ready: queue.ready,
             dlqReady: dlq.ready,
@@ -189,8 +228,13 @@ async function getRabbitMqHealth(): Promise<RabbitMqQueueHealth[]> {
           messagesReady: null,
           messagesUnacked: null,
           consumerCount: null,
+          publishRate: null,
+          consumeRate: null,
+          queueDepth: null,
+          oldestQueuedMessageAgeSeconds: null,
           deadLetterMessagesReady: null,
           deadLetterMessagesUnacked: null,
+          deadLetterStatus: "UNAVAILABLE",
           status: "DEGRADED",
           available: false,
           error: getErrorMessage(error),

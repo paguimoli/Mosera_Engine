@@ -36,6 +36,8 @@ type OutboxMetricRow = {
   published_at?: string | null;
 };
 
+const processStartedAt = new Date();
+
 function getNumberEnv(name: string, fallback: number) {
   const value = Number(process.env[name]);
 
@@ -72,11 +74,34 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown worker metrics error.";
 }
 
+function getMetadataString(metadata: Record<string, unknown>, key: string) {
+  const value = metadata[key];
+
+  return typeof value === "string" ? value : null;
+}
+
+function getMetadataNumber(metadata: Record<string, unknown>, key: string) {
+  const value = metadata[key];
+
+  return typeof value === "number" ? value : null;
+}
+
 export async function safeRecordWorkerHeartbeat(
   input: RecordWorkerHeartbeatInput
 ) {
   try {
-    await upsertWorkerHeartbeat(input);
+    await upsertWorkerHeartbeat({
+      ...input,
+      metadata: {
+        workerVersion:
+          process.env.WORKER_VERSION ?? process.env.npm_package_version ?? null,
+        hostname: os.hostname(),
+        processId: process.pid,
+        processStartedAt: processStartedAt.toISOString(),
+        uptimeSeconds: Math.floor(process.uptime()),
+        ...(input.metadata ?? {}),
+      },
+    });
   } catch (error) {
     logger.warn({
       message: "Worker heartbeat metric write failed.",
@@ -233,6 +258,16 @@ export async function getOutboxObservabilitySummary(
         Math.floor((now.getTime() - new Date(oldestCreatedAt).getTime()) / 1000)
       )
     : null;
+  const stalledPublisherDetected =
+    oldestAgeSeconds !== null &&
+    pendingCount > 0 &&
+    oldestAgeSeconds >= getWorkerObservabilityThresholds().outboxCriticalAgeSeconds;
+  const recommendation =
+    deadLetterCount > 0 || failedCount > 0
+      ? "ACTION_REQUIRED"
+      : stalledPublisherDetected || oldestAgeSeconds !== null
+        ? "WARNING"
+        : "READY";
 
   return {
     pendingCount,
@@ -252,6 +287,27 @@ export async function getOutboxObservabilitySummary(
         : null,
     maxPublishLatencyMs:
       publishLatencies.length > 0 ? Math.max(...publishLatencies) : null,
+    dispatchLatency: {
+      averageMs:
+        publishLatencies.length > 0
+          ? Math.round(
+              publishLatencies.reduce((sum, item) => sum + item, 0) /
+                publishLatencies.length
+            )
+          : null,
+      maxMs: publishLatencies.length > 0 ? Math.max(...publishLatencies) : null,
+    },
+    oldestUnpublishedEvent: {
+      createdAt: oldestCreatedAt,
+      ageSeconds: oldestAgeSeconds,
+    },
+    stalledPublisher: {
+      detected: stalledPublisherDetected,
+      reason: stalledPublisherDetected
+        ? "Oldest pending outbox event exceeds the critical publisher age threshold."
+        : "No stalled publisher condition detected.",
+    },
+    recommendation,
     workloadDistribution: [...distribution.entries()].map(
       ([workloadCategory, counts]) => ({
         workloadCategory,
@@ -298,6 +354,21 @@ export async function getWorkerObservabilitySummary(
       now.getTime() - new Date(heartbeat.lastSeenAt).getTime() >
       thresholds.heartbeatStaleSeconds * 1000
   );
+  const processedByWorkerName = new Map<string, number>();
+
+  for (const metric of recentMetrics) {
+    processedByWorkerName.set(
+      metric.workerName,
+      (processedByWorkerName.get(metric.workerName) ?? 0) + metric.processedCount
+    );
+  }
+  const activeWorkerObserved = heartbeats.some(
+    (heartbeat) => heartbeat.status === "ACTIVE"
+  );
+  const processedJobs = recentMetrics.reduce(
+    (sum, metric) => sum + metric.processedCount,
+    0
+  );
 
   return {
     generatedAt: now.toISOString(),
@@ -305,6 +376,20 @@ export async function getWorkerObservabilitySummary(
     recentMetrics,
     recentFailures,
     staleWorkers,
+    lastHeartbeat: heartbeats[0] ?? null,
+    activeWorkerObserved,
+    processedJobs,
+    workerDetails: heartbeats.map((heartbeat) => ({
+      workerName: heartbeat.workerName,
+      instanceId: heartbeat.instanceId,
+      workloadCategory: heartbeat.workloadCategory,
+      status: heartbeat.status,
+      lastSeenAt: heartbeat.lastSeenAt,
+      workerVersion: getMetadataString(heartbeat.metadata, "workerVersion"),
+      hostname: getMetadataString(heartbeat.metadata, "hostname"),
+      uptimeSeconds: getMetadataNumber(heartbeat.metadata, "uptimeSeconds"),
+      processedJobs: processedByWorkerName.get(heartbeat.workerName) ?? 0,
+    })),
   };
 }
 

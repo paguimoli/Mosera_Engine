@@ -95,6 +95,19 @@ export type OutboxObservabilitySummary = OutboxHealthSummary & {
   publishedCount: number;
   averagePublishLatencyMs: number | null;
   maxPublishLatencyMs: number | null;
+  dispatchLatency: {
+    averageMs: number | null;
+    maxMs: number | null;
+  };
+  oldestUnpublishedEvent: {
+    createdAt: string | null;
+    ageSeconds: number | null;
+  };
+  stalledPublisher: {
+    detected: boolean;
+    reason: string;
+  };
+  recommendation: "READY" | "WARNING" | "ACTION_REQUIRED";
   workloadDistribution: Array<{
     workloadCategory: QueueWorkloadCategory;
     pendingCount: number;
@@ -109,6 +122,20 @@ export type WorkerObservabilitySummary = {
   recentMetrics: WorkerProcessingMetric[];
   recentFailures: WorkerFailure[];
   staleWorkers: WorkerHeartbeat[];
+  lastHeartbeat: WorkerHeartbeat | null;
+  activeWorkerObserved: boolean;
+  processedJobs: number;
+  workerDetails: Array<{
+    workerName: string;
+    instanceId: string;
+    workloadCategory: QueueWorkloadCategory;
+    status: WorkerHeartbeatStatus;
+    lastSeenAt: string;
+    workerVersion: string | null;
+    hostname: string | null;
+    uptimeSeconds: number | null;
+    processedJobs: number;
+  }>;
 };
 
 export type OperationsMetricsSummary = {

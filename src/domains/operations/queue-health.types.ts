@@ -7,6 +7,7 @@ export type OutboxHealthSummary = {
   pendingCount: number;
   failedCount: number;
   deadLetterCount: number;
+  retryCount?: number;
   oldestUnpublishedCreatedAt: string | null;
   oldestUnpublishedAgeSeconds: number | null;
   failedJobCount: number;
@@ -22,8 +23,13 @@ export type RabbitMqQueueHealth = {
   messagesReady: number | null;
   messagesUnacked: number | null;
   consumerCount: number | null;
+  publishRate: number | null;
+  consumeRate: number | null;
+  queueDepth: number | null;
+  oldestQueuedMessageAgeSeconds: number | null;
   deadLetterMessagesReady: number | null;
   deadLetterMessagesUnacked: number | null;
+  deadLetterStatus: "EMPTY" | "HAS_MESSAGES" | "UNAVAILABLE";
   status: "HEALTHY" | "WARNING" | "CRITICAL" | "DEGRADED";
   available: boolean;
   error: string | null;

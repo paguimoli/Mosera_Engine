@@ -43,6 +43,51 @@ Review:
 - blockers;
 - warnings.
 
+## Evidence Hardening
+
+Phase 18.1 adds dedicated read-only evidence commands:
+
+```bash
+npm run ops:platform-evidence
+npm run ops:ledger-reference-audit
+npm run ops:ledger-immutability
+```
+
+Use these after the baseline report when the system is promoted and certified
+but still has observability warnings.
+
+The reports are advisory unless they return `ACTION_REQUIRED`. They do not
+repair data, dispatch outbox events, mutate authority, execute rollback, or
+change financial calculations.
+
+### Ledger Reference Audit
+
+`ops:ledger-reference-audit` samples credit-backed settlement applications and
+ledger entries. It reports direct `reference_id` matches, inferred matches from
+metadata or idempotency evidence, missing ledger posting evidence, orphan ledger
+records, orphan settlement references, and correlation IDs when available.
+
+### Ledger Immutability
+
+`ops:ledger-immutability` verifies append-only evidence from the ledger schema,
+reversal-entry links, adjustment chains, and database trigger visibility when
+the catalog is available through the API.
+
+If table-level triggers are not visible, the report explicitly records that the
+current evidence is based on schema shape, reversal links, idempotency, and
+service convention.
+
+### Outbox, Queue, And Worker Evidence
+
+`ops:platform-evidence` includes outbox pending, failed, retry, oldest
+unpublished, dispatch latency, and stalled-publisher evidence. It also includes
+queue depth, consumer count, publish rate, consume rate, oldest message when
+available, dead-letter status, worker last heartbeat, worker version, hostname,
+processed jobs, uptime, and stale heartbeat detection.
+
+RabbitMQ management metric gaps are degraded evidence. They should be reviewed,
+but they do not fail the platform by themselves.
+
 ## Financial Invariants
 
 Operators should verify that the report includes:
@@ -88,6 +133,7 @@ Run:
 
 ```bash
 npm run qa:post-extraction-hardening
+npm run qa:evidence-hardening
 npm run qa:all
 ```
 
@@ -98,6 +144,7 @@ Expected:
 - comparison remains `ENABLED`;
 - rollback remains `READY`;
 - services are healthy;
+- evidence reports are generated;
 - golden path passes;
 - full QA passes.
 
@@ -120,3 +167,11 @@ Recommended Phase 18.1 candidates:
 - reporting service extraction planning;
 - cashier/payment boundary hardening;
 - notification service extraction planning.
+
+Recommended Phase 18.2 candidates:
+
+- database-level ledger immutability proof;
+- ledger reference coverage remediation workflow;
+- stale outbox event operator workflow;
+- RabbitMQ management metric coverage;
+- active worker heartbeat coverage.
