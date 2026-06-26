@@ -270,3 +270,63 @@ npm run ops:credit-certification-status
 ## Next Phase
 
 After post-promotion activity readiness, Phase 17.6 should capture explicit Credit operator certification if evidence remains clean.
+
+## Operator Certification
+
+Formal certification is captured only after stabilization reports `READY_FOR_CERTIFICATION`:
+
+```bash
+npm run ops:credit-certification-status
+```
+
+Certification requires:
+
+- Credit authority is `SERVICE`;
+- comparison remains `ENABLED`;
+- rollback remains `READY`;
+- promotion decision is `PROMOTED`;
+- post-promotion Credit activity exists;
+- post-promotion mismatches, failures, and critical mismatches are zero;
+- Settlement remains `SERVICE` and `CERTIFIED`;
+- Ledger remains `SERVICE` and `CERTIFIED`;
+- operator justification is recorded;
+- every current certification warning is acknowledged.
+
+Capture certification with:
+
+```bash
+npm run ops:certify-credit -- \
+  --justification "Credit Wallet Service post-promotion evidence reviewed and accepted." \
+  --acknowledge-warning "Operator certification is still required before marking Credit as CERTIFIED." \
+  --correlation-id "change-credit-certification-001"
+```
+
+The command calls `POST /api/authority/certification/credit` and creates an append-only `CREDIT_CERTIFICATION` approval record. Retrying the same `correlationId` returns the original approval and does not update or delete historical approvals.
+
+Certification emits the outbox event `authority.credit.certified` with the approval id, actor user id, correlation id, and `certifiedAt`. The event is written to the outbox only; direct RabbitMQ publishing is not used.
+
+After certification, `GET /api/authority/credit-stabilization-status` reports:
+
+- `certificationStatus: CERTIFIED`;
+- `certificationApprovalId`;
+- `certifiedAt`.
+
+`CERTIFIED` means the operator accepted the clean post-promotion Credit evidence. It does not change Credit authority, routing, wallet calculations, balances, reservations, exposure, Settlement, Ledger, comparison mode, or rollback readiness.
+
+## Post-Certification Verification
+
+Run:
+
+```bash
+npm run qa:credit-certification
+npm run qa:all
+```
+
+Expected:
+
+- Settlement remains `SERVICE` and `CERTIFIED`;
+- Ledger remains `SERVICE` and `CERTIFIED`;
+- Credit remains `SERVICE` and `CERTIFIED`;
+- Credit comparison remains `ENABLED`;
+- Credit rollback remains `READY`;
+- no balance, reservation, exposure, wallet, routing, Settlement, or Ledger mutation occurs.

@@ -3,6 +3,8 @@ import type {
   ComparisonMode,
   ServiceHealthStatus,
 } from "../authority-control/authority-control.types";
+import type { AuthenticatedUser } from "../auth/auth-context.types";
+import type { AuthorityApprovalRecord } from "../authority-approval/authority-approval.types";
 import type { DomainReadinessStatus } from "../shadow-readiness/shadow-readiness.types";
 
 export type CreditAuthorityCandidateStatus = "READY" | "WARNING" | "BLOCKED";
@@ -262,6 +264,22 @@ export type CreditStabilizationStatus = {
   certificationStatus: CreditCertificationStatus;
   certificationBlockers: string[];
   certificationWarnings: string[];
+  certificationApprovalId: string | null;
+  certifiedAt: string | null;
   recommendation: string;
   generatedAt: string;
+};
+
+export type CreditCertificationInput = {
+  actor: AuthenticatedUser;
+  justification?: unknown;
+  acknowledgedWarnings?: unknown;
+  correlationId?: unknown;
+};
+
+export type CreditCertificationResult = {
+  approval: AuthorityApprovalRecord;
+  idempotent: boolean;
+  stabilizationBefore: CreditStabilizationStatus;
+  stabilizationAfter: CreditStabilizationStatus;
 };

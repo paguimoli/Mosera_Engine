@@ -39,6 +39,22 @@ function assert(condition, message, metadata = {}) {
   if (!condition) fail(message, metadata);
 }
 
+function isCertificationReadyOrCertified(status) {
+  return status === "READY_FOR_CERTIFICATION" || status === "CERTIFIED";
+}
+
+function expectedCertificationStatusAfter(beforeStatus, afterStatus) {
+  if (beforeStatus === "READY_FOR_CERTIFICATION") {
+    return isCertificationReadyOrCertified(afterStatus);
+  }
+
+  if (beforeStatus === "CERTIFIED") {
+    return afterStatus === "CERTIFIED";
+  }
+
+  return false;
+}
+
 function fetchFailureMetadata(error, targetName, selectedUrl) {
   let hostname = null;
 
@@ -251,6 +267,11 @@ assert(before.rollbackReadiness === "READY", "Credit rollback readiness mismatch
 assert(before.serviceHealth.available === true, "Credit Service must be healthy.", {
   before,
 });
+assert(
+  isCertificationReadyOrCertified(before.certificationStatus),
+  "Credit certification status should be ready or already certified before activity.",
+  { before }
+);
 
 const correlationId = `qa-credit-post-promotion-activity-${Date.now()}`;
 const activity = await executeCreditServiceMatch(correlationId);
@@ -302,13 +323,17 @@ assert(
   { before, after }
 );
 assert(
-  after.certificationStatus === "READY_FOR_CERTIFICATION",
-  "Credit should be ready for certification after clean post-promotion activity.",
+  expectedCertificationStatusAfter(
+    before.certificationStatus,
+    after.certificationStatus
+  ),
+  "Credit certification status should remain valid after clean post-promotion activity.",
   { before, after }
 );
 assert(
-  after.recommendation === "READY_FOR_CERTIFICATION",
-  "Credit stabilization recommendation should be READY_FOR_CERTIFICATION.",
+  after.recommendation === "READY_FOR_CERTIFICATION" ||
+    after.recommendation === "CERTIFIED",
+  "Credit stabilization recommendation should reflect readiness or certification.",
   { before, after }
 );
 
@@ -337,6 +362,10 @@ assert(
 );
 
 pass("Credit post-promotion activity certification QA completed.", {
+  status:
+    after.certificationStatus === "CERTIFIED"
+      ? "already certified"
+      : "ready for certification",
   before: {
     creditWalletsProcessed: before.creditWalletsProcessed,
     reservationsProcessed: before.reservationsProcessed,

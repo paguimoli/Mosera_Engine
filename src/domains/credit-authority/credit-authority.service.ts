@@ -3,9 +3,19 @@ import {
   validateRollbackReadiness,
 } from "../authority-control/authority-control.service";
 import { setRuntimeAuthorityDomainConfiguration } from "../authority-control/authority-control.repository";
+import {
+  createAuthorityApprovalRecord,
+  findAuthorityApprovalRecordByCorrelationId,
+} from "../authority-approval/authority-approval.repository";
+import type {
+  AuthorityApprovalRecord,
+  AuthorityApprovalType,
+} from "../authority-approval/authority-approval.types";
 import type { AuthenticatedUser } from "../auth/auth-context.types";
+import { getLedgerStabilizationStatus } from "../ledger-authority/ledger-authority.service";
 import { createOutboxEvent, listRecentOutboxEvents } from "../outbox/outbox.service";
 import { getPromotionDecision } from "../promotion-decision/promotion-decision.service";
+import { getSettlementStabilizationStatus } from "../settlement-stabilization/settlement-stabilization.service";
 import {
   getShadowAnalysisSummary,
   listShadowAnalysisFailures,
@@ -26,6 +36,8 @@ import type {
   CreditAuthorityReadiness,
   CreditAuthorityRuntimeRoute,
   CreditAuthorityPromotion,
+  CreditCertificationInput,
+  CreditCertificationResult,
   CreditCertificationStatus,
   CreditDryRunEvaluation,
   CreditPostPromotionStatus,
@@ -106,6 +118,15 @@ function normalizeCorrelationId(value: unknown) {
 
 function normalizeJustification(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeAcknowledgedWarnings(value: unknown) {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function getPromotionMetadata() {
@@ -347,7 +368,7 @@ function approvalRequirements({
 
 function latestApproval(
   approvals: Awaited<ReturnType<typeof listCreditAuthorityApprovalRecords>>,
-  approvalType: "DRY_RUN_APPROVAL" | "PROMOTION_APPROVAL" | "ROLLBACK_APPROVAL"
+  approvalType: AuthorityApprovalType
 ) {
   return approvals.find((approval) => approval.approvalType === approvalType) ?? null;
 }
@@ -1228,6 +1249,7 @@ function getCreditCertificationState({
   mismatchCount,
   failureCount,
   criticalMismatchCount,
+  existingCertification,
 }: {
   authority: string;
   comparisonMode: string;
@@ -1237,6 +1259,7 @@ function getCreditCertificationState({
   mismatchCount: number;
   failureCount: number;
   criticalMismatchCount: number;
+  existingCertification?: AuthorityApprovalRecord | null;
 }): {
   certificationStatus: CreditCertificationStatus;
   certificationBlockers: string[];
@@ -1244,6 +1267,14 @@ function getCreditCertificationState({
 } {
   const certificationBlockers: string[] = [];
   const certificationWarnings: string[] = [];
+
+  if (existingCertification) {
+    return {
+      certificationStatus: "CERTIFIED",
+      certificationBlockers,
+      certificationWarnings,
+    };
+  }
 
   if (authority !== "SERVICE") {
     certificationBlockers.push("Credit authority must be SERVICE.");
@@ -1320,7 +1351,11 @@ function getCreditCertificationRecommendation({
 }
 
 export async function getCreditStabilizationStatus(): Promise<CreditStabilizationStatus> {
-  const postPromotionStatus = await getCreditPostPromotionStatus();
+  const [postPromotionStatus, approvals] = await Promise.all([
+    getCreditPostPromotionStatus(),
+    listCreditAuthorityApprovalRecords(),
+  ]);
+  const certificationApproval = latestApproval(approvals, "CREDIT_CERTIFICATION");
   const certification = getCreditCertificationState({
     authority: postPromotionStatus.authority,
     comparisonMode: postPromotionStatus.comparisonMode,
@@ -1330,6 +1365,7 @@ export async function getCreditStabilizationStatus(): Promise<CreditStabilizatio
     mismatchCount: postPromotionStatus.mismatchCount,
     failureCount: postPromotionStatus.failureCount,
     criticalMismatchCount: postPromotionStatus.criticalMismatchCount,
+    existingCertification: certificationApproval,
   });
 
   return {
@@ -1350,10 +1386,179 @@ export async function getCreditStabilizationStatus(): Promise<CreditStabilizatio
     certificationStatus: certification.certificationStatus,
     certificationBlockers: certification.certificationBlockers,
     certificationWarnings: certification.certificationWarnings,
+    certificationApprovalId: certificationApproval?.id ?? null,
+    certifiedAt: certificationApproval?.createdAt ?? null,
     recommendation: getCreditCertificationRecommendation({
       certificationStatus: certification.certificationStatus,
       rollbackTrigger: postPromotionStatus.rollbackTrigger,
     }),
     generatedAt: nowIso(),
+  };
+}
+
+export async function certifyCreditAuthority({
+  actor,
+  justification,
+  acknowledgedWarnings,
+  correlationId,
+}: CreditCertificationInput): Promise<CreditCertificationResult> {
+  const normalizedCorrelationId = normalizeCorrelationId(correlationId);
+
+  if (normalizedCorrelationId) {
+    const existingApproval = await findAuthorityApprovalRecordByCorrelationId({
+      authorityCandidate: "CREDIT",
+      approvalType: "CREDIT_CERTIFICATION",
+      correlationId: normalizedCorrelationId,
+    });
+
+    if (existingApproval) {
+      const stabilization = await getCreditStabilizationStatus();
+
+      return {
+        approval: existingApproval,
+        idempotent: true,
+        stabilizationBefore: stabilization,
+        stabilizationAfter: stabilization,
+      };
+    }
+  }
+
+  const normalizedJustification = normalizeJustification(justification);
+  if (!normalizedJustification) {
+    throw new CreditAuthorityValidationError("Justification is required.");
+  }
+
+  const normalizedAcknowledgedWarnings =
+    normalizeAcknowledgedWarnings(acknowledgedWarnings);
+  const [stabilizationBefore, promotionDecision, settlementStatus, ledgerStatus] =
+    await Promise.all([
+      getCreditStabilizationStatus(),
+      getPromotionDecision({ domain: "CREDIT" }),
+      getSettlementStabilizationStatus({ window: "7d" }),
+      getLedgerStabilizationStatus(),
+    ]);
+  const missingWarnings = stabilizationBefore.certificationWarnings.filter(
+    (warning) => !normalizedAcknowledgedWarnings.includes(warning)
+  );
+
+  if (missingWarnings.length > 0) {
+    throw new CreditAuthorityValidationError(
+      "Certification warnings must be acknowledged before certification."
+    );
+  }
+  if (stabilizationBefore.certificationStatus !== "READY_FOR_CERTIFICATION") {
+    throw new CreditAuthorityValidationError(
+      "Credit is not ready for certification.",
+      409
+    );
+  }
+  if (stabilizationBefore.authority !== "SERVICE") {
+    throw new CreditAuthorityValidationError(
+      "Credit authority must be SERVICE before certification.",
+      409
+    );
+  }
+  if (stabilizationBefore.comparisonMode !== "ENABLED") {
+    throw new CreditAuthorityValidationError(
+      "Credit comparison mode must be ENABLED before certification.",
+      409
+    );
+  }
+  if (stabilizationBefore.rollbackReadiness !== "READY") {
+    throw new CreditAuthorityValidationError(
+      "Rollback readiness must be READY before certification.",
+      409
+    );
+  }
+  if (!stabilizationBefore.serviceHealth.available) {
+    throw new CreditAuthorityValidationError(
+      "Credit Wallet Service health must be healthy before certification.",
+      409
+    );
+  }
+  if (promotionDecision.decision !== "PROMOTED") {
+    throw new CreditAuthorityValidationError(
+      "Credit promotion state must be PROMOTED before certification.",
+      409
+    );
+  }
+  if (stabilizationBefore.creditWalletsProcessed <= 0) {
+    throw new CreditAuthorityValidationError(
+      "Post-promotion Credit activity must exist before certification.",
+      409
+    );
+  }
+  if (
+    stabilizationBefore.mismatchCount !== 0 ||
+    stabilizationBefore.failureCount !== 0 ||
+    stabilizationBefore.criticalMismatchCount !== 0
+  ) {
+    throw new CreditAuthorityValidationError(
+      "Post-promotion mismatches, failures, and critical mismatches must be zero before certification.",
+      409
+    );
+  }
+  if (
+    settlementStatus.authority !== "SERVICE" ||
+    settlementStatus.certificationStatus !== "CERTIFIED"
+  ) {
+    throw new CreditAuthorityValidationError(
+      "Settlement must remain SERVICE and CERTIFIED before Credit certification.",
+      409
+    );
+  }
+  if (
+    ledgerStatus.authority !== "SERVICE" ||
+    ledgerStatus.certificationStatus !== "CERTIFIED"
+  ) {
+    throw new CreditAuthorityValidationError(
+      "Ledger must remain SERVICE and CERTIFIED before Credit certification.",
+      409
+    );
+  }
+
+  const approval = await createAuthorityApprovalRecord({
+    authorityCandidate: "CREDIT",
+    approvalType: "CREDIT_CERTIFICATION",
+    approverUserId: actor.id,
+    approverUsername: actor.username,
+    justification: normalizedJustification,
+    metadata: {
+      acknowledgedWarnings: normalizedAcknowledgedWarnings,
+      certificationCapturedAt: new Date().toISOString(),
+      correlationId: normalizedCorrelationId,
+      certificationStatusBefore: stabilizationBefore.certificationStatus,
+      creditWalletsProcessed: stabilizationBefore.creditWalletsProcessed,
+      reservationsProcessed: stabilizationBefore.reservationsProcessed,
+      exposureUpdatesProcessed: stabilizationBefore.exposureUpdatesProcessed,
+      mismatchCount: stabilizationBefore.mismatchCount,
+      failureCount: stabilizationBefore.failureCount,
+      criticalMismatchCount: stabilizationBefore.criticalMismatchCount,
+      settlementCertificationStatus: settlementStatus.certificationStatus,
+      ledgerCertificationStatus: ledgerStatus.certificationStatus,
+      promotionDecision: promotionDecision.decision,
+    },
+  });
+
+  await createOutboxEvent({
+    eventType: "authority.credit.certified",
+    aggregateType: "authority_candidate",
+    aggregateId: "CREDIT",
+    correlationId: normalizedCorrelationId,
+    payload: {
+      approvalId: approval.id,
+      actorUserId: actor.id,
+      correlationId: normalizedCorrelationId,
+      certifiedAt: approval.createdAt,
+    },
+  });
+
+  const stabilizationAfter = await getCreditStabilizationStatus();
+
+  return {
+    approval,
+    idempotent: false,
+    stabilizationBefore,
+    stabilizationAfter,
   };
 }
