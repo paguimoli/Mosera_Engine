@@ -37,6 +37,7 @@ const steps = [
   "qa:credit-shadow-analysis",
   "qa:credit-lifecycle",
   "qa:credit-promotion-decision",
+  "qa:credit-dry-run-approval",
   "qa:credit-dry-run",
   "qa:credit-promotion-simulation",
   "qa:credit-launch",

@@ -105,14 +105,19 @@ export async function approveAuthorityDryRun({
   promotionDecisionBefore: Awaited<ReturnType<typeof getPromotionDecision>>;
   promotionDecisionAfter: Awaited<ReturnType<typeof getPromotionDecision>>;
 }> {
-  if (domain !== "SETTLEMENT" && domain !== "LEDGER") {
+  if (domain !== "SETTLEMENT" && domain !== "LEDGER" && domain !== "CREDIT") {
     throw new AuthorityApprovalValidationError(
-      "Only SETTLEMENT and LEDGER dry-run approval are supported."
+      "Only SETTLEMENT, LEDGER, and CREDIT dry-run approval are supported."
     );
   }
 
   const authorityCandidate = domain;
-  const label = authorityCandidate === "LEDGER" ? "Ledger" : "Settlement";
+  const label =
+    authorityCandidate === "CREDIT"
+      ? "Credit"
+      : authorityCandidate === "LEDGER"
+        ? "Ledger"
+        : "Settlement";
   const normalizedCorrelationId = normalizeCorrelationId(correlationId);
   if (normalizedCorrelationId) {
     const existingApproval = await findAuthorityApprovalRecordByCorrelationId({
@@ -196,9 +201,11 @@ export async function approveAuthorityDryRun({
 
   await createOutboxEvent({
     eventType:
-      authorityCandidate === "LEDGER"
-        ? "authority.ledger.dry_run.approved"
-        : "authority.dry_run.approved",
+      authorityCandidate === "CREDIT"
+        ? "authority.credit.dry_run.approved"
+        : authorityCandidate === "LEDGER"
+          ? "authority.ledger.dry_run.approved"
+          : "authority.dry_run.approved",
     aggregateType: "authority_candidate",
     aggregateId: authorityCandidate,
     correlationId: normalizedCorrelationId,

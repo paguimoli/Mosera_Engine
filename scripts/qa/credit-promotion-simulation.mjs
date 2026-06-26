@@ -77,9 +77,25 @@ assert(promotion.simulatedAuthority === "SERVICE", "Promotion simulation should 
 assert(promotion.promotionAllowed === false, "Phase 17.0 must not allow promotion yet.", {
   promotion,
 });
-assert(promotion.blockers.includes("Credit DRY_RUN_APPROVAL must exist."), "Promotion simulation should require dry-run approval.", {
-  promotion,
-});
+assert(
+  promotion.blockers.includes("Credit PROMOTION_APPROVAL must exist."),
+  "Promotion simulation should require promotion approval.",
+  { promotion }
+);
+assert(
+  promotion.blockers.includes(
+    "Credit promotion decision must be READY_FOR_CONTROLLED_PROMOTION."
+  ),
+  "Promotion simulation should require controlled-promotion readiness.",
+  { promotion }
+);
+if (promotion.promotionDecision === "READY_FOR_DRY_RUN_APPROVAL") {
+  assert(
+    promotion.blockers.includes("Credit DRY_RUN_APPROVAL must exist."),
+    "Promotion simulation should require dry-run approval before approval capture.",
+    { promotion }
+  );
+}
 assert(promotion.comparisonMode === "ENABLED", "Credit simulation must preserve comparison mode.", {
   promotion,
 });
