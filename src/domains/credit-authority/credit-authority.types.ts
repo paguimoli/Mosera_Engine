@@ -237,3 +237,31 @@ export type CreditRollbackDrill = {
   };
   simulatedAt: string;
 };
+
+export type CreditCertificationStatus =
+  | "NOT_READY"
+  | "READY_FOR_CERTIFICATION"
+  | "CERTIFIED"
+  | "REVIEW_REQUIRED";
+
+export type CreditStabilizationStatus = {
+  domain: "CREDIT";
+  authority: AuthorityValue;
+  comparisonMode: ComparisonMode;
+  promotedAt: string | null;
+  rollbackReady: boolean;
+  rollbackReadiness: DomainReadinessStatus;
+  serviceHealth: ServiceHealthStatus;
+  rollbackTrigger: CreditRollbackTriggerEvaluation;
+  creditWalletsProcessed: number;
+  reservationsProcessed: number;
+  exposureUpdatesProcessed: number;
+  mismatchCount: number;
+  failureCount: number;
+  criticalMismatchCount: number;
+  certificationStatus: CreditCertificationStatus;
+  certificationBlockers: string[];
+  certificationWarnings: string[];
+  recommendation: string;
+  generatedAt: string;
+};

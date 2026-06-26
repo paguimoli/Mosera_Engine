@@ -240,6 +240,33 @@ Before moving beyond post-promotion monitoring, confirm:
 - rollback drill passed without authority or financial-state mutation;
 - post-promotion activity and warnings have been reviewed.
 
+## Activity Certification Readiness
+
+After rollback drill evidence is captured, generate clean post-promotion activity:
+
+```bash
+npm run qa:credit-post-promotion-activity
+```
+
+Then review:
+
+```bash
+npm run ops:credit-certification-status
+```
+
+`READY_FOR_CERTIFICATION` means:
+
+- Credit remains `SERVICE`;
+- comparison remains `ENABLED`;
+- rollback remains `READY`;
+- Credit Wallet Service health is healthy;
+- post-promotion Credit wallet activity exists;
+- post-promotion mismatches are zero;
+- post-promotion failures are zero;
+- post-promotion critical mismatches are zero.
+
+`READY_FOR_CERTIFICATION` is not certification. It only means an operator can proceed to the formal certification capture phase.
+
 ## Next Phase
 
-After post-promotion monitoring and rollback drill evidence, Phase 17.5 should generate and certify real post-promotion Credit activity while Credit Service remains authoritative.
+After post-promotion activity readiness, Phase 17.6 should capture explicit Credit operator certification if evidence remains clean.

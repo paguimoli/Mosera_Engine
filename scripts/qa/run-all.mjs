@@ -43,6 +43,7 @@ const steps = [
   "qa:credit-promotion-simulation",
   "qa:credit-promotion-execution",
   "qa:credit-post-promotion",
+  "qa:credit-post-promotion-activity",
   "qa:credit-launch",
   "qa:worker-observability",
 ];

@@ -26,11 +26,13 @@ import type {
   CreditAuthorityReadiness,
   CreditAuthorityRuntimeRoute,
   CreditAuthorityPromotion,
+  CreditCertificationStatus,
   CreditDryRunEvaluation,
   CreditPostPromotionStatus,
   CreditPromotionStatus,
   CreditRollbackDrill,
   CreditRollbackEvaluationDetails,
+  CreditStabilizationStatus,
   CreditRollbackTriggerEvidenceSource,
   CreditRollbackTriggerEvidenceSummary,
   CreditRollbackTriggerEvaluation,
@@ -1214,5 +1216,144 @@ export async function simulateCreditRollbackDrill({
       correlationId: auditEvent.correlationId ?? null,
     },
     simulatedAt,
+  };
+}
+
+function getCreditCertificationState({
+  authority,
+  comparisonMode,
+  rollbackReadiness,
+  serviceHealthy,
+  creditWalletsProcessed,
+  mismatchCount,
+  failureCount,
+  criticalMismatchCount,
+}: {
+  authority: string;
+  comparisonMode: string;
+  rollbackReadiness: string;
+  serviceHealthy: boolean;
+  creditWalletsProcessed: number;
+  mismatchCount: number;
+  failureCount: number;
+  criticalMismatchCount: number;
+}): {
+  certificationStatus: CreditCertificationStatus;
+  certificationBlockers: string[];
+  certificationWarnings: string[];
+} {
+  const certificationBlockers: string[] = [];
+  const certificationWarnings: string[] = [];
+
+  if (authority !== "SERVICE") {
+    certificationBlockers.push("Credit authority must be SERVICE.");
+  }
+  if (comparisonMode !== "ENABLED") {
+    certificationBlockers.push("Credit comparison mode must be ENABLED.");
+  }
+  if (rollbackReadiness !== "READY") {
+    certificationBlockers.push("Rollback readiness must be READY.");
+  }
+  if (!serviceHealthy) {
+    certificationBlockers.push("Credit Wallet Service health must be healthy.");
+  }
+  if (creditWalletsProcessed <= 0) {
+    certificationBlockers.push(
+      "At least one post-promotion Credit wallet activity must be processed."
+    );
+  }
+  if (mismatchCount > 0) {
+    certificationBlockers.push("Post-promotion mismatch count must be zero.");
+  }
+  if (failureCount > 0) {
+    certificationBlockers.push("Post-promotion failure count must be zero.");
+  }
+  if (criticalMismatchCount > 0) {
+    certificationBlockers.push(
+      "Post-promotion critical mismatch count must be zero."
+    );
+  }
+
+  if (certificationBlockers.length > 0) {
+    return {
+      certificationStatus:
+        mismatchCount > 0 || failureCount > 0 || criticalMismatchCount > 0
+          ? "REVIEW_REQUIRED"
+          : "NOT_READY",
+      certificationBlockers,
+      certificationWarnings,
+    };
+  }
+
+  certificationWarnings.push(
+    "Operator certification is still required before marking Credit as CERTIFIED."
+  );
+
+  return {
+    certificationStatus: "READY_FOR_CERTIFICATION",
+    certificationBlockers,
+    certificationWarnings,
+  };
+}
+
+function getCreditCertificationRecommendation({
+  certificationStatus,
+  rollbackTrigger,
+}: {
+  certificationStatus: CreditCertificationStatus;
+  rollbackTrigger: CreditRollbackTriggerEvaluation;
+}) {
+  if (rollbackTrigger.shouldTriggerRollback) {
+    return "ROLLBACK_RECOMMENDED";
+  }
+  if (certificationStatus === "CERTIFIED") {
+    return "CERTIFIED";
+  }
+  if (certificationStatus === "READY_FOR_CERTIFICATION") {
+    return "READY_FOR_CERTIFICATION";
+  }
+  if (certificationStatus === "REVIEW_REQUIRED") {
+    return "REVIEW_REQUIRED";
+  }
+
+  return "NOT_READY";
+}
+
+export async function getCreditStabilizationStatus(): Promise<CreditStabilizationStatus> {
+  const postPromotionStatus = await getCreditPostPromotionStatus();
+  const certification = getCreditCertificationState({
+    authority: postPromotionStatus.authority,
+    comparisonMode: postPromotionStatus.comparisonMode,
+    rollbackReadiness: postPromotionStatus.rollbackReadiness,
+    serviceHealthy: postPromotionStatus.serviceHealth.available,
+    creditWalletsProcessed: postPromotionStatus.creditWalletsProcessed,
+    mismatchCount: postPromotionStatus.mismatchCount,
+    failureCount: postPromotionStatus.failureCount,
+    criticalMismatchCount: postPromotionStatus.criticalMismatchCount,
+  });
+
+  return {
+    domain: "CREDIT",
+    authority: postPromotionStatus.authority,
+    comparisonMode: postPromotionStatus.comparisonMode,
+    promotedAt: postPromotionStatus.promotedAt,
+    rollbackReady: postPromotionStatus.rollbackReady,
+    rollbackReadiness: postPromotionStatus.rollbackReadiness,
+    serviceHealth: postPromotionStatus.serviceHealth,
+    rollbackTrigger: postPromotionStatus.rollbackTrigger,
+    creditWalletsProcessed: postPromotionStatus.creditWalletsProcessed,
+    reservationsProcessed: postPromotionStatus.reservationsProcessed,
+    exposureUpdatesProcessed: postPromotionStatus.exposureUpdatesProcessed,
+    mismatchCount: postPromotionStatus.mismatchCount,
+    failureCount: postPromotionStatus.failureCount,
+    criticalMismatchCount: postPromotionStatus.criticalMismatchCount,
+    certificationStatus: certification.certificationStatus,
+    certificationBlockers: certification.certificationBlockers,
+    certificationWarnings: certification.certificationWarnings,
+    recommendation: getCreditCertificationRecommendation({
+      certificationStatus: certification.certificationStatus,
+      rollbackTrigger: postPromotionStatus.rollbackTrigger,
+    }),
+    generatedAt: nowIso(),
   };
 }
