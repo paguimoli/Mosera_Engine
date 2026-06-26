@@ -191,6 +191,55 @@ Expected:
 
 After controlled promotion, operators should continue monitoring Credit comparison and rollback signals. Intentional QA evidence must remain visible in lifecycle reports, and post-promotion evidence should be reviewed before any future Credit certification phase.
 
+Use:
+
+```bash
+npm run ops:credit-post-promotion-status
+```
+
+Review:
+
+- Credit authority is `SERVICE`;
+- comparison mode is `ENABLED`;
+- Credit Wallet Service health is available;
+- rollback readiness is `READY`;
+- rollback trigger is not active;
+- post-promotion mismatches, failures, and critical mismatches are reviewed;
+- recommendation is understood by the operator.
+
+`REVIEW_REQUIRED` means rollback is still available but an operator must review post-promotion activity, aligned evidence, or warnings before proceeding. With zero post-promotion Credit activity, `REVIEW_REQUIRED` is expected.
+
+## Rollback Drill
+
+Run a simulation-only drill:
+
+```bash
+npm run ops:simulate-credit-rollback-drill -- \
+  --correlation-id "change-credit-rollback-drill-001"
+```
+
+The drill:
+
+- emits `authority.credit.rollback.drill.simulated`;
+- captures actor user id, correlation id, and created timestamp in outbox payload;
+- validates rollback prerequisites;
+- does not change Credit authority;
+- does not change balances, reservations, exposure, wallet calculations, Settlement, or Ledger.
+
+Operators should preserve drill output with the promotion evidence package.
+
+## Phase 17.4 Exit Criteria
+
+Before moving beyond post-promotion monitoring, confirm:
+
+- Settlement remains `SERVICE` and `CERTIFIED`;
+- Ledger remains `SERVICE` and `CERTIFIED`;
+- Credit remains `SERVICE`;
+- comparison remains `ENABLED`;
+- rollback readiness remains `READY`;
+- rollback drill passed without authority or financial-state mutation;
+- post-promotion activity and warnings have been reviewed.
+
 ## Next Phase
 
-After controlled promotion, Phase 17.4 should validate post-promotion Credit activity and rollback evidence while Credit Service remains authoritative.
+After post-promotion monitoring and rollback drill evidence, Phase 17.5 should generate and certify real post-promotion Credit activity while Credit Service remains authoritative.

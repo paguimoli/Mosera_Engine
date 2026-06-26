@@ -147,3 +147,93 @@ export type CreditPromotionStatus = {
   promotionApprovalId: string | null;
   evaluatedAt: string;
 };
+
+export type CreditRollbackTriggerEvidenceSource =
+  | "RAW_EVIDENCE"
+  | "PROMOTION_EVIDENCE"
+  | "POST_PROMOTION_EVIDENCE";
+
+export type CreditRollbackTriggerEvidenceSummary = {
+  source: CreditRollbackTriggerEvidenceSource;
+  totalRuns: number;
+  matches: number;
+  mismatches: number;
+  failures: number;
+  criticalMismatchCount: number;
+  mismatchRate: number;
+  failureRate: number;
+  readiness: DomainReadinessStatus;
+  effectiveMismatchCount: number;
+  effectiveFailureCount: number;
+  excludedMismatchCount: number;
+  excludedFailureCount: number;
+  reasons: string[];
+};
+
+export type CreditRollbackEvaluationDetails = {
+  triggerSource: CreditRollbackTriggerEvidenceSource;
+  rawTriggerActive: boolean;
+  promotionTriggerActive: boolean;
+  postPromotionTriggerActive: boolean;
+  blockers: string[];
+  warnings: string[];
+  evaluatedAt: string;
+};
+
+export type CreditPostPromotionStatus = {
+  domain: "CREDIT";
+  authority: AuthorityValue;
+  comparisonMode: ComparisonMode;
+  promotedAt: string | null;
+  serviceHealth: ServiceHealthStatus;
+  rollbackReady: boolean;
+  rollbackReadiness: DomainReadinessStatus;
+  rollbackTrigger: CreditRollbackTriggerEvaluation;
+  triggerSource: CreditRollbackTriggerEvidenceSource;
+  rawEvidenceSummary: CreditRollbackTriggerEvidenceSummary;
+  promotionEvidenceSummary: CreditRollbackTriggerEvidenceSummary;
+  postPromotionEvidenceSummary: CreditRollbackTriggerEvidenceSummary;
+  rollbackEvaluationDetails: CreditRollbackEvaluationDetails;
+  latestCreditShadowComparison: {
+    id: string;
+    comparisonStatus: string;
+    operationType: string;
+    walletId: string | null;
+    reservationId: string | null;
+    correlationId: string | null;
+    createdAt: string;
+  } | null;
+  creditWalletsProcessed: number;
+  reservationsProcessed: number;
+  exposureUpdatesProcessed: number;
+  mismatchCount: number;
+  failureCount: number;
+  criticalMismatchCount: number;
+  recommendation: string;
+  evaluatedAt: string;
+};
+
+export type CreditRollbackDrill = {
+  domain: "CREDIT";
+  mode: "SIMULATION";
+  authorityBefore: AuthorityValue;
+  authorityAfter: AuthorityValue;
+  comparisonMode: ComparisonMode;
+  rollbackReadiness: DomainReadinessStatus;
+  serviceHealth: ServiceHealthStatus;
+  validationResults: Array<{
+    name: string;
+    passed: boolean;
+    message: string;
+  }>;
+  blockers: string[];
+  warnings: string[];
+  drillPassed: boolean;
+  authorityChanged: boolean;
+  auditEvent: {
+    id: string;
+    eventType: string;
+    correlationId: string | null;
+  };
+  simulatedAt: string;
+};

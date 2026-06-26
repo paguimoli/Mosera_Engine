@@ -100,6 +100,26 @@ export async function getCreditShadowMismatches(
   return listShadowMismatches(filters);
 }
 
+export async function getCreditShadowRuns(filters: CreditShadowListFilters = {}) {
+  const runs = await listShadowRuns();
+  const from = filters.from ? new Date(filters.from).getTime() : null;
+  const to = filters.to ? new Date(filters.to).getTime() : null;
+  const filteredRuns = runs.filter((run) => {
+    const createdAt = new Date(run.createdAt).getTime();
+
+    if (from !== null && createdAt < from) return false;
+    if (to !== null && createdAt > to) return false;
+    if (filters.reservationId && run.reservationId !== filters.reservationId) {
+      return false;
+    }
+    if (filters.ticketId && run.ticketId !== filters.ticketId) return false;
+
+    return true;
+  });
+
+  return filteredRuns.slice(0, filters.limit ?? 100);
+}
+
 export async function getCreditShadowFailures(filters: CreditShadowListFilters) {
   return listShadowFailures(filters);
 }

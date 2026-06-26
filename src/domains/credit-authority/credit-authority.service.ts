@@ -14,7 +14,9 @@ import {
 import type { ClassifiedShadowEvidence } from "../shadow-analysis/shadow-analysis.types";
 import {
   getCreditShadowMismatches,
+  getCreditShadowRuns,
   getCreditShadowSummary,
+  getCreditShadowFailures,
 } from "../credit-shadow/credit-shadow-reporting.service";
 import { listCreditAuthorityApprovalRecords } from "./credit-authority.repository";
 import type {
@@ -25,7 +27,12 @@ import type {
   CreditAuthorityRuntimeRoute,
   CreditAuthorityPromotion,
   CreditDryRunEvaluation,
+  CreditPostPromotionStatus,
   CreditPromotionStatus,
+  CreditRollbackDrill,
+  CreditRollbackEvaluationDetails,
+  CreditRollbackTriggerEvidenceSource,
+  CreditRollbackTriggerEvidenceSummary,
   CreditRollbackTriggerEvaluation,
   CreditSimulationResult,
 } from "./credit-authority.types";
@@ -760,5 +767,452 @@ export async function getCreditPromotionStatus(): Promise<CreditPromotionStatus>
       promotionDecision.approvalState.promotionApproval?.id ??
       null,
     evaluatedAt: nowIso(),
+  };
+}
+
+function getPostPromotionRecommendation({
+  authority,
+  comparisonMode,
+  rollbackReady,
+  rollbackTrigger,
+  serviceAvailable,
+  postPromotionActivityCount,
+}: {
+  authority: string;
+  comparisonMode: string;
+  rollbackReady: boolean;
+  rollbackTrigger: CreditPostPromotionStatus["rollbackTrigger"];
+  serviceAvailable: boolean;
+  postPromotionActivityCount: number;
+}) {
+  if (authority !== "SERVICE") {
+    return "BLOCKED: Credit Wallet is not currently service-authoritative.";
+  }
+  if (comparisonMode !== "ENABLED") {
+    return "BLOCKED: Credit comparison mode must be re-enabled.";
+  }
+  if (!serviceAvailable) {
+    return "ROLLBACK_RECOMMENDED: Credit Wallet Service health is unavailable.";
+  }
+  if (!rollbackReady) {
+    return "REVIEW_REQUIRED: Rollback readiness is not READY.";
+  }
+  if (rollbackTrigger.shouldTriggerRollback) {
+    return "ROLLBACK_RECOMMENDED: Aligned rollback trigger conditions are active.";
+  }
+  if (postPromotionActivityCount === 0) {
+    return "REVIEW_REQUIRED: Post-promotion Credit activity has not been observed yet.";
+  }
+  if (rollbackTrigger.status === "WARNING") {
+    return "REVIEW_REQUIRED: Aligned rollback evidence needs operator review.";
+  }
+
+  return "CONTINUE_MONITORING: Credit Wallet Service remains authoritative with aligned rollback evidence ready.";
+}
+
+function summarizeReadiness({
+  source,
+  totalRuns,
+  matches,
+  mismatches,
+  failures,
+  criticalMismatchCount,
+  effectiveMismatchCount,
+  effectiveFailureCount,
+  excludedMismatchCount,
+  excludedFailureCount,
+  reasons,
+}: Omit<
+  CreditRollbackTriggerEvidenceSummary,
+  "mismatchRate" | "failureRate" | "readiness"
+>): CreditRollbackTriggerEvidenceSummary {
+  const totalEvents = totalRuns + failures;
+  const mismatchRate = rate(mismatches, totalEvents);
+  const failureRate = rate(failures, totalEvents);
+  let readiness: CreditRollbackTriggerEvidenceSummary["readiness"] = "READY";
+
+  if (criticalMismatchCount > 0 || mismatches > 0 || failures > 0) {
+    readiness = criticalMismatchCount > 0 ? "BLOCKED" : "WARNING";
+  }
+
+  return {
+    source,
+    totalRuns,
+    matches,
+    mismatches,
+    failures,
+    criticalMismatchCount,
+    mismatchRate,
+    failureRate,
+    readiness,
+    effectiveMismatchCount,
+    effectiveFailureCount,
+    excludedMismatchCount,
+    excludedFailureCount,
+    reasons: reasons.length > 0 ? reasons : [`${source} is within ready thresholds.`],
+  };
+}
+
+function rawEvidenceHasTrigger(summary: CreditRollbackTriggerEvidenceSummary) {
+  return summary.readiness !== "READY";
+}
+
+function effectiveEvidenceHasTrigger(summary: CreditRollbackTriggerEvidenceSummary) {
+  return summary.readiness === "BLOCKED";
+}
+
+function isOnOrAfter(value: string, floor: string | null) {
+  if (!floor) return true;
+
+  return new Date(value).getTime() >= new Date(floor).getTime();
+}
+
+function uniqueShadowRunCount(evidence: ClassifiedShadowEvidence[]) {
+  return new Set(
+    evidence
+      .map((item) => item.shadowRunId)
+      .filter((shadowRunId): shadowRunId is string => Boolean(shadowRunId))
+  ).size;
+}
+
+function getAlignedRollbackEvaluation({
+  authority,
+  rollbackReady,
+  rawEvidence,
+  promotionEvidence,
+  postPromotionEvidence,
+}: {
+  authority: string;
+  rollbackReady: boolean;
+  rawEvidence: CreditRollbackTriggerEvidenceSummary;
+  promotionEvidence: CreditRollbackTriggerEvidenceSummary;
+  postPromotionEvidence: CreditRollbackTriggerEvidenceSummary;
+}): {
+  rollbackTrigger: CreditPostPromotionStatus["rollbackTrigger"];
+  triggerSource: CreditRollbackTriggerEvidenceSource;
+  details: CreditRollbackEvaluationDetails;
+} {
+  const blockers: string[] = [];
+  const warnings: string[] = [];
+  const rawTriggerActive = rawEvidenceHasTrigger(rawEvidence);
+  const promotionTriggerActive = effectiveEvidenceHasTrigger(promotionEvidence);
+  const postPromotionTriggerActive = effectiveEvidenceHasTrigger(postPromotionEvidence);
+  const triggerSource: CreditRollbackTriggerEvidenceSource =
+    authority === "SERVICE" ? "POST_PROMOTION_EVIDENCE" : "PROMOTION_EVIDENCE";
+
+  if (!rollbackReady) {
+    blockers.push("Rollback readiness is not READY.");
+  }
+  if (postPromotionTriggerActive) {
+    blockers.push("Post-promotion evidence has blocking mismatches or failures.");
+  }
+  if (promotionTriggerActive) {
+    blockers.push("Promotion lifecycle evidence has blocking mismatches or failures.");
+  }
+  if (rawTriggerActive && !promotionTriggerActive && !postPromotionTriggerActive) {
+    warnings.push(
+      "Raw historical evidence is not READY but is excluded from aligned rollback trigger evaluation."
+    );
+  }
+  if (postPromotionEvidence.readiness === "WARNING") {
+    warnings.push("Post-promotion evidence has warning-level mismatches or failures.");
+  }
+
+  const shouldTriggerRollback = authority === "SERVICE" && blockers.length > 0;
+  const status: CreditRollbackTriggerEvaluation["status"] =
+    shouldTriggerRollback ? "BLOCKED" : warnings.length > 0 ? "WARNING" : "READY";
+  const reasons =
+    blockers.length > 0 || warnings.length > 0
+      ? [...blockers, ...warnings]
+      : ["Aligned rollback evidence is within ready thresholds."];
+
+  return {
+    triggerSource,
+    rollbackTrigger: {
+      shouldTriggerRollback,
+      status,
+      reasons,
+    },
+    details: {
+      triggerSource,
+      rawTriggerActive,
+      promotionTriggerActive,
+      postPromotionTriggerActive,
+      blockers,
+      warnings,
+      evaluatedAt: nowIso(),
+    },
+  };
+}
+
+export async function getCreditPostPromotionStatus(): Promise<CreditPostPromotionStatus> {
+  const [promotionStatus, rollbackReadiness, shadowAnalysis] =
+    await Promise.all([
+      getCreditPromotionStatus(),
+      validateRollbackReadiness(),
+      getShadowAnalysisSummary("all"),
+    ]);
+  const promotedAt = promotionStatus.promotedAt;
+  const sinceFilter = promotedAt ? { from: promotedAt, limit: 10000 } : { limit: 10000 };
+  const [
+    runs,
+    mismatches,
+    failures,
+    classifiedMismatches,
+    classifiedFailures,
+  ] = await Promise.all([
+    getCreditShadowRuns(sinceFilter),
+    getCreditShadowMismatches(sinceFilter),
+    getCreditShadowFailures(sinceFilter),
+    listShadowAnalysisMismatches("all"),
+    listShadowAnalysisFailures("all"),
+  ]);
+  const creditRollback = creditRollbackReadiness(rollbackReadiness);
+  const creditEvidence = shadowAnalysis.domains.credit;
+  const rawEvidenceSummary = summarizeReadiness({
+    source: "RAW_EVIDENCE",
+    totalRuns: creditEvidence.rawReadiness.totalRuns,
+    matches: creditEvidence.rawReadiness.matches,
+    mismatches: creditEvidence.rawReadiness.mismatches,
+    failures: creditEvidence.rawReadiness.failures,
+    criticalMismatchCount: creditEvidence.rawReadiness.criticalMismatchCount,
+    effectiveMismatchCount: creditEvidence.rawReadiness.mismatches,
+    effectiveFailureCount: creditEvidence.rawReadiness.failures,
+    excludedMismatchCount:
+      creditEvidence.rawReadiness.mismatches -
+      creditEvidence.promotionReadiness.mismatches,
+    excludedFailureCount:
+      creditEvidence.rawReadiness.failures -
+      creditEvidence.promotionReadiness.failures,
+    reasons: creditEvidence.rawReadiness.reasons,
+  });
+  const promotionEvidenceSummary = summarizeReadiness({
+    source: "PROMOTION_EVIDENCE",
+    totalRuns: creditEvidence.promotionReadiness.totalRuns,
+    matches: creditEvidence.promotionReadiness.matches,
+    mismatches: creditEvidence.promotionReadiness.mismatches,
+    failures: creditEvidence.promotionReadiness.failures,
+    criticalMismatchCount: creditEvidence.promotionReadiness.criticalMismatchCount,
+    effectiveMismatchCount: creditEvidence.promotionReadiness.mismatches,
+    effectiveFailureCount: creditEvidence.promotionReadiness.failures,
+    excludedMismatchCount:
+      creditEvidence.rawReadiness.mismatches -
+      creditEvidence.promotionReadiness.mismatches,
+    excludedFailureCount:
+      creditEvidence.rawReadiness.failures -
+      creditEvidence.promotionReadiness.failures,
+    reasons: creditEvidence.promotionReadiness.reasons,
+  });
+  const postPromotionClassifiedMismatches = classifiedMismatches.filter(
+    (mismatch) =>
+      mismatch.domain === "CREDIT" && isOnOrAfter(mismatch.createdAt, promotedAt)
+  );
+  const postPromotionClassifiedFailures = classifiedFailures.filter(
+    (failure) =>
+      failure.domain === "CREDIT" && isOnOrAfter(failure.createdAt, promotedAt)
+  );
+  const postPromotionEffectiveMismatches =
+    postPromotionClassifiedMismatches.filter(lifecycleParticipatesInRollback);
+  const postPromotionEffectiveFailures =
+    postPromotionClassifiedFailures.filter(lifecycleParticipatesInRollback);
+  const postPromotionEffectiveMismatchCount = uniqueShadowRunCount(
+    postPromotionEffectiveMismatches
+  );
+  const postPromotionEffectiveFailureCount =
+    postPromotionEffectiveFailures.length;
+  const postPromotionMatches = runs.filter(
+    (run) => run.comparisonStatus === "MATCH"
+  ).length;
+  const postPromotionCriticalMismatchCount = postPromotionEffectiveMismatches.filter(
+    (mismatch) => mismatch.severity === "CRITICAL"
+  ).length;
+  const postPromotionEvidenceSummary = summarizeReadiness({
+    source: "POST_PROMOTION_EVIDENCE",
+    totalRuns: runs.length,
+    matches: postPromotionMatches,
+    mismatches: postPromotionEffectiveMismatchCount,
+    failures: postPromotionEffectiveFailureCount,
+    criticalMismatchCount: postPromotionCriticalMismatchCount,
+    effectiveMismatchCount: postPromotionEffectiveMismatchCount,
+    effectiveFailureCount: postPromotionEffectiveFailureCount,
+    excludedMismatchCount: Math.max(
+      0,
+      mismatches.length - postPromotionEffectiveMismatches.length
+    ),
+    excludedFailureCount: Math.max(
+      0,
+      failures.length - postPromotionEffectiveFailureCount
+    ),
+    reasons:
+      postPromotionEffectiveMismatchCount === 0 &&
+      postPromotionEffectiveFailureCount === 0
+        ? ["Post-promotion evidence is within ready thresholds."]
+        : ["Post-promotion lifecycle-effective evidence contains mismatches or failures."],
+  });
+  const alignedEvaluation = getAlignedRollbackEvaluation({
+    authority: promotionStatus.authority,
+    rollbackReady: promotionStatus.rollbackReady,
+    rawEvidence: rawEvidenceSummary,
+    promotionEvidence: promotionEvidenceSummary,
+    postPromotionEvidence: postPromotionEvidenceSummary,
+  });
+  const creditWalletsProcessed = new Set(
+    runs.map((run) => run.walletId).filter((walletId): walletId is string => Boolean(walletId))
+  ).size;
+  const reservationsProcessed = new Set(
+    runs
+      .map((run) => run.reservationId)
+      .filter((reservationId): reservationId is string => Boolean(reservationId))
+  ).size;
+  const exposureUpdatesProcessed = runs.filter(
+    (run) =>
+      run.shadowRemainingExposure !== null ||
+      run.monolithRemainingExposure !== null ||
+      run.operationType === "RESERVE" ||
+      run.operationType === "RELEASE"
+  ).length;
+  const recommendation = getPostPromotionRecommendation({
+    authority: promotionStatus.authority,
+    comparisonMode: promotionStatus.comparisonMode,
+    rollbackReady: promotionStatus.rollbackReady,
+    rollbackTrigger: alignedEvaluation.rollbackTrigger,
+    serviceAvailable: creditRollback.serviceHealth.available,
+    postPromotionActivityCount: runs.length,
+  });
+  const latestRun = runs[0] ?? null;
+
+  return {
+    domain: "CREDIT",
+    authority: promotionStatus.authority,
+    comparisonMode: promotionStatus.comparisonMode,
+    promotedAt,
+    serviceHealth: creditRollback.serviceHealth,
+    rollbackReady: promotionStatus.rollbackReady,
+    rollbackReadiness: creditRollback.rollbackStatus,
+    rollbackTrigger: alignedEvaluation.rollbackTrigger,
+    triggerSource: alignedEvaluation.triggerSource,
+    rawEvidenceSummary,
+    promotionEvidenceSummary,
+    postPromotionEvidenceSummary,
+    rollbackEvaluationDetails: alignedEvaluation.details,
+    latestCreditShadowComparison: latestRun
+      ? {
+          id: latestRun.id,
+          comparisonStatus: latestRun.comparisonStatus,
+          operationType: latestRun.operationType,
+          walletId: latestRun.walletId ?? null,
+          reservationId: latestRun.reservationId ?? null,
+          correlationId: latestRun.correlationId ?? null,
+          createdAt: latestRun.createdAt,
+        }
+      : null,
+    creditWalletsProcessed,
+    reservationsProcessed,
+    exposureUpdatesProcessed,
+    mismatchCount: postPromotionEffectiveMismatchCount,
+    failureCount: postPromotionEffectiveFailureCount,
+    criticalMismatchCount: postPromotionCriticalMismatchCount,
+    recommendation,
+    evaluatedAt: nowIso(),
+  };
+}
+
+export async function simulateCreditRollbackDrill({
+  actor,
+  mode,
+  correlationId,
+}: {
+  actor: AuthenticatedUser;
+  mode: unknown;
+  correlationId?: unknown;
+}): Promise<CreditRollbackDrill> {
+  if (mode !== "SIMULATION") {
+    throw new CreditAuthorityValidationError(
+      "Credit rollback drill only supports SIMULATION mode."
+    );
+  }
+
+  const normalizedCorrelationId = normalizeCorrelationId(correlationId);
+  const authorityBefore = getAuthorityStatus().credit;
+  const rollbackReadiness = await validateRollbackReadiness();
+  const creditRollback = creditRollbackReadiness(rollbackReadiness);
+  const validationResults = [
+    validationResult(
+      "AUTHORITY_SERVICE",
+      authorityBefore.authority === "SERVICE",
+      "Credit authority must be SERVICE before rollback drill."
+    ),
+    validationResult(
+      "MONOLITH_PATH_AVAILABLE",
+      creditRollback.monolithPathAvailable,
+      "Credit monolith path must be available."
+    ),
+    validationResult(
+      "SERVICE_PATH_AVAILABLE",
+      creditRollback.serviceHealth.available,
+      "Credit Wallet Service path must be available."
+    ),
+    validationResult(
+      "AUTHORITY_CONTROLS_AVAILABLE",
+      authorityBefore.authority === "MONOLITH" ||
+        authorityBefore.authority === "SERVICE",
+      "Credit authority controls must be available."
+    ),
+    validationResult(
+      "COMPARISON_ENABLED",
+      authorityBefore.comparisonMode === "ENABLED",
+      "Credit comparison mode must be ENABLED."
+    ),
+    validationResult(
+      "ROLLBACK_READY",
+      creditRollback.rollbackStatus === "READY",
+      "Credit rollback readiness must be READY."
+    ),
+  ];
+  const blockers = collectBlockers(validationResults);
+  const warnings = creditRollback.reasons.filter(
+    (reason) => reason !== "Authority and rollback controls are within ready thresholds."
+  );
+  const simulatedAt = nowIso();
+  const auditEvent = await createOutboxEvent({
+    eventType: "authority.credit.rollback.drill.simulated",
+    aggregateType: "authority_candidate",
+    aggregateId: "CREDIT",
+    correlationId: normalizedCorrelationId,
+    payload: {
+      domain: "CREDIT",
+      mode: "SIMULATION",
+      actorUserId: actor.id,
+      authorityState: authorityBefore.authority,
+      comparisonMode: authorityBefore.comparisonMode,
+      rollbackReadiness: creditRollback.rollbackStatus,
+      drillPassed: blockers.length === 0,
+      blockers,
+      warnings,
+      createdAt: simulatedAt,
+      simulatedAt,
+    },
+  });
+  const authorityAfter = getAuthorityStatus().credit;
+
+  return {
+    domain: "CREDIT",
+    mode: "SIMULATION",
+    authorityBefore: authorityBefore.authority,
+    authorityAfter: authorityAfter.authority,
+    comparisonMode: authorityAfter.comparisonMode,
+    rollbackReadiness: creditRollback.rollbackStatus,
+    serviceHealth: creditRollback.serviceHealth,
+    validationResults,
+    blockers,
+    warnings,
+    drillPassed: blockers.length === 0,
+    authorityChanged: authorityBefore.authority !== authorityAfter.authority,
+    auditEvent: {
+      id: auditEvent.id,
+      eventType: auditEvent.eventType,
+      correlationId: auditEvent.correlationId ?? null,
+    },
+    simulatedAt,
   };
 }
