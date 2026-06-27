@@ -26,7 +26,13 @@ function latestApproval(
   approvals: AuthorityApprovalRecord[],
   approvalType: AuthorityApprovalType
 ) {
-  return approvals.find((approval) => approval.approvalType === approvalType) ?? null;
+  return (
+    approvals.find(
+      (approval) =>
+        approval.approvalType === approvalType &&
+        approval.metadata?.remediationWorkflow !== "LEDGER_REFERENCE_REMEDIATION"
+    ) ?? null
+  );
 }
 
 function toEvidenceReadiness(input: {

@@ -53,6 +53,8 @@ npm run ops:ledger-reference-audit
 npm run ops:ledger-immutability
 npm run ops:ledger-reference-remediation
 npm run ops:ledger-immutability-verification
+npm run ops:ledger-remediation-queue
+npm run ops:ledger-remediation-summary
 ```
 
 Use these after the baseline report when the system is promoted and certified
@@ -90,6 +92,38 @@ destructive trigger creation was attempted.
 the reference audit. It lists missing references, probable matches, confidence,
 and recommended remediation. The report never mutates historical financial
 records and every item is marked `mutationAllowed: false`.
+
+### Operator-Reviewed Remediation Workflow
+
+Phase 18.3 adds an operator governance queue for reference remediation
+candidates. Run:
+
+```bash
+npm run ops:ledger-remediation-queue
+npm run ops:ledger-remediation-summary
+```
+
+The queue is projected from evidence and append-only approval records. It is not
+a repair job and it does not update financial tables.
+
+To record an operator decision:
+
+```bash
+npm run ops:approve-ledger-remediation -- \
+  --remediation-id "<remediation-id>" \
+  --decision "APPROVE" \
+  --justification "Operator reviewed the evidence and approved planning only." \
+  --correlation-id "<stable-correlation-id>"
+```
+
+Allowed decisions are `START_REVIEW`, `APPROVE`, `REJECT`, and `COMPLETE`.
+Approvals are idempotent by correlation id and emit the append-only outbox event
+`operations.ledger_reference_remediation.review_recorded`.
+
+`COMPLETED` means the investigation is formally closed. It does not mean ledger
+entries, settlements, credit records, references, balances, reservations,
+exposure, or accounting rows were changed. Historical repair remains out of
+scope and requires a separate approved phase.
 
 ### Outbox, Queue, And Worker Evidence
 
@@ -153,6 +187,7 @@ Run:
 npm run qa:post-extraction-hardening
 npm run qa:evidence-hardening
 npm run qa:ledger-remediation-hardening
+npm run qa:ledger-remediation-workflow
 npm run qa:all
 ```
 
@@ -166,6 +201,8 @@ Expected:
 - evidence reports are generated;
 - ledger immutability/reference remediation evidence is generated without
   financial mutations;
+- ledger remediation queue, approval capture, outbox evidence, and advisory
+  execution planning work without financial mutations;
 - golden path passes;
 - full QA passes.
 
