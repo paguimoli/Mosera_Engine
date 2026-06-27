@@ -37,9 +37,16 @@ function getMessageMetadata(rawMessage: ConsumeMessage, message?: QueueMessage) 
   };
 }
 
+function getPositiveNumberEnv(name: string, fallback: number) {
+  const value = Number(process.env[name]);
+
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 export class RabbitMqQueueConsumer {
   private connection: ChannelModel | null = null;
   private channel: Channel | null = null;
+  private heartbeatIntervals = new Set<ReturnType<typeof setInterval>>();
 
   async consume({
     routing,
@@ -83,6 +90,20 @@ export class RabbitMqQueueConsumer {
         routingKey: routing.routingKey,
       },
     });
+    const heartbeatInterval = setInterval(() => {
+      void safeRecordWorkerHeartbeat({
+        workerName: resolvedWorkerName,
+        workloadCategory: routing.workloadCategory,
+        instanceId: resolvedInstanceId,
+        status: "ACTIVE",
+        metadata: {
+          queue: routing.queue,
+          routingKey: routing.routingKey,
+          idle: true,
+        },
+      });
+    }, getPositiveNumberEnv("WORKER_HEARTBEAT_INTERVAL_MS", 30000));
+    this.heartbeatIntervals.add(heartbeatInterval);
 
     await channel.consume(
       routing.queue,
@@ -230,6 +251,18 @@ export class RabbitMqQueueConsumer {
         noAck: false,
       }
     );
+  }
+
+  async close(): Promise<void> {
+    for (const heartbeatInterval of this.heartbeatIntervals) {
+      clearInterval(heartbeatInterval);
+    }
+    this.heartbeatIntervals.clear();
+
+    await this.channel?.close().catch(() => undefined);
+    await this.connection?.close().catch(() => undefined);
+    this.channel = null;
+    this.connection = null;
   }
 
   private async getChannel(): Promise<Channel> {

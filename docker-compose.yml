@@ -1,5 +1,27 @@
+x-worker-environment: &worker-environment
+  NODE_ENV: production
+  SUPABASE_URL: ${SUPABASE_URL:-${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:54321}}
+  SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-dummy-service-role-key}
+  SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-dummy-anon-key}
+  RABBITMQ_URL: ${RABBITMQ_URL:-amqp://lottery:lottery_dev_password@rabbitmq:5672}
+  RABBITMQ_EXCHANGE_NAME: ${RABBITMQ_EXCHANGE_NAME:-lottery.events}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+  WORKER_HEARTBEAT_INTERVAL_MS: ${WORKER_HEARTBEAT_INTERVAL_MS:-30000}
+  OUTBOX_DISPATCH_BATCH_SIZE: ${OUTBOX_DISPATCH_BATCH_SIZE:-50}
+  OUTBOX_DISPATCH_IDLE_INTERVAL_MS: ${OUTBOX_DISPATCH_IDLE_INTERVAL_MS:-5000}
+  OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS: ${OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS:-250}
+
+x-worker-service: &worker-service
+  image: lottery-app-runtime
+  restart: unless-stopped
+  environment: *worker-environment
+  depends_on:
+    - rabbitmq
+    - redis
+
 services:
   app:
+    image: lottery-app-runtime
     build:
       context: .
       dockerfile: Dockerfile
@@ -38,6 +60,42 @@ services:
     depends_on:
       - rabbitmq
       - redis
+
+  outbox-dispatcher:
+    <<: *worker-service
+    command: ["npm", "run", "worker:outbox-dispatcher"]
+
+  worker-critical-financial:
+    <<: *worker-service
+    command: ["npm", "run", "worker:critical-financial"]
+
+  worker-ticket-lifecycle:
+    <<: *worker-service
+    command: ["npm", "run", "worker:ticket-lifecycle"]
+
+  worker-settlement:
+    <<: *worker-service
+    command: ["npm", "run", "worker:settlement"]
+
+  worker-accounting:
+    <<: *worker-service
+    command: ["npm", "run", "worker:accounting"]
+
+  worker-commission:
+    <<: *worker-service
+    command: ["npm", "run", "worker:commission"]
+
+  worker-reconciliation:
+    <<: *worker-service
+    command: ["npm", "run", "worker:reconciliation"]
+
+  worker-operational-access:
+    <<: *worker-service
+    command: ["npm", "run", "worker:operational-access"]
+
+  worker-reporting:
+    <<: *worker-service
+    command: ["npm", "run", "worker:reporting"]
 
   dotnet-template-service:
     build:

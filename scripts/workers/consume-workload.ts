@@ -34,6 +34,32 @@ async function main() {
   const topology = getQueueTopologyEntry(category);
   const workerName = topology.consumerOwner;
   const consumer = new RabbitMqQueueConsumer();
+  let shuttingDown = false;
+
+  async function shutdown(signal: NodeJS.Signals) {
+    if (shuttingDown) {
+      return;
+    }
+
+    shuttingDown = true;
+    logger.info({
+      message: "RabbitMQ workload consumer shutdown requested.",
+      metadata: {
+        signal,
+        workloadCategory: category,
+        queue: routing.queue,
+      },
+    });
+    await consumer.close();
+    process.exit(0);
+  }
+
+  process.once("SIGTERM", (signal) => {
+    void shutdown(signal);
+  });
+  process.once("SIGINT", (signal) => {
+    void shutdown(signal);
+  });
 
   logger.info({
     message: "RabbitMQ workload consumer starting.",

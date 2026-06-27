@@ -5,7 +5,7 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY package.json package-lock.json* ./
-RUN npm install
+RUN npm install --include=dev
 
 FROM node:20-bookworm-slim AS build
 
@@ -34,7 +34,7 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY package.json package-lock.json* ./
-RUN npm install --omit=dev
+RUN npm install --include=dev
 
 FROM node:20-bookworm-slim AS runtime
 
@@ -49,6 +49,13 @@ COPY --from=build --chown=node:node /app/.next ./.next
 COPY --from=build --chown=node:node /app/public ./public
 COPY --from=build --chown=node:node /app/package.json ./package.json
 COPY --from=build --chown=node:node /app/next.config.ts ./next.config.ts
+COPY --from=build --chown=node:node /app/eslint.config.mjs ./eslint.config.mjs
+COPY --from=build --chown=node:node /app/tsconfig.json ./tsconfig.json
+COPY --from=build --chown=node:node /app/next-env.d.ts ./next-env.d.ts
+COPY --from=build --chown=node:node /app/postcss.config.mjs ./postcss.config.mjs
+COPY --from=build --chown=node:node /app/app ./app
+COPY --from=build --chown=node:node /app/scripts ./scripts
+COPY --from=build --chown=node:node /app/src ./src
 
 USER node
 

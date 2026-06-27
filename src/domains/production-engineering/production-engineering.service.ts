@@ -368,6 +368,12 @@ export async function getSystemThroughputProfile(
   const consumeRates = availableQueues
     .map((queue) => queue.consumeRate)
     .filter((value): value is number => value !== null);
+  const staleHeartbeatIds = new Set(
+    metrics.workers.staleWorkers.map((heartbeat) => heartbeat.id)
+  );
+  const freshHeartbeats = metrics.workers.heartbeats.filter(
+    (heartbeat) => !staleHeartbeatIds.has(heartbeat.id)
+  );
 
   return {
     generatedAt: nowIso(),
@@ -428,10 +434,10 @@ export async function getSystemThroughputProfile(
         metrics.outbox.oldestUnpublishedEvent.ageSeconds,
     },
     workers: {
-      runningWorkers: metrics.workers.heartbeats.filter(
+      runningWorkers: freshHeartbeats.filter(
         (heartbeat) => heartbeat.status === "ACTIVE"
       ).length,
-      idleWorkers: metrics.workers.heartbeats.filter(
+      idleWorkers: freshHeartbeats.filter(
         (heartbeat) => heartbeat.status === "IDLE"
       ).length,
       staleWorkers: metrics.workers.staleWorkers.length,

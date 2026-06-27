@@ -354,6 +354,10 @@ export async function getWorkerObservabilitySummary(
       now.getTime() - new Date(heartbeat.lastSeenAt).getTime() >
       thresholds.heartbeatStaleSeconds * 1000
   );
+  const staleWorkerIds = new Set(staleWorkers.map((heartbeat) => heartbeat.id));
+  const freshHeartbeats = heartbeats.filter(
+    (heartbeat) => !staleWorkerIds.has(heartbeat.id)
+  );
   const processedByWorkerName = new Map<string, number>();
 
   for (const metric of recentMetrics) {
@@ -362,7 +366,7 @@ export async function getWorkerObservabilitySummary(
       (processedByWorkerName.get(metric.workerName) ?? 0) + metric.processedCount
     );
   }
-  const activeWorkerObserved = heartbeats.some(
+  const activeWorkerObserved = freshHeartbeats.some(
     (heartbeat) => heartbeat.status === "ACTIVE"
   );
   const processedJobs = recentMetrics.reduce(
