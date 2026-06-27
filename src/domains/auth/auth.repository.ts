@@ -57,6 +57,7 @@ type UserGroupMembershipRow = {
 };
 
 type UserGroupPermissionRow = {
+  group_id?: string;
   permission_id: string;
 };
 
@@ -433,6 +434,81 @@ export async function findPermissionsForUser(
   }
 
   return ((data ?? []) as PermissionRow[]).map(mapPermissionRow);
+}
+
+export async function findAuthorizationForUser(userId: string): Promise<{
+  groups: AuthenticatedUserGroup[];
+  permissions: AuthenticatedPermission[];
+}> {
+  const { data: membershipData, error: membershipError } =
+    await supabaseServerAdmin
+      .from("user_group_memberships")
+      .select("group_id")
+      .eq("user_id", userId);
+
+  if (membershipError) {
+    throw new AuthRepositoryError();
+  }
+
+  const groupIds = ((membershipData ?? []) as UserGroupMembershipRow[]).map(
+    (membership) => membership.group_id
+  );
+
+  if (groupIds.length === 0) {
+    return {
+      groups: [],
+      permissions: [],
+    };
+  }
+
+  const [groupResult, assignmentResult] = await Promise.all([
+    supabaseServerAdmin
+      .from("user_groups")
+      .select("id, name, description, is_system_group, created_at, updated_at")
+      .in("id", groupIds),
+    supabaseServerAdmin
+      .from("user_group_permissions")
+      .select("permission_id")
+      .in("group_id", groupIds),
+  ]);
+
+  if (groupResult.error || assignmentResult.error) {
+    throw new AuthRepositoryError();
+  }
+
+  const permissionIds = Array.from(
+    new Set(
+      ((assignmentResult.data ?? []) as UserGroupPermissionRow[]).map(
+        (assignment) => assignment.permission_id
+      )
+    )
+  );
+
+  if (permissionIds.length === 0) {
+    return {
+      groups: ((groupResult.data ?? []) as UserGroupRow[]).map(mapUserGroupRow),
+      permissions: [],
+    };
+  }
+
+  const { data: permissionData, error: permissionError } =
+    await supabaseServerAdmin
+      .from("permissions")
+      .select(
+        "id, permission_key, description, category, is_system_permission, created_at, updated_at"
+      )
+      .in("id", permissionIds);
+
+  if (permissionError) {
+    throw new AuthRepositoryError();
+  }
+
+  return {
+    groups: ((groupResult.data ?? []) as UserGroupRow[]).map(mapUserGroupRow),
+    permissions: ((permissionData ?? []) as PermissionRow[]).map(
+      mapPermissionRow
+    ),
+  };
 }
 
 export async function incrementFailedLoginAttempts(

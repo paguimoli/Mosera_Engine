@@ -119,9 +119,11 @@ export type OutboxObservabilitySummary = OutboxHealthSummary & {
 export type WorkerObservabilitySummary = {
   generatedAt: string;
   heartbeats: WorkerHeartbeat[];
+  freshHeartbeats: WorkerHeartbeat[];
   recentMetrics: WorkerProcessingMetric[];
   recentFailures: WorkerFailure[];
   staleWorkers: WorkerHeartbeat[];
+  staleHeartbeatEvidence: WorkerHeartbeat[];
   lastHeartbeat: WorkerHeartbeat | null;
   activeWorkerObserved: boolean;
   processedJobs: number;

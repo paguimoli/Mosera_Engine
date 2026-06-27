@@ -12,9 +12,10 @@ import type { RabbitMqQueueHealth } from "./queue-health.types";
 import {
   insertWorkerFailure,
   insertWorkerProcessingMetric,
+  listFreshWorkerHeartbeats,
   listRecentWorkerFailures,
   listRecentWorkerProcessingMetrics,
-  listWorkerHeartbeats,
+  listStaleWorkerHeartbeats,
   upsertWorkerHeartbeat,
 } from "./worker-observability.repository";
 import type {
@@ -321,11 +322,21 @@ export async function getWorkerObservabilitySummary(
   now = new Date()
 ): Promise<WorkerObservabilitySummary> {
   const thresholds = getWorkerObservabilityThresholds();
-  const [storedHeartbeats, recentMetrics, recentFailures] = await Promise.all([
-    listWorkerHeartbeats(100),
+  const staleCutoff = new Date(
+    now.getTime() - thresholds.heartbeatStaleSeconds * 1000
+  ).toISOString();
+  const [
+    storedFreshHeartbeats,
+    storedStaleHeartbeats,
+    recentMetrics,
+    recentFailures,
+  ] = await Promise.all([
+    listFreshWorkerHeartbeats({ since: staleCutoff, limit: 50 }),
+    listStaleWorkerHeartbeats({ before: staleCutoff, limit: 50 }),
     listRecentWorkerProcessingMetrics(100),
     listRecentWorkerFailures(100),
   ]);
+  const storedHeartbeats = [...storedFreshHeartbeats, ...storedStaleHeartbeats];
   const heartbeats =
     storedHeartbeats.length > 0
       ? storedHeartbeats
@@ -349,15 +360,22 @@ export async function getWorkerObservabilitySummary(
           createdAt: jobRun.startedAt,
           updatedAt: jobRun.finishedAt ?? null,
         }));
-  const staleWorkers = heartbeats.filter(
-    (heartbeat) =>
-      now.getTime() - new Date(heartbeat.lastSeenAt).getTime() >
-      thresholds.heartbeatStaleSeconds * 1000
-  );
-  const staleWorkerIds = new Set(staleWorkers.map((heartbeat) => heartbeat.id));
-  const freshHeartbeats = heartbeats.filter(
-    (heartbeat) => !staleWorkerIds.has(heartbeat.id)
-  );
+  const staleWorkers =
+    storedHeartbeats.length > 0
+      ? storedStaleHeartbeats
+      : heartbeats.filter(
+          (heartbeat) =>
+            now.getTime() - new Date(heartbeat.lastSeenAt).getTime() >
+            thresholds.heartbeatStaleSeconds * 1000
+        );
+  const freshHeartbeats =
+    storedHeartbeats.length > 0
+      ? storedFreshHeartbeats
+      : heartbeats.filter(
+          (heartbeat) =>
+            now.getTime() - new Date(heartbeat.lastSeenAt).getTime() <=
+            thresholds.heartbeatStaleSeconds * 1000
+        );
   const processedByWorkerName = new Map<string, number>();
 
   for (const metric of recentMetrics) {
@@ -377,9 +395,11 @@ export async function getWorkerObservabilitySummary(
   return {
     generatedAt: now.toISOString(),
     heartbeats,
+    freshHeartbeats,
     recentMetrics,
     recentFailures,
     staleWorkers,
+    staleHeartbeatEvidence: staleWorkers,
     lastHeartbeat: heartbeats[0] ?? null,
     activeWorkerObserved,
     processedJobs,

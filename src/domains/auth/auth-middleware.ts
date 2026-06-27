@@ -7,8 +7,7 @@ import type {
 } from "./auth-context.types";
 import { extractSessionTokenFromRequest } from "./auth-token.helpers";
 import {
-  findGroupsForUser,
-  findPermissionsForUser,
+  findAuthorizationForUser,
   findSessionByTokenHash,
   findUserById,
 } from "./auth.repository";
@@ -102,8 +101,7 @@ export async function getAuthenticatedUser(
     return null;
   }
 
-  const groups = await findGroupsForUser(user.id);
-  const permissions = await findPermissionsForUser(user.id);
+  const { groups, permissions } = await findAuthorizationForUser(user.id);
 
   return {
     user: toAuthenticatedUser(user),

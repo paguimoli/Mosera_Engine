@@ -231,6 +231,56 @@ export async function listWorkerHeartbeats(
   return ((data ?? []) as WorkerHeartbeatRow[]).map(mapHeartbeat);
 }
 
+export async function listFreshWorkerHeartbeats({
+  since,
+  limit = 50,
+}: {
+  since: string;
+  limit?: number;
+}): Promise<WorkerHeartbeat[]> {
+  const { data, error } = await supabaseServerAdmin
+    .from("worker_heartbeats")
+    .select(HEARTBEAT_SELECT)
+    .gte("last_seen_at", since)
+    .order("last_seen_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    if (isMissingRelationError(error)) {
+      return [];
+    }
+
+    throw new WorkerObservabilityRepositoryError(error.message);
+  }
+
+  return ((data ?? []) as WorkerHeartbeatRow[]).map(mapHeartbeat);
+}
+
+export async function listStaleWorkerHeartbeats({
+  before,
+  limit = 50,
+}: {
+  before: string;
+  limit?: number;
+}): Promise<WorkerHeartbeat[]> {
+  const { data, error } = await supabaseServerAdmin
+    .from("worker_heartbeats")
+    .select(HEARTBEAT_SELECT)
+    .lt("last_seen_at", before)
+    .order("last_seen_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    if (isMissingRelationError(error)) {
+      return [];
+    }
+
+    throw new WorkerObservabilityRepositoryError(error.message);
+  }
+
+  return ((data ?? []) as WorkerHeartbeatRow[]).map(mapHeartbeat);
+}
+
 export async function listRecentWorkerProcessingMetrics(
   limit = 100
 ): Promise<WorkerProcessingMetric[]> {

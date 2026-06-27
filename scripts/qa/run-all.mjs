@@ -53,6 +53,7 @@ const steps = [
   "qa:database-performance",
   "qa:database-observability",
   "qa:query-optimization",
+  "qa:auth-worker-query-efficiency",
   "qa:performance-baseline",
   "qa:credit-launch",
   "qa:worker-observability",
