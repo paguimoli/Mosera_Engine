@@ -52,6 +52,7 @@ const steps = [
   "qa:ledger-remediation-workflow",
   "qa:database-performance",
   "qa:database-observability",
+  "qa:query-optimization",
   "qa:performance-baseline",
   "qa:credit-launch",
   "qa:worker-observability",

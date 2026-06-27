@@ -10,8 +10,9 @@ export async function GET(request: Request) {
   const correlationId = getOrCreateCorrelationId(request);
   const { error } = await supabaseServerAdmin
     .from("platform_users")
-    .select("id", { count: "exact", head: true })
-    .limit(1);
+    .select("id")
+    .limit(1)
+    .maybeSingle();
 
   if (error) {
     logger.error({
