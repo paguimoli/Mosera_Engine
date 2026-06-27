@@ -130,6 +130,35 @@ console.log(`connectionPoolStatus: ${after.databasePerformance?.connections?.sta
 console.log(`poolUtilization: ${after.databasePerformance?.connections?.poolUtilization ?? "unavailable"}`);
 console.log(`activeConnections: ${after.databasePerformance?.connections?.activeConnections ?? "unavailable"}`);
 console.log(`waitingConnections: ${after.databasePerformance?.connections?.waitingConnections ?? "unavailable"}`);
+console.log("nativeDbTelemetry:");
+console.log(`nativeTelemetryStatus: ${after.databaseObservability?.nativeStatus?.status ?? "unavailable"}`);
+console.log(`nativeTelemetrySource: ${after.databaseObservability?.nativeStatus?.source ?? "unavailable"}`);
+console.log(`nativeActiveSessions: ${after.databaseObservability?.nativeStatus?.sessions?.active ?? "unavailable"}`);
+console.log(`nativeIdleSessions: ${after.databaseObservability?.nativeStatus?.sessions?.idle ?? "unavailable"}`);
+console.log(`nativeWaitingSessions: ${after.databaseObservability?.nativeStatus?.sessions?.waiting ?? "unavailable"}`);
+console.log(`nativeLockWaits: ${after.databaseObservability?.lockAnalysis?.lockWaits ?? "unavailable"}`);
+console.log("sessionStatistics:");
+console.log(`sessionStatus: ${after.databaseObservability?.sessionAnalysis?.status ?? "unavailable"}`);
+console.log(`activeSessions: ${after.databaseObservability?.sessionAnalysis?.activeSessions ?? "unavailable"}`);
+console.log(`idleSessions: ${after.databaseObservability?.sessionAnalysis?.idleSessions ?? "unavailable"}`);
+console.log(`waitingSessions: ${after.databaseObservability?.sessionAnalysis?.waitingSessions ?? "unavailable"}`);
+console.log("explainPlanSummary:");
+console.log(`explainStatus: ${after.databaseObservability?.explainPlans?.status ?? "unavailable"}`);
+for (const plan of after.databaseObservability?.explainPlans?.plans?.slice(0, 5) ?? []) {
+  console.log(`- ${plan.label} ${plan.status} table=${plan.table} planAvailable=${plan.planAvailable}`);
+}
+console.log("repositoryTiming:");
+for (const item of after.databaseObservability?.timing?.repositoryTiming?.slice(0, 5) ?? []) {
+  console.log(`- ${item.rank}. ${item.name} cumulativeDbTimeMs=${item.cumulativeDbTimeMs ?? "unavailable"}`);
+}
+console.log("endpointTiming:");
+for (const item of after.databaseObservability?.timing?.endpointTiming?.slice(0, 5) ?? []) {
+  console.log(`- ${item.rank}. ${item.name} dbTimeMs=${item.dbTimeMs ?? "unavailable"} totalRequestTimeMs=${item.totalRequestTimeMs ?? "unavailable"}`);
+}
+console.log("visibilityLimitations:");
+for (const limitation of after.databaseObservability?.limitations?.slice(0, 5) ?? []) {
+  console.log(`- ${limitation}`);
+}
 console.log("transactionSummary:");
 console.log(`transactionStatus: ${after.databasePerformance?.transactions?.status ?? "unavailable"}`);
 console.log(`transactionCount: ${after.databasePerformance?.transactions?.transactionCount ?? "unavailable"}`);

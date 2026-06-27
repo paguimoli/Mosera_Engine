@@ -2,6 +2,7 @@ import os from "node:os";
 import { performance } from "node:perf_hooks";
 
 import { getAuthorityBaselineStatus } from "../authority-baseline/authority-baseline.service";
+import { getDatabaseObservabilityReport } from "../database-observability/database-observability.service";
 import { getDatabasePerformanceReport } from "../database-performance/database-performance.service";
 import { getOperationsMetricsSummary } from "../operations/worker-observability.service";
 import { supabaseServerAdmin } from "@/src/lib/supabase/server-admin-client";
@@ -574,6 +575,7 @@ export async function getPerformanceBaselineReport(): Promise<PerformanceBaselin
     database,
     throughput,
     databasePerformance,
+    databaseObservability,
     runtime,
     operationsMetrics,
   ] =
@@ -583,6 +585,7 @@ export async function getPerformanceBaselineReport(): Promise<PerformanceBaselin
       getDatabaseLatencyProfile(),
       getSystemThroughputProfile(),
       getDatabasePerformanceReport(),
+      getDatabaseObservabilityReport(),
       getRuntimeProfile(),
       getOperationsMetricsSummary(),
     ]);
@@ -596,6 +599,7 @@ export async function getPerformanceBaselineReport(): Promise<PerformanceBaselin
     database,
     throughput,
     databasePerformance,
+    databaseObservability,
     runtime,
     operationsMetrics,
     bottlenecks,
