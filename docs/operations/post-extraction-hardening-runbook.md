@@ -51,6 +51,8 @@ Phase 18.1 adds dedicated read-only evidence commands:
 npm run ops:platform-evidence
 npm run ops:ledger-reference-audit
 npm run ops:ledger-immutability
+npm run ops:ledger-reference-remediation
+npm run ops:ledger-immutability-verification
 ```
 
 Use these after the baseline report when the system is promoted and certified
@@ -77,6 +79,18 @@ If table-level triggers are not visible, the report explicitly records that the
 current evidence is based on schema shape, reversal links, idempotency, and
 service convention.
 
+`ops:ledger-immutability-verification` adds an evidence-only verification view
+that explicitly reports whether UPDATE and DELETE protection is database-level,
+application-level, or unknown. It also confirms that no destructive probe and no
+destructive trigger creation was attempted.
+
+### Reference Remediation Report
+
+`ops:ledger-reference-remediation` generates an append-only evidence report from
+the reference audit. It lists missing references, probable matches, confidence,
+and recommended remediation. The report never mutates historical financial
+records and every item is marked `mutationAllowed: false`.
+
 ### Outbox, Queue, And Worker Evidence
 
 `ops:platform-evidence` includes outbox pending, failed, retry, oldest
@@ -87,6 +101,10 @@ processed jobs, uptime, and stale heartbeat detection.
 
 RabbitMQ management metric gaps are degraded evidence. They should be reviewed,
 but they do not fail the platform by themselves.
+
+Phase 18.2 separates `UNKNOWN` metric availability from `UNHEALTHY` queue or
+worker conditions. Operators should treat `UNKNOWN` as an observability coverage
+gap and `UNHEALTHY` as an operational issue.
 
 ## Financial Invariants
 
@@ -134,6 +152,7 @@ Run:
 ```bash
 npm run qa:post-extraction-hardening
 npm run qa:evidence-hardening
+npm run qa:ledger-remediation-hardening
 npm run qa:all
 ```
 
@@ -145,6 +164,8 @@ Expected:
 - rollback remains `READY`;
 - services are healthy;
 - evidence reports are generated;
+- ledger immutability/reference remediation evidence is generated without
+  financial mutations;
 - golden path passes;
 - full QA passes.
 

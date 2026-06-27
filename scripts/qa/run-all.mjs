@@ -48,6 +48,7 @@ const steps = [
   "qa:post-extraction-golden-path",
   "qa:post-extraction-hardening",
   "qa:evidence-hardening",
+  "qa:ledger-remediation-hardening",
   "qa:credit-launch",
   "qa:worker-observability",
 ];

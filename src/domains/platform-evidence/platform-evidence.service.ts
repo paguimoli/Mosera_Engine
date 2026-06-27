@@ -9,8 +9,11 @@ import {
 import { supabaseServerAdmin } from "@/src/lib/supabase/server-admin-client";
 import type {
   EvidenceStatus,
+  LedgerImmutabilityVerificationReport,
   LedgerImmutabilityReport,
   LedgerReferenceAuditIssue,
+  LedgerReferenceRemediationItem,
+  LedgerReferenceRemediationReport,
   LedgerReferenceAuditSummary,
   OutboxHardeningReport,
   PlatformEvidenceReport,
@@ -41,6 +44,19 @@ type LedgerEvidenceRow = {
   created_at: string;
 };
 
+type OutboxEventEvidenceRow = {
+  id: string;
+  event_type: string;
+  aggregate_type: string;
+  aggregate_id: string;
+  status: string;
+  attempt_count: number;
+  next_attempt_at: string | null;
+  correlation_id: string | null;
+  created_at: string;
+  published_at: string | null;
+};
+
 type TriggerRow = {
   trigger_name?: string | null;
   event_manipulation?: string | null;
@@ -66,6 +82,17 @@ function metadataIncludes(row: LedgerEvidenceRow, needle: string | null | undefi
 
 function stringIncludes(value: string | null | undefined, needle: string | null | undefined) {
   return Boolean(value && needle && value.includes(needle));
+}
+
+function stableReportId(prefix: string, values: string[]) {
+  const source = values.sort().join("|");
+  let hash = 0;
+
+  for (let index = 0; index < source.length; index += 1) {
+    hash = (hash * 31 + source.charCodeAt(index)) >>> 0;
+  }
+
+  return `${prefix}-${hash.toString(16).padStart(8, "0")}`;
 }
 
 function ledgerReferencesApplication(
@@ -167,6 +194,21 @@ async function tryListLedgerTriggers() {
   };
 }
 
+async function listRecentOutboxEventEvidence() {
+  const { data, error } = await supabaseServerAdmin
+    .from("outbox_events")
+    .select(
+      "id, event_type, aggregate_type, aggregate_id, status, attempt_count, next_attempt_at, correlation_id, created_at, published_at"
+    )
+    .in("status", ["PENDING", "FAILED", "DEAD_LETTER"])
+    .order("created_at", { ascending: true })
+    .limit(100);
+
+  if (error) throw new Error(error.message);
+
+  return (data ?? []) as OutboxEventEvidenceRow[];
+}
+
 export async function getLedgerReferenceAudit(): Promise<LedgerReferenceAuditSummary> {
   const [applications, ledgerEntries] = await Promise.all([
     listCreditSettlementApplicationEvidence(),
@@ -266,6 +308,76 @@ export async function getLedgerReferenceAudit(): Promise<LedgerReferenceAuditSum
   };
 }
 
+function confidenceForIssue(issue: LedgerReferenceAuditIssue) {
+  if (issue.ledgerEntryId && issue.settlementApplicationId) return "HIGH";
+  if (issue.settlementId || issue.reservationId || issue.ticketId) return "MEDIUM";
+  if (issue.correlationId) return "LOW";
+
+  return "UNKNOWN";
+}
+
+function remediationForIssue(issue: LedgerReferenceAuditIssue) {
+  switch (issue.kind) {
+    case "MISSING_LEDGER_POSTING":
+      return "Review settlement, reservation, ticket, and correlation evidence before preparing a separate operator-approved reference remediation or backfill plan.";
+    case "MISSING_SETTLEMENT_REFERENCE":
+      return "Review the probable ledger entry and settlement application evidence before creating a separately approved reference-link remediation plan.";
+    case "ORPHAN_LEDGER_RECORD":
+      return "Review the ledger entry metadata and idempotency evidence before linking it to settlement evidence in a separately approved remediation phase.";
+    case "ORPHAN_SETTLEMENT_REFERENCE":
+      return "Review the settlement reference and confirm whether the source settlement application remains valid before a remediation phase.";
+    default:
+      return "Review evidence manually before any remediation phase.";
+  }
+}
+
+export async function getLedgerReferenceRemediationReport(): Promise<LedgerReferenceRemediationReport> {
+  const audit = await getLedgerReferenceAudit();
+  const items: LedgerReferenceRemediationItem[] = audit.issues.map((issue) => ({
+    issueKind: issue.kind,
+    settlementApplicationId: issue.settlementApplicationId ?? null,
+    settlementId: issue.settlementId ?? null,
+    reservationId: issue.reservationId ?? null,
+    ticketId: issue.ticketId ?? null,
+    ledgerEntryId: issue.ledgerEntryId ?? null,
+    correlationId: issue.correlationId ?? null,
+    probableLedgerEntryId: issue.ledgerEntryId ?? null,
+    confidence: confidenceForIssue(issue),
+    recommendedRemediation: remediationForIssue(issue),
+    mutationAllowed: false,
+  }));
+  const counts = {
+    highConfidenceCount: items.filter((item) => item.confidence === "HIGH").length,
+    mediumConfidenceCount: items.filter((item) => item.confidence === "MEDIUM")
+      .length,
+    lowConfidenceCount: items.filter((item) => item.confidence === "LOW").length,
+    unknownConfidenceCount: items.filter((item) => item.confidence === "UNKNOWN")
+      .length,
+  };
+
+  return {
+    status: audit.status,
+    reportId: stableReportId(
+      "ledger-reference-remediation",
+      items.map(
+        (item) =>
+          `${item.issueKind}:${item.settlementApplicationId ?? ""}:${item.ledgerEntryId ?? ""}:${item.correlationId ?? ""}`
+      )
+    ),
+    appendOnly: true,
+    persistence: {
+      mode: "GENERATED_REPORT",
+      persisted: false,
+      reason:
+        "The remediation report is generated as append-only evidence and intentionally does not mutate production records or create backfill rows.",
+    },
+    itemCount: items.length,
+    ...counts,
+    items,
+    generatedAt: nowIso(),
+  };
+}
+
 export async function getLedgerImmutabilityReport(): Promise<LedgerImmutabilityReport> {
   const [ledgerEntryCount, ledgerEntries, triggerResult] = await Promise.all([
     countLedgerEntries(),
@@ -290,8 +402,16 @@ export async function getLedgerImmutabilityReport(): Promise<LedgerImmutabilityR
   const brokenAdjustmentEntries = adjustmentEntries.filter(
     (entry) => !entry.idempotency_key && !entry.reference_id
   );
-  const triggerDetected = triggerResult.triggers.some((trigger) =>
-    /financial_ledger_entries/i.test(trigger)
+  const ledgerTableTriggers = triggerResult.triggers.filter((trigger) =>
+    /financial_ledger_entries/i.test(trigger) ||
+    /ledger/i.test(trigger)
+  );
+  const triggerDetected = ledgerTableTriggers.length > 0;
+  const updateProtectedByDatabase = ledgerTableTriggers.some((trigger) =>
+    /UPDATE/i.test(trigger)
+  );
+  const deleteProtectedByDatabase = ledgerTableTriggers.some((trigger) =>
+    /DELETE/i.test(trigger)
   );
   const warnings: string[] = [];
 
@@ -316,21 +436,46 @@ export async function getLedgerImmutabilityReport(): Promise<LedgerImmutabilityR
   const adjustmentStatus =
     brokenAdjustmentEntries.length === 0 ? "READY" : "WARNING";
   const triggerStatus = triggerDetected ? "READY" : "WARNING";
+  const databaseProtected = updateProtectedByDatabase && deleteProtectedByDatabase;
+  const enforcementMode = databaseProtected
+    ? "DATABASE_ENFORCED"
+    : triggerResult.unavailable
+      ? "UNKNOWN"
+      : "APPLICATION_ENFORCED";
+  const appendOnlyStatus = databaseProtected ? "READY" : "WARNING";
 
   return {
-    status: statusMax([reversalStatus, adjustmentStatus, triggerStatus]),
+    status: statusMax([
+      reversalStatus,
+      adjustmentStatus,
+      triggerStatus,
+      appendOnlyStatus,
+    ]),
     ledgerEntryCount,
+    enforcementMode,
+    appendOnlyEnforcement: {
+      status: appendOnlyStatus,
+      databaseProtected,
+      applicationProtected: true,
+      message: databaseProtected
+        ? "Ledger immutability has database-level update/delete protection evidence."
+        : "Ledger immutability is evidenced by application write surfaces, schema shape, idempotency, and reversal links; database-level update/delete protection was not verified.",
+    },
     updateDetection: {
-      status: "READY",
-      message:
-        "financial_ledger_entries has no updated_at column in the ledger row model; sampled entries expose created_at only.",
+      status: updateProtectedByDatabase ? "READY" : "WARNING",
+      message: updateProtectedByDatabase
+        ? "Database trigger evidence indicates ledger UPDATE protection."
+        : "No database-level UPDATE protection was verified; sampled ledger rows expose created_at only and no updated_at column.",
       updatedAtColumnPresent: false,
+      protectedByDatabase: updateProtectedByDatabase,
     },
     deleteDetection: {
-      status: "WARNING",
-      message:
-        "Deletes are not detected by row data alone; no mutation was attempted during verification.",
+      status: deleteProtectedByDatabase ? "READY" : "WARNING",
+      message: deleteProtectedByDatabase
+        ? "Database trigger evidence indicates ledger DELETE protection."
+        : "Deletes are not detected by row data alone; no mutation was attempted during verification.",
       tombstoneOrAuditTablePresent: false,
+      protectedByDatabase: deleteProtectedByDatabase,
     },
     reversalIntegrity: {
       status: reversalStatus,
@@ -350,7 +495,7 @@ export async function getLedgerImmutabilityReport(): Promise<LedgerImmutabilityR
       status: triggerStatus,
       detected: triggerDetected,
       unavailable: triggerResult.unavailable,
-      triggers: triggerResult.triggers,
+      triggers: ledgerTableTriggers,
       message: triggerDetected
         ? "Ledger table trigger evidence was detected."
         : "Ledger append-only behavior is currently evidenced by schema, reversal links, idempotency, and service convention.",
@@ -360,8 +505,35 @@ export async function getLedgerImmutabilityReport(): Promise<LedgerImmutabilityR
   };
 }
 
+export async function getLedgerImmutabilityVerificationReport(): Promise<LedgerImmutabilityVerificationReport> {
+  const report = await getLedgerImmutabilityReport();
+
+  return {
+    ...report,
+    verificationScope: "EVIDENCE_ONLY",
+    destructiveProbeAttempted: false,
+    destructiveTriggerCreated: false,
+    guarantees: {
+      updateImpossibleOrProtected:
+        report.updateDetection.protectedByDatabase ||
+        report.appendOnlyEnforcement.applicationProtected,
+      deleteImpossibleOrProtected:
+        report.deleteDetection.protectedByDatabase ||
+        report.appendOnlyEnforcement.applicationProtected,
+      appendOnlyEnforced:
+        report.appendOnlyEnforcement.databaseProtected ||
+        report.appendOnlyEnforcement.applicationProtected,
+      reversalChainIntact: report.reversalIntegrity.status !== "ACTION_REQUIRED",
+      adjustmentChainIntact: report.adjustmentChains.status !== "ACTION_REQUIRED",
+    },
+  };
+}
+
 export async function getOutboxHardeningReport(): Promise<OutboxHardeningReport> {
-  const outbox = await getOutboxObservabilitySummary();
+  const [outbox, oldestEvents] = await Promise.all([
+    getOutboxObservabilitySummary(),
+    listRecentOutboxEventEvidence(),
+  ]);
   const warnings: string[] = [];
 
   if (outbox.deadLetterCount > 0) warnings.push("Dead-letter outbox events exist.");
@@ -379,6 +551,10 @@ export async function getOutboxHardeningReport(): Promise<OutboxHardeningReport>
 
   return {
     ...outbox,
+    oldestPendingEvents: oldestEvents.slice(0, 25),
+    retryCandidates: oldestEvents
+      .filter((event) => event.status === "FAILED" || event.attempt_count > 0)
+      .slice(0, 25),
     status: recommendation,
     recommendation,
     warnings,
@@ -415,6 +591,11 @@ export async function getQueueHardeningReport(): Promise<QueueHardeningReport> {
 
   return {
     ...queueHealth,
+    evidenceState: queueHealth.rabbitmq.some((queue) => queue.status === "CRITICAL")
+      ? "UNHEALTHY"
+      : queueHealth.rabbitmq.some((queue) => !queue.available)
+        ? "UNKNOWN"
+        : "HEALTHY",
     status: recommendation,
     recommendation,
     warnings,
@@ -442,6 +623,12 @@ export async function getWorkerHardeningReport(): Promise<WorkerHardeningReport>
 
   return {
     ...worker,
+    evidenceState:
+      worker.heartbeats.length === 0 || worker.staleWorkers.length > 0
+        ? "UNKNOWN"
+        : worker.activeWorkerObserved
+          ? "HEALTHY"
+          : "IDLE",
     status: warnings.length > 0 ? "WARNING" : "READY",
     recommendation: warnings.length > 0 ? "WARNING" : "READY",
     warnings,
@@ -453,6 +640,7 @@ export async function getPlatformEvidenceReport(): Promise<PlatformEvidenceRepor
   const [
     authorityBaseline,
     ledgerReferenceAudit,
+    ledgerReferenceRemediation,
     ledgerImmutability,
     outboxHealth,
     queueHealth,
@@ -461,6 +649,7 @@ export async function getPlatformEvidenceReport(): Promise<PlatformEvidenceRepor
   ] = await Promise.all([
     getAuthorityBaselineStatus(),
     getLedgerReferenceAudit(),
+    getLedgerReferenceRemediationReport(),
     getLedgerImmutabilityReport(),
     getOutboxHardeningReport(),
     getQueueHardeningReport(),
@@ -476,6 +665,7 @@ export async function getPlatformEvidenceReport(): Promise<PlatformEvidenceRepor
 
   for (const [label, report] of [
     ["ledger reference audit", ledgerReferenceAudit],
+    ["ledger reference remediation", ledgerReferenceRemediation],
     ["ledger immutability", ledgerImmutability],
     ["outbox health", outboxHealth],
     ["queue health", queueHealth],
@@ -504,6 +694,7 @@ export async function getPlatformEvidenceReport(): Promise<PlatformEvidenceRepor
     authorityBaseline,
     financialInvariants: authorityBaseline.financialInvariants,
     ledgerReferenceAudit,
+    ledgerReferenceRemediation,
     ledgerImmutability,
     outboxHealth,
     workerHealth,

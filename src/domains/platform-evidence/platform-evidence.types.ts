@@ -37,18 +37,59 @@ export type LedgerReferenceAuditSummary = {
   generatedAt: string;
 };
 
+export type LedgerReferenceRemediationItem = {
+  issueKind: LedgerReferenceAuditIssue["kind"];
+  settlementApplicationId?: string | null;
+  settlementId?: string | null;
+  reservationId?: string | null;
+  ticketId?: string | null;
+  ledgerEntryId?: string | null;
+  correlationId?: string | null;
+  probableLedgerEntryId: string | null;
+  confidence: "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN";
+  recommendedRemediation: string;
+  mutationAllowed: false;
+};
+
+export type LedgerReferenceRemediationReport = {
+  status: EvidenceStatus;
+  reportId: string;
+  appendOnly: true;
+  persistence: {
+    mode: "GENERATED_REPORT";
+    persisted: false;
+    reason: string;
+  };
+  itemCount: number;
+  highConfidenceCount: number;
+  mediumConfidenceCount: number;
+  lowConfidenceCount: number;
+  unknownConfidenceCount: number;
+  items: LedgerReferenceRemediationItem[];
+  generatedAt: string;
+};
+
 export type LedgerImmutabilityReport = {
   status: EvidenceStatus;
   ledgerEntryCount: number;
+  enforcementMode: "DATABASE_ENFORCED" | "APPLICATION_ENFORCED" | "UNKNOWN";
+  appendOnlyEnforcement: {
+    status: EvidenceStatus;
+    databaseProtected: boolean;
+    applicationProtected: boolean;
+    message: string;
+  };
   updateDetection: {
     status: EvidenceStatus;
     message: string;
     updatedAtColumnPresent: boolean;
+    protectedByDatabase: boolean;
   };
   deleteDetection: {
     status: EvidenceStatus;
     message: string;
     tombstoneOrAuditTablePresent: boolean;
+    protectedByDatabase: boolean;
   };
   reversalIntegrity: {
     status: EvidenceStatus;
@@ -73,7 +114,44 @@ export type LedgerImmutabilityReport = {
   generatedAt: string;
 };
 
+export type LedgerImmutabilityVerificationReport = LedgerImmutabilityReport & {
+  verificationScope: "EVIDENCE_ONLY";
+  destructiveProbeAttempted: false;
+  destructiveTriggerCreated: false;
+  guarantees: {
+    updateImpossibleOrProtected: boolean;
+    deleteImpossibleOrProtected: boolean;
+    appendOnlyEnforced: boolean;
+    reversalChainIntact: boolean;
+    adjustmentChainIntact: boolean;
+  };
+};
+
 export type OutboxHardeningReport = OutboxObservabilitySummary & {
+  oldestPendingEvents: Array<{
+    id: string;
+    event_type: string;
+    aggregate_type: string;
+    aggregate_id: string;
+    status: string;
+    attempt_count: number;
+    next_attempt_at: string | null;
+    correlation_id: string | null;
+    created_at: string;
+    published_at: string | null;
+  }>;
+  retryCandidates: Array<{
+    id: string;
+    event_type: string;
+    aggregate_type: string;
+    aggregate_id: string;
+    status: string;
+    attempt_count: number;
+    next_attempt_at: string | null;
+    correlation_id: string | null;
+    created_at: string;
+    published_at: string | null;
+  }>;
   status: EvidenceStatus;
   recommendation: EvidenceStatus;
   warnings: string[];
@@ -81,12 +159,14 @@ export type OutboxHardeningReport = OutboxObservabilitySummary & {
 };
 
 export type QueueHardeningReport = QueueHealthSummary & {
+  evidenceState: "HEALTHY" | "UNKNOWN" | "UNHEALTHY";
   status: EvidenceStatus;
   recommendation: EvidenceStatus;
   warnings: string[];
 };
 
 export type WorkerHardeningReport = WorkerObservabilitySummary & {
+  evidenceState: "HEALTHY" | "IDLE" | "UNKNOWN" | "UNHEALTHY";
   status: EvidenceStatus;
   recommendation: EvidenceStatus;
   heartbeatStaleSeconds: number;
@@ -98,6 +178,7 @@ export type PlatformEvidenceReport = {
   authorityBaseline: AuthorityBaselineStatus;
   financialInvariants: AuthorityBaselineStatus["financialInvariants"];
   ledgerReferenceAudit: LedgerReferenceAuditSummary;
+  ledgerReferenceRemediation: LedgerReferenceRemediationReport;
   ledgerImmutability: LedgerImmutabilityReport;
   outboxHealth: OutboxHardeningReport;
   workerHealth: WorkerHardeningReport;
