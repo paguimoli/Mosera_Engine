@@ -10,6 +10,8 @@ import type {
   LoadInvariantSummary,
   LoadScenarioMeasurement,
   LoadScenarioName,
+  LoadStepMeasurement,
+  LoadStepName,
   LoadTestStatus,
 } from "./load-testing.types";
 
@@ -29,6 +31,8 @@ const SCENARIOS: Array<{
   table: string;
   select: string;
   orderColumn?: string;
+  step: LoadStepName;
+  stepLabel: string;
 }> = [
   {
     scenario: "CONCURRENT_PLAYER_AUTHENTICATION",
@@ -37,6 +41,8 @@ const SCENARIOS: Array<{
     table: "user_sessions",
     select: "id, user_id, expires_at, revoked_at, created_at",
     orderColumn: "created_at",
+    step: "AUTH_SESSION_CONTEXT",
+    stepLabel: "Auth/session context",
   },
   {
     scenario: "WALLET_RESERVATIONS",
@@ -45,6 +51,8 @@ const SCENARIOS: Array<{
     table: "credit_reservations",
     select: "id, player_id, ticket_id, status, amount, created_at",
     orderColumn: "created_at",
+    step: "WALLET_EVIDENCE",
+    stepLabel: "Wallet evidence",
   },
   {
     scenario: "TICKET_PURCHASES",
@@ -53,6 +61,8 @@ const SCENARIOS: Array<{
     table: "tickets",
     select: "id, external_ticket_id, player_id, created_at",
     orderColumn: "created_at",
+    step: "TICKET_EVIDENCE",
+    stepLabel: "Ticket evidence",
   },
   {
     scenario: "SETTLEMENT_PROCESSING",
@@ -61,6 +71,8 @@ const SCENARIOS: Array<{
     table: "credit_settlement_applications",
     select: "id, reservation_id, ticket_id, settlement_id, created_at",
     orderColumn: "created_at",
+    step: "SETTLEMENT_EVIDENCE",
+    stepLabel: "Settlement evidence",
   },
   {
     scenario: "CREDIT_RESERVE_RELEASE_CYCLES",
@@ -69,6 +81,8 @@ const SCENARIOS: Array<{
     table: "credit_reservations",
     select: "id, player_id, ticket_id, status, amount, updated_at, created_at",
     orderColumn: "updated_at",
+    step: "CREDIT_EVIDENCE",
+    stepLabel: "Credit evidence",
   },
   {
     scenario: "RABBITMQ",
@@ -77,6 +91,8 @@ const SCENARIOS: Array<{
     table: "outbox_events",
     select: "id, status, event_type, created_at, published_at",
     orderColumn: "created_at",
+    step: "RABBITMQ_EVIDENCE",
+    stepLabel: "RabbitMQ/outbox evidence",
   },
   {
     scenario: "DATABASE",
@@ -85,6 +101,8 @@ const SCENARIOS: Array<{
     table: "financial_ledger_entries",
     select: "id, account_id, transaction_type, created_at",
     orderColumn: "created_at",
+    step: "DATABASE_EVIDENCE",
+    stepLabel: "Database evidence",
   },
 ];
 
@@ -95,6 +113,7 @@ const OPTIMIZED_EVIDENCE_SCENARIOS = new Set<LoadScenarioName>([
 
 type ReadProbeSnapshot = {
   rows: unknown[];
+  latencyMs: number;
 };
 
 function round(value: number, digits = 3) {
@@ -221,6 +240,7 @@ async function loadReadProbeSnapshot(
 ): Promise<ReadProbeSnapshot | null> {
   if (!OPTIMIZED_EVIDENCE_SCENARIOS.has(config.scenario)) return null;
 
+  const started = performance.now();
   let query = supabaseServerAdmin.from(config.table).select(config.select);
 
   if (config.orderColumn) {
@@ -233,6 +253,7 @@ async function loadReadProbeSnapshot(
 
   return {
     rows: data ?? [],
+    latencyMs: round(performance.now() - started),
   };
 }
 
@@ -244,6 +265,44 @@ async function runOptimizedReadProbe(snapshot: ReadProbeSnapshot) {
     ok: true,
     resultCount: snapshot.rows.slice(0, 5).length,
     error: null,
+  };
+}
+
+function summarizeStep({
+  step,
+  label,
+  latencies,
+  sampleCount,
+  elapsedSeconds,
+  errorCount,
+  resultCount,
+}: {
+  step: LoadStepName;
+  label: string;
+  latencies: number[];
+  sampleCount: number;
+  elapsedSeconds: number;
+  errorCount: number;
+  resultCount: number;
+}): LoadStepMeasurement {
+  return {
+    step,
+    label,
+    averageLatencyMs:
+      latencies.length > 0
+        ? round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length)
+        : null,
+    medianLatencyMs: median(latencies),
+    p95LatencyMs: percentile(latencies, 95),
+    p99LatencyMs: percentile(latencies, 99),
+    maxLatencyMs: latencies.length > 0 ? round(Math.max(...latencies)) : null,
+    sampleCount,
+    throughputPerSecond: round(
+      Math.max(0, sampleCount - errorCount) / Math.max(0.001, elapsedSeconds),
+      6
+    ),
+    errorCount,
+    resultCount,
   };
 }
 
@@ -273,6 +332,38 @@ async function measureScenario(
         .filter((error): error is string => Boolean(error))
     )
   );
+  const stepMeasurements = snapshot
+    ? [
+        summarizeStep({
+          step: config.step,
+          label: `${config.stepLabel} snapshot prefetch`,
+          latencies: [snapshot.latencyMs],
+          sampleCount: 1,
+          elapsedSeconds,
+          errorCount: 0,
+          resultCount: snapshot.rows.length,
+        }),
+        summarizeStep({
+          step: config.step,
+          label: `${config.stepLabel} in-run aggregation`,
+          latencies,
+          sampleCount: results.length,
+          elapsedSeconds,
+          errorCount: results.length - successful.length,
+          resultCount: results.reduce((sum, result) => sum + result.resultCount, 0),
+        }),
+      ]
+    : [
+        summarizeStep({
+          step: config.step,
+          label: config.stepLabel,
+          latencies,
+          sampleCount: results.length,
+          elapsedSeconds,
+          errorCount: results.length - successful.length,
+          resultCount: results.reduce((sum, result) => sum + result.resultCount, 0),
+        }),
+      ];
 
   return {
     scenario: config.scenario,
@@ -311,6 +402,7 @@ async function measureScenario(
     },
     resultCount: results.reduce((sum, result) => sum + result.resultCount, 0),
     errors,
+    stepMeasurements,
   };
 }
 
@@ -396,6 +488,90 @@ function findBottlenecks(scenarios: LoadScenarioMeasurement[]) {
       `${scenario.label} at concurrency ${scenario.concurrency}: p95=${scenario.p95LatencyMs ?? "unavailable"}ms failures=${scenario.failureCount}`
     )
     .slice(0, 10);
+}
+
+function likelySourceForStep(step: LoadStepName | null) {
+  switch (step) {
+    case "AUTH_SESSION_CONTEXT":
+      return "Supabase session context evidence read.";
+    case "WALLET_EVIDENCE":
+      return "Credit reservation evidence aggregation.";
+    case "CREDIT_EVIDENCE":
+      return "Credit reserve/release evidence aggregation.";
+    case "TICKET_EVIDENCE":
+      return "Ticket evidence aggregation.";
+    case "SETTLEMENT_EVIDENCE":
+      return "Credit settlement application evidence aggregation.";
+    case "LEDGER_EVIDENCE":
+      return "Ledger evidence aggregation.";
+    case "OUTBOX_EVIDENCE":
+    case "RABBITMQ_EVIDENCE":
+      return "Outbox/RabbitMQ evidence aggregation.";
+    case "WORKER_EVIDENCE":
+      return "Worker heartbeat evidence aggregation.";
+    case "DATABASE_EVIDENCE":
+      return "Financial ledger database evidence read.";
+    case "SERVICE_HEALTH_CALLS":
+      return "Service health probe.";
+    default:
+      return "No slow source identified.";
+  }
+}
+
+function recommendationForStep(step: LoadStepName | null, p95LatencyMs: number | null) {
+  if (!step || p95LatencyMs === null) {
+    return "Continue measuring until a slow step is present.";
+  }
+
+  if (p95LatencyMs < 1000) {
+    return "No Phase 20.2 fix required; retain measurement as baseline.";
+  }
+
+  if (step === "WALLET_EVIDENCE" || step === "CREDIT_EVIDENCE") {
+    return "Evidence snapshot optimization is already applied; monitor for sampling variance.";
+  }
+
+  return "Defer narrow read-path optimization to Phase 20.3 after confirming repeatability.";
+}
+
+function buildBottleneckBreakdown(scenarios: LoadScenarioMeasurement[]) {
+  const ranked = scenarios
+    .flatMap((scenario) =>
+      scenario.stepMeasurements.map((step) => ({
+        scenario,
+        step,
+      }))
+    )
+    .sort((left, right) => {
+      const rightP95 = right.step.p95LatencyMs ?? -1;
+      const leftP95 = left.step.p95LatencyMs ?? -1;
+
+      if (rightP95 !== leftP95) return rightP95 - leftP95;
+
+      return (right.step.p99LatencyMs ?? -1) - (left.step.p99LatencyMs ?? -1);
+    });
+  const slowest = ranked[0];
+
+  return {
+    slowestScenario: slowest?.scenario.scenario ?? null,
+    slowestScenarioLabel: slowest?.scenario.label ?? null,
+    slowestConcurrency: slowest?.scenario.concurrency ?? null,
+    slowestStep: slowest?.step.step ?? null,
+    slowestStepLabel: slowest?.step.label ?? null,
+    averageLatencyMs: slowest?.step.averageLatencyMs ?? null,
+    medianLatencyMs: slowest?.step.medianLatencyMs ?? null,
+    p95LatencyMs: slowest?.step.p95LatencyMs ?? null,
+    p99LatencyMs: slowest?.step.p99LatencyMs ?? null,
+    maxLatencyMs: slowest?.step.maxLatencyMs ?? null,
+    sampleCount: slowest?.step.sampleCount ?? 0,
+    throughputPerSecond: slowest?.step.throughputPerSecond ?? 0,
+    errorCount: slowest?.step.errorCount ?? 0,
+    likelySource: likelySourceForStep(slowest?.step.step ?? null),
+    recommendation: recommendationForStep(
+      slowest?.step.step ?? null,
+      slowest?.step.p95LatencyMs ?? null
+    ),
+  };
 }
 
 export async function getLoadTestStatus(): Promise<LoadTestStatus> {
@@ -506,6 +682,7 @@ export async function getConcurrencyBaseline(): Promise<LoadBaselineReport> {
     scenarios,
     invariants,
     bottlenecks: findBottlenecks(scenarios),
+    bottleneckBreakdown: buildBottleneckBreakdown(scenarios),
     warnings,
     authority: authoritySummary(baselineAfter),
     queue: {

@@ -56,6 +56,7 @@ const steps = [
   "qa:auth-worker-query-efficiency",
   "qa:concurrency-baseline",
   "qa:wallet-credit-evidence-optimization",
+  "qa:concurrency-bottleneck-identification",
   "qa:performance-baseline",
   "qa:credit-launch",
   "qa:worker-observability",

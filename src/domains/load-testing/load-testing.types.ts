@@ -7,6 +7,33 @@ export type LoadScenarioName =
   | "RABBITMQ"
   | "DATABASE";
 
+export type LoadStepName =
+  | "AUTH_SESSION_CONTEXT"
+  | "WALLET_EVIDENCE"
+  | "CREDIT_EVIDENCE"
+  | "TICKET_EVIDENCE"
+  | "SETTLEMENT_EVIDENCE"
+  | "LEDGER_EVIDENCE"
+  | "OUTBOX_EVIDENCE"
+  | "WORKER_EVIDENCE"
+  | "RABBITMQ_EVIDENCE"
+  | "DATABASE_EVIDENCE"
+  | "SERVICE_HEALTH_CALLS";
+
+export type LoadStepMeasurement = {
+  step: LoadStepName;
+  label: string;
+  averageLatencyMs: number | null;
+  medianLatencyMs: number | null;
+  p95LatencyMs: number | null;
+  p99LatencyMs: number | null;
+  maxLatencyMs: number | null;
+  sampleCount: number;
+  throughputPerSecond: number;
+  errorCount: number;
+  resultCount: number;
+};
+
 export type LoadScenarioMeasurement = {
   scenario: LoadScenarioName;
   label: string;
@@ -38,6 +65,7 @@ export type LoadScenarioMeasurement = {
   };
   resultCount: number;
   errors: string[];
+  stepMeasurements: LoadStepMeasurement[];
 };
 
 export type LoadInvariantSummary = {
@@ -66,6 +94,23 @@ export type LoadBaselineReport = {
   scenarios: LoadScenarioMeasurement[];
   invariants: LoadInvariantSummary;
   bottlenecks: string[];
+  bottleneckBreakdown: {
+    slowestScenario: LoadScenarioName | null;
+    slowestScenarioLabel: string | null;
+    slowestConcurrency: number | null;
+    slowestStep: LoadStepName | null;
+    slowestStepLabel: string | null;
+    averageLatencyMs: number | null;
+    medianLatencyMs: number | null;
+    p95LatencyMs: number | null;
+    p99LatencyMs: number | null;
+    maxLatencyMs: number | null;
+    sampleCount: number;
+    throughputPerSecond: number;
+    errorCount: number;
+    likelySource: string;
+    recommendation: string;
+  };
   warnings: string[];
   authority: {
     settlement: string;
