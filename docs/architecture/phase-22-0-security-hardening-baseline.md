@@ -86,6 +86,23 @@ through the security operations APIs.
 All three endpoints are protected, read-only, and do not mutate financial or
 authority state.
 
+## Phase 22.1 Update
+
+Phase 22.1 remediated the medium findings that were safe to address before
+architecture review:
+
+- Auth endpoint rate limiting was added for login, password reset, MFA, and
+  OAuth-sensitive paths.
+- RabbitMQ default credential detection now escalates when production secret
+  enforcement is enabled.
+- Dependency audit release-gate tooling was added.
+- CSP was tightened where safe while retaining runtime-compatible script/style
+  allowances.
+
+Remaining items are intentionally deferred to security architecture review:
+distributed rate limiting, strict nonce/hash CSP, CI audit threshold policy, and
+production secret manager integration.
+
 ## Recommendation for Phase 22.1
 
 Proceed to targeted security remediation: production secret enforcement,

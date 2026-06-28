@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 
+import { checkAuthRateLimit } from "@/src/domains/auth/auth-rate-limit";
 import { loginController } from "@/src/domains/auth/auth.controller";
 import type { AuthRequestMetadata } from "@/src/domains/auth/auth.types";
 
 export const runtime = "nodejs";
 
 const INVALID_CREDENTIALS_ERROR = "Invalid username or password.";
+const RATE_LIMITED_ERROR = "Too many authentication attempts. Try again later.";
 
 function getRequestMetadata(request: Request): AuthRequestMetadata {
   const forwardedFor = request.headers.get("x-forwarded-for");
@@ -30,6 +32,21 @@ function loginFailureResponse(error = INVALID_CREDENTIALS_ERROR) {
   );
 }
 
+function rateLimitedResponse(retryAfterSeconds: number) {
+  return NextResponse.json(
+    {
+      success: false,
+      error: RATE_LIMITED_ERROR,
+    },
+    {
+      status: 429,
+      headers: {
+        "Retry-After": String(retryAfterSeconds),
+      },
+    }
+  );
+}
+
 export async function POST(request: Request) {
   let body: unknown;
 
@@ -38,6 +55,18 @@ export async function POST(request: Request) {
   } catch {
     return loginFailureResponse();
   }
+
+  const username =
+    typeof (body as { username?: unknown })?.username === "string"
+      ? (body as { username: string }).username
+      : null;
+  const rateLimit = checkAuthRateLimit({
+    area: "LOGIN",
+    request,
+    identifiers: [username],
+  });
+
+  if (!rateLimit.allowed) return rateLimitedResponse(rateLimit.retryAfterSeconds);
 
   const result = await loginController({
     body,

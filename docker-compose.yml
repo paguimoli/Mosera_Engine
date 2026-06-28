@@ -40,6 +40,8 @@ services:
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://lottery:lottery_dev_password@rabbitmq:5672}
       RABBITMQ_EXCHANGE_NAME: ${RABBITMQ_EXCHANGE_NAME:-lottery.events}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      SECURITY_ENFORCE_PRODUCTION_SECRETS: ${SECURITY_ENFORCE_PRODUCTION_SECRETS:-false}
+      SECURITY_AUDIT_LEVEL: ${SECURITY_AUDIT_LEVEL:-critical}
       SETTLEMENT_AUTHORITY: ${SETTLEMENT_AUTHORITY:-MONOLITH}
       LEDGER_AUTHORITY: ${LEDGER_AUTHORITY:-MONOLITH}
       CREDIT_AUTHORITY: ${CREDIT_AUTHORITY:-MONOLITH}
@@ -173,8 +175,8 @@ services:
       - "5672:5672"
       - "15672:15672"
     environment:
-      RABBITMQ_DEFAULT_USER: lottery
-      RABBITMQ_DEFAULT_PASS: lottery_dev_password
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-lottery}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-lottery_dev_password}
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
 

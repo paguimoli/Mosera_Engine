@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { issueClientCredentialsToken } from "@/src/domains/auth/api-client.service";
+import { checkAuthRateLimit } from "@/src/domains/auth/auth-rate-limit";
 
 export const runtime = "nodejs";
 
@@ -49,6 +50,25 @@ export async function POST(request: Request) {
 
   const clientId = getString(body.client_id);
   const clientSecret = getString(body.client_secret);
+  const rateLimit = checkAuthRateLimit({
+    area: "OAUTH_TOKEN",
+    request,
+    identifiers: [clientId],
+  });
+
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      {
+        error: "temporarily_unavailable",
+      },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(rateLimit.retryAfterSeconds),
+        },
+      }
+    );
+  }
 
   if (!clientId || !clientSecret) {
     return oauthError("invalid_client", 401);

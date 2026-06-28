@@ -4,6 +4,7 @@ import {
   AuthMiddlewareError,
   requireAuthenticatedUser,
 } from "@/src/domains/auth/auth-middleware";
+import { checkAuthRateLimit } from "@/src/domains/auth/auth-rate-limit";
 import { verifyTotpEnrollment } from "@/src/domains/auth/mfa.service";
 
 export const runtime = "nodejs";
@@ -28,6 +29,21 @@ function getTotpCode(body: VerifyTotpRequestBody): string | null {
   }
 
   return body.code.trim();
+}
+
+function rateLimitedResponse(retryAfterSeconds: number) {
+  return NextResponse.json(
+    {
+      success: false,
+      error: "MFA verification failed.",
+    },
+    {
+      status: 429,
+      headers: {
+        "Retry-After": String(retryAfterSeconds),
+      },
+    }
+  );
 }
 
 export async function POST(request: Request) {
@@ -56,6 +72,14 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+
+  const rateLimit = checkAuthRateLimit({
+    area: "MFA_TOTP_VERIFY",
+    request,
+    identifiers: [code],
+  });
+
+  if (!rateLimit.allowed) return rateLimitedResponse(rateLimit.retryAfterSeconds);
 
   try {
     const authContext = await requireAuthenticatedUser(request);

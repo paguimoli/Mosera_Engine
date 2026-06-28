@@ -66,11 +66,47 @@ export type SecurityPlatformState = {
   baselineStatus: AuthorityBaselineStatus["overallBaselineStatus"];
 };
 
+export type SecurityDependencyAuditStatus = {
+  status: "PASS" | "WARNING" | "FAIL" | "UNAVAILABLE";
+  threshold: "low" | "moderate" | "high" | "critical";
+  totalVulnerabilities: number;
+  counts: {
+    low: number;
+    moderate: number;
+    high: number;
+    critical: number;
+  };
+  checkedAt: string | null;
+  error: string | null;
+};
+
+export type SecurityControlStatus = {
+  authRateLimit: {
+    enabled: boolean;
+    mode: "IN_MEMORY";
+    distributed: boolean;
+    limitation: string;
+  };
+  rabbitmqSecrets: {
+    defaultCredentialsDetected: boolean;
+    productionSecretEnforcementEnabled: boolean;
+    posture: "READY" | "WARNING" | "ACTION_REQUIRED";
+  };
+  dependencyAudit: SecurityDependencyAuditStatus;
+  csp: {
+    enabled: boolean;
+    tightened: boolean;
+    nonceBased: boolean;
+    limitation: string;
+  };
+};
+
 export type SecurityFindingsReport = {
   findings: SecurityFinding[];
   severitySummary: SecuritySeveritySummary;
   implementedImprovements: SecurityFinding[];
   deferredItems: SecurityFinding[];
+  controlStatus: SecurityControlStatus;
   generatedAt: string;
 };
 
@@ -86,6 +122,7 @@ export type SecurityStatus = {
   warnings: string[];
   recommendation: string;
   platformState: SecurityPlatformState;
+  controlStatus: SecurityControlStatus;
 };
 
 export type SecuritySummary = {
@@ -98,4 +135,5 @@ export type SecuritySummary = {
   riskRegister: SecurityFinding[];
   recommendation: string;
   platformState: SecurityPlatformState;
+  controlStatus: SecurityControlStatus;
 };

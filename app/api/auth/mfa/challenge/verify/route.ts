@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { checkAuthRateLimit } from "@/src/domains/auth/auth-rate-limit";
 import { verifyMfaChallenge } from "@/src/domains/auth/mfa.service";
 import type { AuthRequestMetadata } from "@/src/domains/auth/auth.types";
 
@@ -51,6 +52,21 @@ function invalidMfaChallengeResponse() {
   );
 }
 
+function rateLimitedResponse(retryAfterSeconds: number) {
+  return NextResponse.json(
+    {
+      success: false,
+      error: INVALID_MFA_CHALLENGE_ERROR,
+    },
+    {
+      status: 429,
+      headers: {
+        "Retry-After": String(retryAfterSeconds),
+      },
+    }
+  );
+}
+
 export async function POST(request: Request) {
   let body: VerifyMfaChallengeRequestBody;
 
@@ -65,6 +81,14 @@ export async function POST(request: Request) {
   if (!input) {
     return invalidMfaChallengeResponse();
   }
+
+  const rateLimit = checkAuthRateLimit({
+    area: "MFA_CHALLENGE_VERIFY",
+    request,
+    identifiers: [input.challengeToken],
+  });
+
+  if (!rateLimit.allowed) return rateLimitedResponse(rateLimit.retryAfterSeconds);
 
   try {
     const result = await verifyMfaChallenge({
