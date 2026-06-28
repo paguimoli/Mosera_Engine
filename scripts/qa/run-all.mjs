@@ -60,6 +60,7 @@ const steps = [
   "qa:ticket-evidence-optimization",
   "qa:settlement-evidence-optimization",
   "qa:performance-validation",
+  "qa:resilience-baseline",
   "qa:performance-baseline",
   "qa:credit-launch",
   "qa:worker-observability",
