@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\GameEngine.Domain\GameEngine.Domain.csproj" />
+    <ProjectReference Include="..\GameEngine.Modules\GameEngine.Modules.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

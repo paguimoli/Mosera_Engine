@@ -6,12 +6,13 @@ public sealed record TicketValidationRequest(
     Guid GameDefinitionId,
     Guid GameDefinitionVersionId,
     Guid PlayerId,
-    string WagerType,
+    GameType GameType,
+    WagerType WagerType,
     IReadOnlyDictionary<string, object?> Payload);
 
 public sealed record TicketValidationResult(
     bool Accepted,
-    IReadOnlyCollection<string> Errors,
+    ValidationResult Validation,
     string ValidationHash);
 
 public sealed record DrawGenerationRequest(
@@ -21,25 +22,15 @@ public sealed record DrawGenerationRequest(
     DateTimeOffset SalesClosedAt);
 
 public sealed record DrawGenerationResult(
+    bool Generated,
     string ResultHash,
     IReadOnlyDictionary<string, object?> Payload,
-    DrawGenerationMetadata Metadata);
-
-public sealed record EvaluationRequest(
-    Guid TicketId,
-    Guid DrawScheduleId,
-    Guid GameDefinitionVersionId,
-    IReadOnlyDictionary<string, object?> TicketPayload,
-    IReadOnlyDictionary<string, object?> DrawPayload);
-
-public sealed record EvaluationResult(
-    string ResultCode,
-    string EvaluationHash,
-    IReadOnlyDictionary<string, object?> SettlementFacts);
+    DrawGenerationMetadata Metadata,
+    ValidationResult Validation);
 
 public sealed record ConfigurationValidationResult(
     bool Accepted,
-    IReadOnlyCollection<string> Errors,
+    ValidationResult Validation,
     string ConfigurationHash);
 
 public sealed record GameModuleHealthCheckResult(
@@ -49,15 +40,28 @@ public sealed record GameModuleHealthCheckResult(
     IReadOnlyCollection<string> Warnings,
     DateTimeOffset CheckedAt);
 
+public sealed record GameModuleFixture(
+    string FixtureId,
+    TicketValidationRequest InputTicket,
+    IReadOnlyDictionary<string, object?> DrawResult,
+    GameEvaluationOutcome ExpectedOutcome,
+    GameEvaluationAmount ExpectedPayout,
+    bool ExpectedValidationResult,
+    GameEvaluationReason ExpectedReasonCode);
+
 public interface IGameModule
 {
-    string ModuleCode { get; }
+    string ModuleId { get; }
+
+    GameModuleManifest GetManifest();
 
     string GetVersion();
 
-    GameModuleManifest GetMetadata();
+    GameModuleVersionMetadata GetVersionMetadata();
 
-    IReadOnlyCollection<string> SupportedWagers();
+    IReadOnlyCollection<GameType> GetSupportedGameTypes();
+
+    IReadOnlyCollection<WagerType> GetSupportedWagerTypes();
 }
 
 public interface IGameTicketValidator
@@ -67,12 +71,16 @@ public interface IGameTicketValidator
 
 public interface IGameDrawGenerator
 {
+    bool CanGenerateDraw(DrawGenerationRequest request);
+
     DrawGenerationResult GenerateDraw(DrawGenerationRequest request);
 }
 
 public interface IGameEvaluator
 {
-    EvaluationResult Evaluate(EvaluationRequest request);
+    GameEvaluationOutput EvaluateTicket(GameEvaluationInput input);
+
+    IReadOnlyCollection<GameEvaluationOutput> EvaluateBatch(IReadOnlyCollection<GameEvaluationInput> inputs);
 }
 
 public interface IGameConfigurationValidator
@@ -87,5 +95,10 @@ public interface IGameModuleHealthCheck
 
 public interface IGameModuleManifestProvider
 {
-    GameModuleManifest GetMetadata();
+    GameModuleManifest GetManifest();
+}
+
+public interface IGameModuleFixtureProvider
+{
+    IReadOnlyCollection<GameModuleFixture> GetDeterministicFixtures();
 }

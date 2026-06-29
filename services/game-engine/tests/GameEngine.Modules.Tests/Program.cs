@@ -1,17 +1,18 @@
-using GameEngine.Modules.HotSpot;
 using GameEngine.Modules.TestModule;
+using GameEngine.Modules.HotSpot;
+using GameEngine.Modules.Tests;
 
-var hotSpot = new HotSpotModule();
-var testModule = new TestGameModule();
-
-if (hotSpot.ModuleCode != "HOT_SPOT")
-{
-    throw new InvalidOperationException("HotSpot module code changed.");
-}
-
-if (!testModule.SupportedWagers().Contains("TEST_WAGER"))
-{
-    throw new InvalidOperationException("Test module supported wager missing.");
-}
+new TestModuleContractTests().RunContractTests();
+new HotSpotModuleContractTests().RunContractTests();
 
 Console.WriteLine("GameEngine.Modules.Tests PASS");
+
+internal sealed class TestModuleContractTests : GameModuleContractTestBase<TestGameModule>
+{
+    protected override TestGameModule CreateModule() => new();
+}
+
+internal sealed class HotSpotModuleContractTests : GameModuleContractTestBase<HotSpotModule>
+{
+    protected override HotSpotModule CreateModule() => new();
+}

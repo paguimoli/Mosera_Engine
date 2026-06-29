@@ -2,6 +2,7 @@ using GameEngine.Api.Configuration;
 using GameEngine.Api.Controllers;
 using GameEngine.Api.Middleware;
 using GameEngine.Application.Services;
+using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,6 +17,10 @@ var serviceConfiguration = ServiceConfiguration.FromEnvironment(builder.Environm
 
 builder.Services.AddSingleton(serviceConfiguration);
 builder.Services.AddSingleton<GameEngineStatusService>();
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
+});
 
 var app = builder.Build();
 

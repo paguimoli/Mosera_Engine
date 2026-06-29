@@ -72,6 +72,18 @@ public enum GameModuleHealthStatus
     Unhealthy
 }
 
+public enum GameType
+{
+    HotSpot,
+    Test
+}
+
+public enum WagerType
+{
+    Straight,
+    TestWager
+}
+
 public sealed record GameDefinition(
     Guid Id,
     string Code,
@@ -212,8 +224,37 @@ public sealed record DrawGenerationMetadata(
     string PayloadHash);
 
 public sealed record GameModuleManifest(
-    string ModuleCode,
+    string ModuleId,
+    string ModuleName,
     string ModuleVersion,
+    IReadOnlyCollection<GameType> GameTypes,
+    IReadOnlyCollection<WagerType> SupportedWagerTypes,
+    IReadOnlyCollection<DrawProviderType> SupportedDrawAuthorityTypes,
+    bool SupportsInternalDrawGeneration,
+    bool SupportsExternalResultEvaluation,
+    bool SupportsManualResultEvaluation,
+    string ConfigurationSchemaVersion,
+    string EvaluatorVersion,
+    string DrawGeneratorVersion,
+    string MinimumGameEngineVersion,
+    GameModuleLifecycleStatus LifecycleStatus,
+    string Checksum,
+    DateTimeOffset CreatedAt,
+    string BuildMetadata);
+
+public sealed record GameModuleStatus(
+    GameModuleManifest Manifest,
+    GameModuleHealthStatus HealthStatus,
+    bool ProductionReady,
+    IReadOnlyCollection<string> LifecycleGateBlockers,
+    IReadOnlyCollection<string> LifecycleGateWarnings,
+    DateTimeOffset CheckedAt);
+
+public sealed record GameModuleVersionMetadata(
+    string ModuleVersion,
+    string EvaluatorVersion,
+    string DrawGeneratorVersion,
+    string ConfigurationSchemaVersion,
     string SdkVersion,
-    IReadOnlyCollection<string> SupportedWagers,
-    GameModuleLifecycleStatus LifecycleStatus);
+    string MinimumGameEngineVersion,
+    string Checksum);

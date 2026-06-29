@@ -26,4 +26,21 @@ if (!Enum.IsDefined(GameModuleLifecycleStatus.ProductionActive))
     throw new InvalidOperationException("Game module lifecycle must include ProductionActive.");
 }
 
+var validation = ValidationResult.Failure(new ValidationError(
+    ValidationCode.InvalidTicket,
+    "ticket",
+    "Ticket is invalid.",
+    ValidationSeverity.Error));
+
+if (validation.IsValid || validation.Errors.First().Code != ValidationCode.InvalidTicket)
+{
+    throw new InvalidOperationException("Validation model must expose structured error codes.");
+}
+
+var amount = new GameEvaluationAmount("USD", 10m, 20m, 10m);
+if (amount.NetAmount != 10m)
+{
+    throw new InvalidOperationException("Evaluation amount must preserve settlement-ready monetary facts.");
+}
+
 Console.WriteLine("GameEngine.Domain.Tests PASS");

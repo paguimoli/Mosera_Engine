@@ -52,7 +52,7 @@ public static class GameEngineEndpoints
             return Results.Ok(new
             {
                 success = true,
-                modules = statusService.ListModules(),
+                modules = statusService.ListModuleStatuses(),
                 correlationId = context.GetCorrelationId()
             });
         });
