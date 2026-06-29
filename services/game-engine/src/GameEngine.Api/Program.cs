@@ -18,6 +18,10 @@ var serviceConfiguration = ServiceConfiguration.FromEnvironment(builder.Environm
 builder.Services.AddSingleton(serviceConfiguration);
 builder.Services.AddSingleton<GameModuleRegistry>();
 builder.Services.AddSingleton<DrawAuthorityRegistry>();
+builder.Services.AddSingleton<RandomnessRegistry>();
+builder.Services.AddSingleton<ValidationSuite>();
+builder.Services.AddSingleton<CertificationSuite>();
+builder.Services.AddSingleton<DrawGenerationFramework>();
 builder.Services.AddSingleton<GameEngineStatusService>();
 builder.Services.ConfigureHttpJsonOptions(options =>
 {

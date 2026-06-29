@@ -1,5 +1,6 @@
 using GameEngine.Application.Services;
 using GameEngine.Domain.Model;
+using GameEngine.Domain.Randomness;
 
 var registry = new GameModuleRegistry();
 var drawAuthorityRegistry = new DrawAuthorityRegistry();
@@ -178,6 +179,93 @@ catch (InvalidOperationException)
 if (!rejectedOverwrite)
 {
     throw new InvalidOperationException("Second official result for same draw should be rejected.");
+}
+
+var randomnessRegistry = new RandomnessRegistry();
+var randomnessProviders = randomnessRegistry.GetProviders();
+if (randomnessProviders.Count != 2)
+{
+    throw new InvalidOperationException("Expected production and test randomness provider placeholders.");
+}
+
+if (randomnessProviders.Any(provider => provider.Metadata.ProductionRngImplemented))
+{
+    throw new InvalidOperationException("Phase 22.6E must not expose an approved production RNG implementation.");
+}
+
+var productionProvider = randomnessRegistry.GetProvider("secure-rng-placeholder");
+var productionBytes = productionProvider.GenerateRandomBytes(16);
+if (productionBytes.Length != 16)
+{
+    throw new InvalidOperationException("Production RNG abstraction must generate requested byte length.");
+}
+
+var firstTestProvider = new DeterministicTestRandomnessProvider(seed: 226);
+var secondTestProvider = new DeterministicTestRandomnessProvider(seed: 226);
+var firstSequence = Enumerable.Range(0, 8).Select(_ => firstTestProvider.GenerateBoundedInteger(1, 50)).ToArray();
+var secondSequence = Enumerable.Range(0, 8).Select(_ => secondTestProvider.GenerateBoundedInteger(1, 50)).ToArray();
+if (!firstSequence.SequenceEqual(secondSequence))
+{
+    throw new InvalidOperationException("Deterministic test provider must be repeatable with the same seed.");
+}
+
+var drawFramework = new DrawGenerationFramework();
+var deterministicForSampling = new DeterministicTestRandomnessProvider(seed: 226);
+var withoutReplacement = drawFramework.SampleWithoutReplacement(
+    new DrawSamplingRequest(1, 10, 5, DrawSamplingMode.WithoutReplacement),
+    deterministicForSampling);
+if (withoutReplacement.Count != 5 || withoutReplacement.Distinct().Count() != 5)
+{
+    throw new InvalidOperationException("Sampling without replacement must return unique values.");
+}
+
+var validationSuite = new ValidationSuite();
+var validationResults = validationSuite.DiscoverValidators();
+if (validationResults.Count < 10)
+{
+    throw new InvalidOperationException("Validation suite must discover validators and benchmarks.");
+}
+
+var statisticsStatus = validationSuite.GetStatisticsStatus();
+if (statisticsStatus.ValidatorCount < 7 || statisticsStatus.BenchmarkCount < 3)
+{
+    throw new InvalidOperationException("Statistical validator and benchmark registration is incomplete.");
+}
+
+var certificationSuite = new CertificationSuite(randomnessRegistry, validationSuite);
+var package = certificationSuite.GetPackages().Single();
+if (package.Status != CertificationStatus.Generated)
+{
+    throw new InvalidOperationException("Certification package should be generated as structured framework evidence.");
+}
+
+if (package.Checksums.Count == 0 || package.Checksums.Any(checksum => checksum.Algorithm != EvidenceHashAlgorithm.Sha256))
+{
+    throw new InvalidOperationException("Certification package must include SHA256 checksums.");
+}
+
+if (!package.GameMetadata.ContainsKey("gameRules") ||
+    !package.ModuleMetadata.ContainsKey("moduleVersion") ||
+    !package.VersionMetadata.ContainsKey("providerVersion") ||
+    !package.ConfigurationMetadata.ContainsKey("range") ||
+    !package.BuildMetadata.ContainsKey("runtimeVersion") ||
+    !package.EnvironmentMetadata.ContainsKey("os") ||
+    !package.HardwareMetadata.ContainsKey("processorCount"))
+{
+    throw new InvalidOperationException("Certification package metadata is incomplete.");
+}
+
+var evidence = package.Evidence.Single().EvidenceFile;
+var alteredEvidence = evidence with { FileName = "altered.json" };
+if (evidence.FileName == alteredEvidence.FileName)
+{
+    throw new InvalidOperationException("Evidence record immutability check failed.");
+}
+
+var validationCommand = validationSuite.RunPlaceholderValidation(ValidationSuiteCommand.ValidateDrawGenerator).Single();
+if (validationCommand.Status != ValidationCheckStatus.Placeholder)
+{
+    throw new InvalidOperationException("Validation commands must remain placeholder-only in this phase.");
 }
 
 Console.WriteLine("GameEngine.Application.Tests PASS");

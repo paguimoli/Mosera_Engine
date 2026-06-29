@@ -222,6 +222,83 @@ public static class GameEngineEndpoints
             });
         });
 
+        group.MapGet("/randomness", (HttpContext context, RandomnessRegistry registry) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                randomness = registry.GetStatus(),
+                productionRngImplemented = false,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/randomness/providers", (HttpContext context, RandomnessRegistry registry) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                providers = registry.GetProviders(),
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/certification", (HttpContext context, CertificationSuite suite) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                certification = suite.GetStatus(),
+                archiveGenerationEnabled = false,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/certification/packages", (HttpContext context, CertificationSuite suite) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                certificationPackages = suite.GetPackages(),
+                reproducible = true,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/validation", (HttpContext context, ValidationSuite suite) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                validation = suite.DiscoverValidators(),
+                longRunningExecutionEnabled = false,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/statistics", (HttpContext context, ValidationSuite suite) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                statistics = suite.GetStatisticsStatus(),
+                algorithmStatus = "FRAMEWORK_ONLY",
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/evidence", (HttpContext context, CertificationSuite suite) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                evidence = suite.GetPackages().SelectMany(package => package.Evidence),
+                checksumAlgorithm = "SHA256",
+                mutationPerformed = false,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
         group.MapGet("/evaluation-runs", (HttpContext context, GameEngineStatusService statusService) =>
         {
             return Results.Ok(new
@@ -265,6 +342,32 @@ public static class GameEngineEndpoints
                 success = true,
                 action = "manual_result_submission_placeholder",
                 officialCertifiedResultCreated = false,
+                authBoundary = "admin_placeholder",
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapPost("/certification/build", (HttpContext context, CertificationSuite suite) =>
+        {
+            return Results.Accepted(value: new
+            {
+                success = true,
+                action = "certification_package_build_placeholder",
+                certificationPackage = suite.BuildPackage("ad-hoc-placeholder-profile"),
+                archiveGenerated = false,
+                authBoundary = "admin_placeholder",
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapPost("/validation/run", (HttpContext context, ValidationSuite suite) =>
+        {
+            return Results.Accepted(value: new
+            {
+                success = true,
+                action = "validation_run_placeholder",
+                validationResults = suite.RunPlaceholderValidation(GameEngine.Domain.Model.ValidationSuiteCommand.ValidatePrng),
+                longRunningExecutionStarted = false,
                 authBoundary = "admin_placeholder",
                 correlationId = context.GetCorrelationId()
             });
