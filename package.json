@@ -206,6 +206,7 @@
     "game-engine:test": "if command -v dotnet >/dev/null 2>&1; then dotnet run --project services/game-engine/tests/GameEngine.Domain.Tests/GameEngine.Domain.Tests.csproj && dotnet run --project services/game-engine/tests/GameEngine.Application.Tests/GameEngine.Application.Tests.csproj && dotnet run --project services/game-engine/tests/GameEngine.Modules.Tests/GameEngine.Modules.Tests.csproj; elif [ \"$GAME_ENGINE_BUILD_VALIDATED\" = \"true\" ]; then echo \"Game Engine tests validated externally\"; else echo \"dotnet SDK unavailable; run with GAME_ENGINE_BUILD_VALIDATED=true only after external dotnet test validation\" >&2; exit 1; fi",
     "game-engine:contract-test": "if command -v dotnet >/dev/null 2>&1; then dotnet run --project services/game-engine/tests/GameEngine.Modules.Tests/GameEngine.Modules.Tests.csproj; elif [ \"$GAME_ENGINE_BUILD_VALIDATED\" = \"true\" ]; then echo \"Game Module SDK contract tests validated externally\"; else echo \"dotnet SDK unavailable; run with GAME_ENGINE_BUILD_VALIDATED=true only after external contract test validation\" >&2; exit 1; fi",
     "qa:game-module-sdk": "node scripts/qa/game-module-sdk.mjs",
+    "qa:game-module-registry": "node scripts/qa/game-module-registry.mjs",
     "docker:build": "docker compose build",
     "docker:up": "docker compose up",
     "docker:down": "docker compose down",

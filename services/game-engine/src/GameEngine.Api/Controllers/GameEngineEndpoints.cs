@@ -47,12 +47,83 @@ public static class GameEngineEndpoints
             });
         });
 
-        group.MapGet("/modules", (HttpContext context, GameEngineStatusService statusService) =>
+        group.MapGet("/modules", (HttpContext context, GameModuleRegistry registry) =>
         {
             return Results.Ok(new
             {
                 success = true,
-                modules = statusService.ListModuleStatuses(),
+                modules = registry.GetRegisteredModules().Select(ToModuleDiagnostic),
+                inactiveModules = registry.GetInactiveModules(),
+                productionReadyModules = registry.GetProductionReadyModules(),
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/modules/{id}", (string id, HttpContext context, GameModuleRegistry registry) =>
+        {
+            var module = registry.GetModule(id);
+            return module is null
+                ? Results.NotFound(new
+                {
+                    success = false,
+                    message = "Game module not found.",
+                    moduleId = id,
+                    correlationId = context.GetCorrelationId()
+                })
+                : Results.Ok(new
+                {
+                    success = true,
+                    module,
+                    correlationId = context.GetCorrelationId()
+                });
+        });
+
+        group.MapGet("/modules/{id}/versions", (string id, HttpContext context, GameModuleRegistry registry) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                moduleId = id,
+                versions = registry.GetModuleVersions(id),
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/game-bindings", (HttpContext context, GameModuleRegistry registry) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                gameBindings = registry.GetGameBindings(),
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/game-bindings/{id:guid}", (Guid id, HttpContext context, GameModuleRegistry registry) =>
+        {
+            var binding = registry.GetGameBinding(id);
+            return binding is null
+                ? Results.NotFound(new
+                {
+                    success = false,
+                    message = "Game binding not found.",
+                    gameBindingId = id,
+                    correlationId = context.GetCorrelationId()
+                })
+                : Results.Ok(new
+                {
+                    success = true,
+                    gameBinding = binding,
+                    correlationId = context.GetCorrelationId()
+                });
+        });
+
+        group.MapGet("/registry-status", (HttpContext context, GameModuleRegistry registry) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                registryStatus = registry.GetRegistryStatus(),
                 correlationId = context.GetCorrelationId()
             });
         });
@@ -113,5 +184,33 @@ public static class GameEngineEndpoints
                 correlationId = context.GetCorrelationId()
             });
         });
+    }
+
+    private static object ToModuleDiagnostic(GameEngine.Domain.Model.GameModuleRegistryEntry entry)
+    {
+        return new
+        {
+            manifest = new
+            {
+                moduleId = entry.ModuleId,
+                moduleName = entry.ModuleName,
+                moduleVersion = entry.ModuleVersion,
+                gameTypes = entry.SupportedGameTypes,
+                supportedWagerTypes = entry.SupportedWagerTypes,
+                supportedDrawAuthorityTypes = entry.SupportedDrawAuthorities,
+                supportsInternalDrawGeneration = entry.DrawGenerationCapability,
+                configurationSchemaVersion = entry.ConfigurationSchemaVersion,
+                lifecycleStatus = entry.LifecycleStatus
+            },
+            healthStatus = entry.HealthStatus,
+            approvalStatus = entry.ApprovalStatus,
+            productionReady = entry.ProductionReady,
+            loadedAssembly = entry.LoadedAssembly,
+            loadTimestamp = entry.LoadTimestamp,
+            registrationStatus = entry.RegistrationStatus,
+            validation = entry.Validation,
+            lifecycleGateBlockers = entry.LifecycleGateBlockers,
+            lifecycleGateWarnings = entry.LifecycleGateWarnings
+        };
     }
 }

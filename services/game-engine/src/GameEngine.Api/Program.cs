@@ -16,6 +16,7 @@ builder.Logging.AddJsonConsole(options =>
 var serviceConfiguration = ServiceConfiguration.FromEnvironment(builder.Environment);
 
 builder.Services.AddSingleton(serviceConfiguration);
+builder.Services.AddSingleton<GameModuleRegistry>();
 builder.Services.AddSingleton<GameEngineStatusService>();
 builder.Services.ConfigureHttpJsonOptions(options =>
 {

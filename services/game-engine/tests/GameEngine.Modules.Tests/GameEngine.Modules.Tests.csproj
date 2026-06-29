@@ -1,6 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\GameEngine.Application\GameEngine.Application.csproj" />
     <ProjectReference Include="..\..\src\GameEngine.Modules\GameEngine.Modules.csproj" />
     <ProjectReference Include="..\..\src\GameEngine.Domain\GameEngine.Domain.csproj" />
   </ItemGroup>

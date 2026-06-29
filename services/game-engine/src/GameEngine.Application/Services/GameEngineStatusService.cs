@@ -1,11 +1,8 @@
 using GameEngine.Domain.Model;
-using GameEngine.Domain.Modules;
-using GameEngine.Modules.HotSpot;
-using GameEngine.Modules.TestModule;
 
 namespace GameEngine.Application.Services;
 
-public sealed class GameEngineStatusService
+public sealed class GameEngineStatusService(GameModuleRegistry registry)
 {
     public GameEngineStatus GetStatus()
     {
@@ -20,16 +17,56 @@ public sealed class GameEngineStatusService
 
     public IReadOnlyCollection<GameModuleManifest> ListModules()
     {
-        return ListModuleStatuses().Select(status => status.Manifest).ToArray();
+        return registry.GetRegisteredModules()
+            .Select(entry => new GameModuleManifest(
+                entry.ModuleId,
+                entry.ModuleName,
+                entry.ModuleVersion,
+                entry.SupportedGameTypes,
+                entry.SupportedWagerTypes,
+                entry.SupportedDrawAuthorities,
+                entry.DrawGenerationCapability,
+                SupportsExternalResultEvaluation: true,
+                SupportsManualResultEvaluation: entry.SupportedDrawAuthorities.Contains(DrawProviderType.ManualCertifiedEntry),
+                entry.ConfigurationSchemaVersion,
+                EvaluatorVersion: "registered",
+                DrawGeneratorVersion: entry.DrawGenerationCapability ? "registered" : "not-supported",
+                MinimumGameEngineVersion: "0.1.0",
+                entry.LifecycleStatus,
+                Checksum: entry.Validation.IsValid ? "registered" : "invalid",
+                entry.LoadTimestamp,
+                entry.LoadedAssembly))
+            .ToArray();
     }
 
     public IReadOnlyCollection<GameModuleStatus> ListModuleStatuses()
     {
-        return
-        [
-            BuildModuleStatus(new HotSpotModule()),
-            BuildModuleStatus(new TestGameModule())
-        ];
+        return registry.GetRegisteredModules()
+            .Select(entry => new GameModuleStatus(
+                new GameModuleManifest(
+                    entry.ModuleId,
+                    entry.ModuleName,
+                    entry.ModuleVersion,
+                    entry.SupportedGameTypes,
+                    entry.SupportedWagerTypes,
+                    entry.SupportedDrawAuthorities,
+                    entry.DrawGenerationCapability,
+                    SupportsExternalResultEvaluation: true,
+                    SupportsManualResultEvaluation: entry.SupportedDrawAuthorities.Contains(DrawProviderType.ManualCertifiedEntry),
+                    entry.ConfigurationSchemaVersion,
+                    EvaluatorVersion: "registered",
+                    DrawGeneratorVersion: entry.DrawGenerationCapability ? "registered" : "not-supported",
+                    MinimumGameEngineVersion: "0.1.0",
+                    entry.LifecycleStatus,
+                    Checksum: entry.Validation.IsValid ? "registered" : "invalid",
+                    entry.LoadTimestamp,
+                    entry.LoadedAssembly),
+                entry.HealthStatus,
+                entry.ProductionReady,
+                entry.LifecycleGateBlockers,
+                entry.LifecycleGateWarnings,
+                entry.LoadTimestamp))
+            .ToArray();
     }
 
     public IReadOnlyCollection<DrawAuthority> ListDrawAuthorities()
@@ -42,26 +79,6 @@ public sealed class GameEngineStatusService
         return [];
     }
 
-    private static GameModuleStatus BuildModuleStatus<TModule>(TModule module)
-        where TModule :
-            IGameModule,
-            IGameConfigurationValidator,
-            IGameTicketValidator,
-            IGameEvaluator,
-            IGameModuleHealthCheck,
-            IGameModuleFixtureProvider
-    {
-        var gate = GameModuleLifecycleGate.Evaluate(module, module, module, module, module, module);
-        var health = module.HealthCheck();
-
-        return new GameModuleStatus(
-            module.GetManifest(),
-            health.Status,
-            gate.ProductionReady,
-            gate.Blockers,
-            gate.Warnings,
-            DateTimeOffset.UtcNow);
-    }
 }
 
 public sealed record GameEngineStatus(
