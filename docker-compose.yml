@@ -169,6 +169,23 @@ services:
       - rabbitmq
       - redis
 
+  game-engine:
+    build:
+      context: ./services/game-engine
+      dockerfile: Dockerfile
+    ports:
+      - "5500:8080"
+    environment:
+      SERVICE_NAME: ${GAME_ENGINE_SERVICE_NAME:-game-engine}
+      ASPNETCORE_ENVIRONMENT: ${GAME_ENGINE_SERVICE_ENVIRONMENT:-Production}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://lottery:lottery_dev_password@rabbitmq:5672}
+      RABBITMQ_EXCHANGE_NAME: ${RABBITMQ_EXCHANGE_NAME:-lottery.events}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      GAME_ENGINE_SCHEMA: ${GAME_ENGINE_SCHEMA:-game_engine}
+    depends_on:
+      - rabbitmq
+      - redis
+
   rabbitmq:
     image: rabbitmq:3-management
     ports:

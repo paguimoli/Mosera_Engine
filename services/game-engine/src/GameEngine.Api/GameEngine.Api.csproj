@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\GameEngine.Domain\GameEngine.Domain.csproj" />
+    <ProjectReference Include="..\GameEngine.Application\GameEngine.Application.csproj" />
+    <ProjectReference Include="..\GameEngine.Infrastructure\GameEngine.Infrastructure.csproj" />
+    <ProjectReference Include="..\GameEngine.Modules\GameEngine.Modules.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>
