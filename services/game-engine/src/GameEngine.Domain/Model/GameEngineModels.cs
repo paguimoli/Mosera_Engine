@@ -13,9 +13,13 @@ public enum GameModuleLifecycleStatus
 public enum DrawAuthorityStatus
 {
     Draft,
+    Testing,
+    InternallyApproved,
     PendingApproval,
     Approved,
+    ExternallyCertified,
     ProductionActive,
+    Production,
     Suspended,
     Retired
 }
@@ -23,9 +27,12 @@ public enum DrawAuthorityStatus
 public enum DrawProviderType
 {
     InternalPrng,
+    InternalProductionPrng,
+    InternalTestPrng,
     ExternalRngProvider,
     OfficialFeed,
-    ManualCertifiedEntry
+    ManualCertifiedEntry,
+    SupplierApi
 }
 
 public enum DrawLifecycleStatus

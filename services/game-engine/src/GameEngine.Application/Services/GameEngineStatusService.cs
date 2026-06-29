@@ -2,7 +2,7 @@ using GameEngine.Domain.Model;
 
 namespace GameEngine.Application.Services;
 
-public sealed class GameEngineStatusService(GameModuleRegistry registry)
+public sealed class GameEngineStatusService(GameModuleRegistry registry, DrawAuthorityRegistry drawAuthorityRegistry)
 {
     public GameEngineStatus GetStatus()
     {
@@ -71,7 +71,15 @@ public sealed class GameEngineStatusService(GameModuleRegistry registry)
 
     public IReadOnlyCollection<DrawAuthority> ListDrawAuthorities()
     {
-        return [];
+        return drawAuthorityRegistry.GetRegisteredAuthorities()
+            .Select(entry => new DrawAuthority(
+                entry.Authority.Id,
+                entry.Authority.Code,
+                entry.Authority.DisplayName,
+                entry.Authority.ProviderType,
+                entry.Authority.Status,
+                entry.Authority.ActiveVersionId))
+            .ToArray();
     }
 
     public IReadOnlyCollection<GameEvaluationRun> ListEvaluationRuns()

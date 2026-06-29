@@ -2,7 +2,8 @@ using GameEngine.Application.Services;
 using GameEngine.Domain.Model;
 
 var registry = new GameModuleRegistry();
-var statusService = new GameEngineStatusService(registry);
+var drawAuthorityRegistry = new DrawAuthorityRegistry();
+var statusService = new GameEngineStatusService(registry, drawAuthorityRegistry);
 var status = statusService.GetStatus();
 var modules = statusService.ListModuleStatuses();
 
@@ -87,6 +88,96 @@ var invalidBinding = registry.CreateProspectiveBinding(new GameBindingRequest(
 if (invalidBinding.Versions.Single().Status != GameBindingStatus.Rejected)
 {
     throw new InvalidOperationException("Invalid game binding should be rejected.");
+}
+
+var drawAuthorityStatus = drawAuthorityRegistry.GetRegistryStatus();
+if (drawAuthorityStatus.RegisteredAuthorityCount < 5)
+{
+    throw new InvalidOperationException("Expected placeholder Draw Authorities to be registered.");
+}
+
+var testPrng = drawAuthorityRegistry.GetRegisteredAuthorities().Single(entry => entry.Authority.Code == "internal-test-prng");
+var testProductionAssignment = drawAuthorityRegistry.ValidateAssignment(
+    testPrng.Authority.Id,
+    Guid.NewGuid(),
+    productionBinding: true,
+    [DrawAuthorityCapability.CanGenerateInternalResults]);
+if (testProductionAssignment.Status != DrawAuthorityAssignmentStatus.Rejected)
+{
+    throw new InvalidOperationException("Internal Test PRNG must reject production assignment.");
+}
+
+var manual = drawAuthorityRegistry.GetRegisteredAuthorities().Single(entry => entry.Authority.Code == "manual-certified-entry");
+var manualTestingAssignment = drawAuthorityRegistry.ValidateAssignment(
+    manual.Authority.Id,
+    Guid.NewGuid(),
+    productionBinding: false,
+    [DrawAuthorityCapability.CanAcceptManualResults]);
+if (manualTestingAssignment.Status == DrawAuthorityAssignmentStatus.Rejected)
+{
+    throw new InvalidOperationException("Manual certified result authority should allow testing assignment.");
+}
+
+var submissions = drawAuthorityRegistry.GetResultSubmissions();
+if (submissions.Count < 2)
+{
+    throw new InvalidOperationException("Multiple result submissions must be supported.");
+}
+
+var certificationService = new DrawCertificationService(drawAuthorityRegistry.GetRegisteredAuthorities(), submissions);
+var firstSubmission = submissions.First();
+var rejectedMissingMetadata = false;
+try
+{
+    certificationService.CertifyResult(new DrawCertificationDecision(
+        firstSubmission.DrawScheduleId,
+        firstSubmission.Id,
+        firstSubmission.DrawAuthorityId,
+        "operator-placeholder",
+        OperatorCertificationMetadataPresent: false,
+        DateTimeOffset.UtcNow));
+}
+catch (InvalidOperationException)
+{
+    rejectedMissingMetadata = true;
+}
+
+if (!rejectedMissingMetadata)
+{
+    throw new InvalidOperationException("Manual certification without metadata should be rejected.");
+}
+
+var official = certificationService.CertifyResult(new DrawCertificationDecision(
+    firstSubmission.DrawScheduleId,
+    firstSubmission.Id,
+    firstSubmission.DrawAuthorityId,
+    "operator-placeholder",
+    OperatorCertificationMetadataPresent: true,
+    DateTimeOffset.UtcNow));
+if (official.Status != DrawCertificationStatus.Approved)
+{
+    throw new InvalidOperationException("Official certified result should be approved when metadata exists.");
+}
+
+var rejectedOverwrite = false;
+try
+{
+    certificationService.CertifyResult(new DrawCertificationDecision(
+        firstSubmission.DrawScheduleId,
+        submissions.Last().Id,
+        firstSubmission.DrawAuthorityId,
+        "operator-placeholder",
+        OperatorCertificationMetadataPresent: true,
+        DateTimeOffset.UtcNow));
+}
+catch (InvalidOperationException)
+{
+    rejectedOverwrite = true;
+}
+
+if (!rejectedOverwrite)
+{
+    throw new InvalidOperationException("Second official result for same draw should be rejected.");
 }
 
 Console.WriteLine("GameEngine.Application.Tests PASS");

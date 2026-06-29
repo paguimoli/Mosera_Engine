@@ -128,13 +128,96 @@ public static class GameEngineEndpoints
             });
         });
 
-        group.MapGet("/draw-authorities", (HttpContext context, GameEngineStatusService statusService) =>
+        group.MapGet("/draw-authorities", (HttpContext context, DrawAuthorityRegistry registry) =>
         {
             return Results.Ok(new
             {
                 success = true,
-                drawAuthorities = statusService.ListDrawAuthorities(),
+                drawAuthorities = registry.GetRegisteredAuthorities(),
+                providers = registry.GetProviders(),
                 approvalWorkflow = "required_before_production_use",
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/draw-authorities/{id:guid}", (Guid id, HttpContext context, DrawAuthorityRegistry registry) =>
+        {
+            var authority = registry.GetAuthority(id);
+            return authority is null
+                ? Results.NotFound(new
+                {
+                    success = false,
+                    message = "Draw Authority not found.",
+                    drawAuthorityId = id,
+                    correlationId = context.GetCorrelationId()
+                })
+                : Results.Ok(new
+                {
+                    success = true,
+                    drawAuthority = authority,
+                    correlationId = context.GetCorrelationId()
+                });
+        });
+
+        group.MapGet("/draw-authorities/{id:guid}/versions", (Guid id, HttpContext context, DrawAuthorityRegistry registry) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                drawAuthorityId = id,
+                versions = registry.GetAuthorityVersions(id),
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/draw-authorities/{id:guid}/health", (Guid id, HttpContext context, DrawAuthorityRegistry registry) =>
+        {
+            var authority = registry.GetAuthority(id);
+            return authority is null
+                ? Results.NotFound(new
+                {
+                    success = false,
+                    message = "Draw Authority not found.",
+                    drawAuthorityId = id,
+                    correlationId = context.GetCorrelationId()
+                })
+                : Results.Ok(new
+                {
+                    success = true,
+                    drawAuthorityId = id,
+                    providerHealth = authority.ProviderHealth,
+                    correlationId = context.GetCorrelationId()
+                });
+        });
+
+        group.MapGet("/draw-authority-registry-status", (HttpContext context, DrawAuthorityRegistry registry) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                registryStatus = registry.GetRegistryStatus(),
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/draw-result-submissions", (HttpContext context, DrawAuthorityRegistry registry) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                drawResultSubmissions = registry.GetResultSubmissions(),
+                immutable = true,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/official-certified-results", (HttpContext context, DrawAuthorityRegistry registry) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                officialCertifiedResults = registry.GetOfficialCertifiedResults(),
+                settlementIntegrationEnabled = false,
                 correlationId = context.GetCorrelationId()
             });
         });
@@ -170,6 +253,7 @@ public static class GameEngineEndpoints
                 drawAuthorityId = id,
                 action = "approval_placeholder",
                 productionUseEnabled = false,
+                authBoundary = "admin_placeholder",
                 correlationId = context.GetCorrelationId()
             });
         });
@@ -181,6 +265,7 @@ public static class GameEngineEndpoints
                 success = true,
                 action = "manual_result_submission_placeholder",
                 officialCertifiedResultCreated = false,
+                authBoundary = "admin_placeholder",
                 correlationId = context.GetCorrelationId()
             });
         });
