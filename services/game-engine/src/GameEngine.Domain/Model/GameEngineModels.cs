@@ -100,13 +100,22 @@ public enum GameModuleHealthStatus
 public enum GameType
 {
     HotSpot,
-    Test
+    Test,
+    Keno
 }
 
 public enum WagerType
 {
     Straight,
-    TestWager
+    TestWager,
+    KenoSpot,
+    KenoBullseye,
+    KenoBigSmall,
+    KenoOddEven,
+    KenoUpDown,
+    KenoDragonTiger,
+    KenoSumOverUnder,
+    KenoElement
 }
 
 public sealed record GameDefinition(

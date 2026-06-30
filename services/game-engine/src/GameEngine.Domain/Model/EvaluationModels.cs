@@ -18,7 +18,13 @@ public enum GameEvaluationReason
     InvalidTicket,
     InvalidDrawResult,
     UnsupportedWagerType,
-    UnsupportedGameType
+    UnsupportedGameType,
+    KenoSpotMatch,
+    KenoSpotMiss,
+    KenoBullseyeMatch,
+    KenoBullseyeMiss,
+    KenoDerivedMatch,
+    KenoDerivedMiss
 }
 
 public sealed record GameEvaluationAmount(
