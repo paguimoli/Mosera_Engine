@@ -346,4 +346,136 @@ if (schedulerStatus.ScheduleCount < 2 || schedulerStatus.ProductionActivationEna
     throw new InvalidOperationException("Scheduler health reporting is invalid.");
 }
 
+var evaluationOrchestrator = new EvaluationOrchestrator(registry, scheduler);
+var seededRun = evaluationOrchestrator.GetRuns().Single();
+if (seededRun.Status != EvaluationRunStatus.InProgress)
+{
+    throw new InvalidOperationException("Seeded evaluation run should be startable.");
+}
+
+var seededBatches = evaluationOrchestrator.GetBatches(seededRun.Id).OrderBy(batch => batch.Sequence).ToArray();
+if (seededBatches.Length != 4 || seededRun.BatchSize != 75)
+{
+    throw new InvalidOperationException("Game-specific batch planning failed.");
+}
+
+if (seededBatches[0].StartInclusive != 0 || seededBatches[0].EndExclusive != 75 || seededBatches[1].StartInclusive != 75)
+{
+    throw new InvalidOperationException("Deterministic batch boundaries are invalid.");
+}
+
+var seededCheckpoints = evaluationOrchestrator.GetCheckpoints(seededRun.Id);
+if (seededCheckpoints.Count != seededBatches.Length)
+{
+    throw new InvalidOperationException("Checkpoint creation failed.");
+}
+
+var bindingForEvaluation = registry.GetGameBindings().First();
+var moduleForEvaluation = registry.GetRegisteredModules().First();
+var drawForEvaluation = scheduler.GetLifecycle()
+    .First(draw => draw.Status is DrawLifecycleStatus.AwaitingResult or DrawLifecycleStatus.ManualReviewRequired);
+var defaultBatchRun = evaluationOrchestrator.PlanRun(new EvaluationPlanRequest(
+    drawForEvaluation.DrawId,
+    bindingForEvaluation.Id,
+    Guid.NewGuid(),
+    EligibleTicketCount: 205,
+    GameSpecificBatchSize: null,
+    moduleForEvaluation.ModuleId,
+    moduleForEvaluation.ModuleVersion,
+    "evaluation-default-batch"));
+if (defaultBatchRun.BatchSize != 100 || defaultBatchRun.PlannedBatchCount != 3)
+{
+    throw new InvalidOperationException("Global default batch size fallback failed.");
+}
+
+var invalidRun = evaluationOrchestrator.PlanRun(new EvaluationPlanRequest(
+    Guid.NewGuid(),
+    Guid.NewGuid(),
+    Guid.Empty,
+    EligibleTicketCount: 10,
+    GameSpecificBatchSize: 5,
+    "missing-module",
+    "missing-version",
+    "evaluation-invalid"));
+if (invalidRun.Status != EvaluationRunStatus.ManualReviewRequired || invalidRun.Preconditions.Count == 0)
+{
+    throw new InvalidOperationException("Evaluation run preconditions should block invalid starts.");
+}
+
+var retryBatch = evaluationOrchestrator.RetryBatch(seededBatches[0].Id);
+if (retryBatch.Status != EvaluationBatchStatus.RetryPending || retryBatch.RetryCount != 1)
+{
+    throw new InvalidOperationException("Failed/retry batch retry eligibility model is invalid.");
+}
+
+var idempotencyKey = new EvaluationRecordIdempotencyKey(
+    drawForEvaluation.DrawId,
+    Guid.NewGuid(),
+    bindingForEvaluation.Id,
+    moduleForEvaluation.ModuleId,
+    moduleForEvaluation.ModuleVersion,
+    "evaluation-idempotency");
+var firstAttempt = evaluationOrchestrator.RecordEvaluation(seededRun.Id, seededBatches[0].Id, idempotencyKey, GameEvaluationOutcome.Pending);
+var duplicateAttempt = evaluationOrchestrator.RecordEvaluation(seededRun.Id, seededBatches[0].Id, idempotencyKey, GameEvaluationOutcome.Win);
+if (firstAttempt.Status != EvaluationDuplicateStatus.Created ||
+    duplicateAttempt.Status != EvaluationDuplicateStatus.DuplicateReturnedExisting ||
+    firstAttempt.Record.Id != duplicateAttempt.Record.Id)
+{
+    throw new InvalidOperationException("Duplicate evaluation idempotency failed.");
+}
+
+var alteredRecord = firstAttempt.Record with { Outcome = GameEvaluationOutcome.Win };
+if (alteredRecord.Outcome == firstAttempt.Record.Outcome)
+{
+    throw new InvalidOperationException("Evaluation record immutability check failed.");
+}
+
+var progress = evaluationOrchestrator.GetProgress(seededRun.Id);
+if (progress.PlannedBatchCount != seededRun.PlannedBatchCount)
+{
+    throw new InvalidOperationException("Evaluation progress diagnostics are invalid.");
+}
+
+var completionRun = evaluationOrchestrator.PlanRun(new EvaluationPlanRequest(
+    drawForEvaluation.DrawId,
+    bindingForEvaluation.Id,
+    Guid.NewGuid(),
+    EligibleTicketCount: 2,
+    GameSpecificBatchSize: 1,
+    moduleForEvaluation.ModuleId,
+    moduleForEvaluation.ModuleVersion,
+    "evaluation-completion"));
+evaluationOrchestrator.StartRun(completionRun.Id);
+foreach (var batch in evaluationOrchestrator.GetBatches(completionRun.Id))
+{
+    evaluationOrchestrator.CompleteBatch(batch.Id, processedCount: 1, lastProcessedMarker: $"completed:{batch.Sequence}");
+}
+
+if (evaluationOrchestrator.GetRun(completionRun.Id)?.Status != EvaluationRunStatus.Completed)
+{
+    throw new InvalidOperationException("Completed run detection failed.");
+}
+
+var failedRun = evaluationOrchestrator.PlanRun(new EvaluationPlanRequest(
+    drawForEvaluation.DrawId,
+    bindingForEvaluation.Id,
+    Guid.NewGuid(),
+    EligibleTicketCount: 1,
+    GameSpecificBatchSize: 1,
+    moduleForEvaluation.ModuleId,
+    moduleForEvaluation.ModuleVersion,
+    "evaluation-failure"));
+evaluationOrchestrator.StartRun(failedRun.Id);
+evaluationOrchestrator.FailBatch(evaluationOrchestrator.GetBatches(failedRun.Id).Single().Id, "placeholder failure");
+if (evaluationOrchestrator.GetRun(failedRun.Id)?.Status != EvaluationRunStatus.Failed)
+{
+    throw new InvalidOperationException("Failed run detection failed.");
+}
+
+var orchestratorStatus = evaluationOrchestrator.GetStatus();
+if (orchestratorStatus.ProductionRabbitMqWiringEnabled || orchestratorStatus.SettlementIntegrationEnabled)
+{
+    throw new InvalidOperationException("Evaluation orchestrator must not wire production RabbitMQ or settlement.");
+}
+
 Console.WriteLine("GameEngine.Application.Tests PASS");

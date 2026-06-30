@@ -64,19 +64,29 @@ public enum SettlementTriggerPolicy
 public enum EvaluationBatchStatus
 {
     Pending,
+    Claimed,
     InProgress,
     Completed,
     Failed,
-    Retrying
+    RetryPending,
+    Retrying,
+    Skipped,
+    Cancelled
 }
 
 public enum EvaluationRunStatus
 {
     Pending,
+    Planning,
+    Planned,
+    InProgress,
     Running,
+    PartiallyCompleted,
     Completed,
     Failed,
-    Cancelled
+    Cancelled,
+    RetryPending,
+    ManualReviewRequired
 }
 
 public enum GameModuleHealthStatus

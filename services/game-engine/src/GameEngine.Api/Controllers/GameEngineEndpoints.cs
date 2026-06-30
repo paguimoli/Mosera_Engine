@@ -369,27 +369,202 @@ public static class GameEngineEndpoints
             });
         });
 
-        group.MapGet("/evaluation-runs", (HttpContext context, GameEngineStatusService statusService) =>
+        group.MapGet("/evaluation-runs", (HttpContext context, EvaluationOrchestrator orchestrator) =>
         {
             return Results.Ok(new
             {
                 success = true,
-                evaluationRuns = statusService.ListEvaluationRuns(),
-                checkpointProcessing = "planned",
+                evaluationRuns = orchestrator.GetRuns(),
+                checkpointProcessing = "framework_only",
+                settlementIntegrationEnabled = false,
                 correlationId = context.GetCorrelationId()
             });
         });
 
-        group.MapPost("/evaluation-runs/{id:guid}/retry", (Guid id, HttpContext context) =>
+        group.MapGet("/evaluation-runs/{id:guid}", (Guid id, HttpContext context, EvaluationOrchestrator orchestrator) =>
         {
-            return Results.Accepted(value: new
+            var run = orchestrator.GetRun(id);
+            return run is null
+                ? Results.NotFound(new
+                {
+                    success = false,
+                    message = "Evaluation run not found.",
+                    evaluationRunId = id,
+                    correlationId = context.GetCorrelationId()
+                })
+                : Results.Ok(new
+                {
+                    success = true,
+                    evaluationRun = run,
+                    correlationId = context.GetCorrelationId()
+                });
+        });
+
+        group.MapGet("/evaluation-runs/{id:guid}/batches", (Guid id, HttpContext context, EvaluationOrchestrator orchestrator) =>
+        {
+            return Results.Ok(new
             {
                 success = true,
                 evaluationRunId = id,
-                action = "retry_placeholder",
-                mutationPerformed = false,
+                evaluationBatches = orchestrator.GetBatches(id),
+                workItems = orchestrator.GetWorkItems(id),
                 correlationId = context.GetCorrelationId()
             });
+        });
+
+        group.MapGet("/evaluation-batches/{id:guid}", (Guid id, HttpContext context, EvaluationOrchestrator orchestrator) =>
+        {
+            var batch = orchestrator.GetBatch(id);
+            return batch is null
+                ? Results.NotFound(new
+                {
+                    success = false,
+                    message = "Evaluation batch not found.",
+                    evaluationBatchId = id,
+                    correlationId = context.GetCorrelationId()
+                })
+                : Results.Ok(new
+                {
+                    success = true,
+                    evaluationBatch = batch,
+                    correlationId = context.GetCorrelationId()
+                });
+        });
+
+        group.MapGet("/evaluation-progress/{runId:guid}", (Guid runId, HttpContext context, EvaluationOrchestrator orchestrator) =>
+        {
+            try
+            {
+                return Results.Ok(new
+                {
+                    success = true,
+                    evaluationProgress = orchestrator.GetProgress(runId),
+                    checkpoints = orchestrator.GetCheckpoints(runId),
+                    correlationId = context.GetCorrelationId()
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.NotFound(new
+                {
+                    success = false,
+                    message = ex.Message,
+                    evaluationRunId = runId,
+                    correlationId = context.GetCorrelationId()
+                });
+            }
+        });
+
+        group.MapGet("/evaluation-orchestrator-status", (HttpContext context, EvaluationOrchestrator orchestrator) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                evaluationOrchestratorStatus = orchestrator.GetStatus(),
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapPost("/evaluation-runs/plan", (HttpContext context, EvaluationOrchestrator orchestrator, GameModuleRegistry moduleRegistry, DrawSchedulerService scheduler) =>
+        {
+            var binding = moduleRegistry.GetGameBindings().First();
+            var module = moduleRegistry.GetRegisteredModules().First();
+            var draw = scheduler.GetLifecycle().First(lifecycle => lifecycle.Status is GameEngine.Domain.Model.DrawLifecycleStatus.AwaitingResult or GameEngine.Domain.Model.DrawLifecycleStatus.ManualReviewRequired);
+            var run = orchestrator.PlanRun(new GameEngine.Domain.Model.EvaluationPlanRequest(
+                draw.DrawId,
+                binding.Id,
+                Guid.NewGuid(),
+                EligibleTicketCount: 250,
+                GameSpecificBatchSize: 50,
+                module.ModuleId,
+                module.ModuleVersion,
+                "evaluation-v0-placeholder"));
+
+            return Results.Accepted(value: new
+            {
+                success = true,
+                evaluationRun = run,
+                evaluationBatches = orchestrator.GetBatches(run.Id),
+                financialMutationPerformed = false,
+                authBoundary = "admin_placeholder",
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapPost("/evaluation-runs/{id:guid}/start", (Guid id, HttpContext context, EvaluationOrchestrator orchestrator) =>
+        {
+            try
+            {
+                return Results.Accepted(value: new
+                {
+                    success = true,
+                    evaluationRun = orchestrator.StartRun(id),
+                    productionRabbitMqWiringEnabled = false,
+                    settlementIntegrationTriggered = false,
+                    authBoundary = "admin_placeholder",
+                    correlationId = context.GetCorrelationId()
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.NotFound(new
+                {
+                    success = false,
+                    message = ex.Message,
+                    evaluationRunId = id,
+                    correlationId = context.GetCorrelationId()
+                });
+            }
+        });
+
+        group.MapPost("/evaluation-runs/{id:guid}/retry", (Guid id, HttpContext context, EvaluationOrchestrator orchestrator) =>
+        {
+            try
+            {
+                return Results.Accepted(value: new
+                {
+                    success = true,
+                    evaluationRun = orchestrator.RetryRun(id),
+                    mutationPerformed = false,
+                    authBoundary = "admin_placeholder",
+                    correlationId = context.GetCorrelationId()
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.NotFound(new
+                {
+                    success = false,
+                    message = ex.Message,
+                    evaluationRunId = id,
+                    correlationId = context.GetCorrelationId()
+                });
+            }
+        });
+
+        group.MapPost("/evaluation-batches/{id:guid}/retry", (Guid id, HttpContext context, EvaluationOrchestrator orchestrator) =>
+        {
+            try
+            {
+                return Results.Accepted(value: new
+                {
+                    success = true,
+                    evaluationBatch = orchestrator.RetryBatch(id),
+                    mutationPerformed = false,
+                    authBoundary = "admin_placeholder",
+                    correlationId = context.GetCorrelationId()
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.NotFound(new
+                {
+                    success = false,
+                    message = ex.Message,
+                    evaluationBatchId = id,
+                    correlationId = context.GetCorrelationId()
+                });
+            }
         });
 
         group.MapPost("/draw-authorities/{id:guid}/approve", (Guid id, HttpContext context) =>

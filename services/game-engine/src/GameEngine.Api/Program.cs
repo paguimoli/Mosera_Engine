@@ -23,6 +23,7 @@ builder.Services.AddSingleton<ValidationSuite>();
 builder.Services.AddSingleton<CertificationSuite>();
 builder.Services.AddSingleton<DrawGenerationFramework>();
 builder.Services.AddSingleton<DrawSchedulerService>();
+builder.Services.AddSingleton<EvaluationOrchestrator>();
 builder.Services.AddSingleton<GameEngineStatusService>();
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
