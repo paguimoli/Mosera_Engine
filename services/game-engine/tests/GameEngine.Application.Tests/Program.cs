@@ -268,4 +268,82 @@ if (validationCommand.Status != ValidationCheckStatus.Placeholder)
     throw new InvalidOperationException("Validation commands must remain placeholder-only in this phase.");
 }
 
+var scheduler = new DrawSchedulerService(registry, drawAuthorityRegistry);
+var schedules = scheduler.GetSchedules();
+if (schedules.Count < 2)
+{
+    throw new InvalidOperationException("Expected fixed interval and daily draw schedules.");
+}
+
+var intervalSchedule = schedules.Single(schedule => schedule.ScheduleKind == DrawScheduleKind.FixedInterval);
+var dailySchedule = schedules.Single(schedule => schedule.ScheduleKind == DrawScheduleKind.FixedDailyTime);
+var intervalPreview = scheduler.PreviewSchedule(intervalSchedule.Id, count: 3);
+if (intervalPreview.UpcomingDraws.Count != 3)
+{
+    throw new InvalidOperationException("Fixed interval schedule preview should generate upcoming draws.");
+}
+
+var intervalDraws = intervalPreview.UpcomingDraws.OrderBy(draw => draw.DrawAt).ToArray();
+if ((intervalDraws[1].DrawAt - intervalDraws[0].DrawAt) != TimeSpan.FromMinutes(intervalSchedule.IntervalMinutes ?? 0))
+{
+    throw new InvalidOperationException("Fixed interval schedule generation used the wrong interval.");
+}
+
+var dailyPreview = scheduler.PreviewSchedule(dailySchedule.Id, count: 3);
+if (dailyPreview.UpcomingDraws.Count != 3 || dailySchedule.TimeZoneId != "UTC")
+{
+    throw new InvalidOperationException("Daily draw schedule preview or time-zone metadata is invalid.");
+}
+
+var firstDaily = dailyPreview.UpcomingDraws.OrderBy(draw => draw.DrawAt).First();
+if (firstDaily.SalesCutoffAt != firstDaily.DrawAt.Subtract(dailySchedule.SalesCutoffBeforeDraw))
+{
+    throw new InvalidOperationException("Sales cutoff calculation is invalid.");
+}
+
+var lifecycle = scheduler.GetLifecycle();
+if (lifecycle.Count == 0)
+{
+    throw new InvalidOperationException("Lifecycle diagnostics should expose generated records.");
+}
+
+if (lifecycle.Any(draw => draw.SalesAllowed && DateTimeOffset.UtcNow >= draw.SalesCutoffAt))
+{
+    throw new InvalidOperationException("Scheduler must prevent sales after cutoff.");
+}
+
+var internalBeforeClose = intervalPreview.UpcomingDraws.First(draw => DateTimeOffset.UtcNow < draw.SalesCloseAt);
+if (internalBeforeClose.InternalGenerationEligible)
+{
+    throw new InvalidOperationException("Internal draws must not be eligible before sales close.");
+}
+
+var manualPrevious = scheduler.GetLifecycle()
+    .Where(draw => draw.ResultSource == DrawResultSource.ManualCertified)
+    .OrderBy(draw => draw.DrawAt)
+    .First();
+if (manualPrevious.DrawAt < DateTimeOffset.UtcNow &&
+    manualPrevious.Status is not DrawLifecycleStatus.AwaitingResult and not DrawLifecycleStatus.ManualReviewRequired)
+{
+    throw new InvalidOperationException("Official/manual result games should await result after close.");
+}
+
+var marked = scheduler.MarkMissed(manualPrevious.DrawId);
+if (marked.Status != DrawLifecycleStatus.ManualReviewRequired || !marked.ManualRecoveryMarked)
+{
+    throw new InvalidOperationException("Missed draw recovery marker was not applied.");
+}
+
+var invalidTransition = scheduler.ValidateTransition(marked.DrawId, DrawLifecycleStatus.SalesOpen);
+if (invalidTransition.Accepted)
+{
+    throw new InvalidOperationException("Invalid lifecycle transition should be rejected.");
+}
+
+var schedulerStatus = scheduler.GetSchedulerStatus();
+if (schedulerStatus.ScheduleCount < 2 || schedulerStatus.ProductionActivationEnabled || schedulerStatus.SettlementIntegrationEnabled)
+{
+    throw new InvalidOperationException("Scheduler health reporting is invalid.");
+}
+
 Console.WriteLine("GameEngine.Application.Tests PASS");

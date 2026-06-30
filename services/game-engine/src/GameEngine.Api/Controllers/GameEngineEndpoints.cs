@@ -299,6 +299,76 @@ public static class GameEngineEndpoints
             });
         });
 
+        group.MapGet("/draw-schedules", (HttpContext context, DrawSchedulerService scheduler) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                drawSchedules = scheduler.GetSchedules(),
+                productionActivationEnabled = false,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/draw-schedules/{id:guid}", (Guid id, HttpContext context, DrawSchedulerService scheduler) =>
+        {
+            var schedule = scheduler.GetSchedule(id);
+            return schedule is null
+                ? Results.NotFound(new
+                {
+                    success = false,
+                    message = "Draw schedule not found.",
+                    drawScheduleId = id,
+                    correlationId = context.GetCorrelationId()
+                })
+                : Results.Ok(new
+                {
+                    success = true,
+                    drawSchedule = schedule,
+                    correlationId = context.GetCorrelationId()
+                });
+        });
+
+        group.MapGet("/draw-lifecycle", (HttpContext context, DrawSchedulerService scheduler) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                drawLifecycle = scheduler.GetLifecycle(),
+                settlementIntegrationEnabled = false,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/draw-lifecycle/{drawId:guid}", (Guid drawId, HttpContext context, DrawSchedulerService scheduler) =>
+        {
+            var lifecycle = scheduler.GetLifecycle(drawId);
+            return lifecycle is null
+                ? Results.NotFound(new
+                {
+                    success = false,
+                    message = "Draw lifecycle record not found.",
+                    drawId,
+                    correlationId = context.GetCorrelationId()
+                })
+                : Results.Ok(new
+                {
+                    success = true,
+                    drawLifecycle = lifecycle,
+                    correlationId = context.GetCorrelationId()
+                });
+        });
+
+        group.MapGet("/scheduler-status", (HttpContext context, DrawSchedulerService scheduler) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                schedulerStatus = scheduler.GetSchedulerStatus(),
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
         group.MapGet("/evaluation-runs", (HttpContext context, GameEngineStatusService statusService) =>
         {
             return Results.Ok(new
@@ -371,6 +441,57 @@ public static class GameEngineEndpoints
                 authBoundary = "admin_placeholder",
                 correlationId = context.GetCorrelationId()
             });
+        });
+
+        group.MapPost("/draw-schedules/{id:guid}/preview", (Guid id, HttpContext context, DrawSchedulerService scheduler) =>
+        {
+            try
+            {
+                return Results.Accepted(value: new
+                {
+                    success = true,
+                    preview = scheduler.PreviewSchedule(id),
+                    mutationPerformed = false,
+                    authBoundary = "admin_placeholder",
+                    correlationId = context.GetCorrelationId()
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.NotFound(new
+                {
+                    success = false,
+                    message = ex.Message,
+                    drawScheduleId = id,
+                    correlationId = context.GetCorrelationId()
+                });
+            }
+        });
+
+        group.MapPost("/draw-lifecycle/{drawId:guid}/mark-missed", (Guid drawId, HttpContext context, DrawSchedulerService scheduler) =>
+        {
+            try
+            {
+                return Results.Accepted(value: new
+                {
+                    success = true,
+                    drawLifecycle = scheduler.MarkMissed(drawId),
+                    productionMutationPerformed = false,
+                    settlementIntegrationTriggered = false,
+                    authBoundary = "admin_placeholder",
+                    correlationId = context.GetCorrelationId()
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.NotFound(new
+                {
+                    success = false,
+                    message = ex.Message,
+                    drawId,
+                    correlationId = context.GetCorrelationId()
+                });
+            }
         });
     }
 

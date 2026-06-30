@@ -38,11 +38,19 @@ public enum DrawProviderType
 public enum DrawLifecycleStatus
 {
     Scheduled,
+    SalesOpen,
     SalesClosed,
+    AwaitingResult,
     ResultSubmitted,
     Certified,
+    EvaluationPending,
     EvaluationQueued,
+    EvaluationInProgress,
     EvaluationCompleted,
+    SettlementReady,
+    Cancelled,
+    Failed,
+    ManualReviewRequired,
     Voided
 }
 
