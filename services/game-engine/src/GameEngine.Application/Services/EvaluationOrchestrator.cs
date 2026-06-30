@@ -123,6 +123,24 @@ public sealed class EvaluationOrchestrator
         return updated;
     }
 
+    public EvaluationBatchDefinition ClaimBatch(Guid batchId)
+    {
+        var batch = GetBatch(batchId) ?? throw new InvalidOperationException("Evaluation batch not found.");
+        if (batch.Status == EvaluationBatchStatus.Completed)
+        {
+            return batch;
+        }
+
+        var updated = batch with
+        {
+            Status = EvaluationBatchStatus.InProgress,
+            ClaimedAt = DateTimeOffset.UtcNow
+        };
+        ReplaceBatch(updated);
+        UpsertCheckpoint(updated, EvaluationCheckpointStatus.InProgress, processedCount: 0, failedCount: 0);
+        return updated;
+    }
+
     public EvaluationRecordAttemptResult RecordEvaluation(
         Guid runId,
         Guid batchId,
@@ -185,13 +203,26 @@ public sealed class EvaluationOrchestrator
 
     public IReadOnlyCollection<EvaluationBatchWorkItem> GetWorkItems(Guid runId)
     {
-        return GetBatches(runId).Select(batch => new EvaluationBatchWorkItem(
-            runId,
+        var run = GetRun(runId) ?? throw new InvalidOperationException("Evaluation run not found.");
+        return GetBatches(runId).Select(batch => CreateWorkItem(run, batch, Guid.NewGuid(), Guid.NewGuid())).ToArray();
+    }
+
+    public EvaluationBatchWorkItem CreateWorkItem(EvaluationRunDefinition run, EvaluationBatchDefinition batch, Guid correlationId, Guid causationId)
+    {
+        return new EvaluationBatchWorkItem(
+            run.Id,
             batch.Id,
-            batch.Sequence,
-            batch.CheckpointCursor,
-            "game-engine.evaluation.placeholder",
-            DateTimeOffset.UtcNow)).ToArray();
+            run.DrawId,
+            run.GameBindingId,
+            run.GameModuleId,
+            run.GameModuleVersion,
+            run.EvaluationVersion,
+            batch.RetryCount + 1,
+            correlationId,
+            causationId,
+            $"evaluation:{run.Id:N}:{batch.Id:N}:{batch.RetryCount + 1}",
+            EvaluationQueueNames.BatchRequested,
+            DateTimeOffset.UtcNow);
     }
 
     public EvaluationOrchestratorStatus GetStatus()

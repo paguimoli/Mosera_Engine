@@ -465,6 +465,60 @@ public static class GameEngineEndpoints
             });
         });
 
+        group.MapGet("/evaluation-queues", (HttpContext context, EvaluationRabbitMqDiagnostics diagnostics) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                evaluationQueues = diagnostics.GetQueues(),
+                productionRabbitMqPublishingEnabled = false,
+                externalBrokerMutationPerformed = false,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/evaluation-workers", (HttpContext context, EvaluationRabbitMqDiagnostics diagnostics) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                evaluationWorkers = diagnostics.GetWorkers(),
+                productionWorkerActivationEnabled = false,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/evaluation-worker-heartbeats", (HttpContext context, EvaluationRabbitMqDiagnostics diagnostics) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                evaluationWorkerHeartbeats = diagnostics.GetWorkerHeartbeats(),
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/evaluation-dead-letter", (HttpContext context, EvaluationRabbitMqDiagnostics diagnostics) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                evaluationDeadLetter = diagnostics.GetDeadLetter(),
+                destructiveQueueOperationPerformed = false,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/evaluation-processing-status", (HttpContext context, EvaluationRabbitMqDiagnostics diagnostics) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                evaluationProcessingStatus = diagnostics.GetProcessingStatus(),
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
         group.MapPost("/evaluation-runs/plan", (HttpContext context, EvaluationOrchestrator orchestrator, GameModuleRegistry moduleRegistry, DrawSchedulerService scheduler) =>
         {
             var binding = moduleRegistry.GetGameBindings().First();
@@ -500,6 +554,37 @@ public static class GameEngineEndpoints
                     success = true,
                     evaluationRun = orchestrator.StartRun(id),
                     productionRabbitMqWiringEnabled = false,
+                    settlementIntegrationTriggered = false,
+                    authBoundary = "admin_placeholder",
+                    correlationId = context.GetCorrelationId()
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.NotFound(new
+                {
+                    success = false,
+                    message = ex.Message,
+                    evaluationRunId = id,
+                    correlationId = context.GetCorrelationId()
+                });
+            }
+        });
+
+        group.MapPost("/evaluation-runs/{id:guid}/publish-batches", (Guid id, HttpContext context, EvaluationRabbitMqDiagnostics diagnostics) =>
+        {
+            try
+            {
+                var result = diagnostics.PublishBatches(id, Guid.NewGuid());
+                var processing = diagnostics.ProcessFirstRequested();
+                return Results.Accepted(value: new
+                {
+                    success = true,
+                    publishResult = result,
+                    placeholderProcessingResult = processing,
+                    productionRabbitMqPublishingEnabled = result.PublishingEnabled,
+                    externalBrokerMutationPerformed = false,
+                    financialMutationPerformed = false,
                     settlementIntegrationTriggered = false,
                     authBoundary = "admin_placeholder",
                     correlationId = context.GetCorrelationId()
@@ -565,6 +650,47 @@ public static class GameEngineEndpoints
                     correlationId = context.GetCorrelationId()
                 });
             }
+        });
+
+        group.MapPost("/evaluation-batches/{id:guid}/requeue", (Guid id, HttpContext context, EvaluationRabbitMqDiagnostics diagnostics) =>
+        {
+            try
+            {
+                return Results.Accepted(value: new
+                {
+                    success = true,
+                    requeueResult = diagnostics.RequeueBatch(id),
+                    destructiveQueueOperationPerformed = false,
+                    financialMutationPerformed = false,
+                    settlementIntegrationTriggered = false,
+                    authBoundary = "admin_placeholder",
+                    correlationId = context.GetCorrelationId()
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.NotFound(new
+                {
+                    success = false,
+                    message = ex.Message,
+                    evaluationBatchId = id,
+                    correlationId = context.GetCorrelationId()
+                });
+            }
+        });
+
+        group.MapPost("/evaluation-dead-letter/{id:guid}/review", (Guid id, HttpContext context, EvaluationRabbitMqDiagnostics diagnostics) =>
+        {
+            return Results.Accepted(value: new
+            {
+                success = true,
+                deadLetterReview = diagnostics.ReviewDeadLetter(id),
+                destructiveQueueOperationPerformed = false,
+                financialMutationPerformed = false,
+                settlementIntegrationTriggered = false,
+                authBoundary = "admin_placeholder",
+                correlationId = context.GetCorrelationId()
+            });
         });
 
         group.MapPost("/draw-authorities/{id:guid}/approve", (Guid id, HttpContext context) =>

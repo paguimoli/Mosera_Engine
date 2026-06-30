@@ -23,6 +23,25 @@ public enum EvaluationOrchestratorHealth
     Error
 }
 
+public enum EvaluationWorkerStatus
+{
+    Starting,
+    Idle,
+    Processing,
+    Degraded,
+    Stopping,
+    Failed
+}
+
+public enum EvaluationMessageDisposition
+{
+    Ack,
+    NackRetry,
+    DeadLetter,
+    DuplicateAck,
+    Rejected
+}
+
 public sealed record EvaluationPlanRequest(
     Guid DrawId,
     Guid GameBindingId,
@@ -100,24 +119,109 @@ public sealed record EvaluationRecordAttemptResult(
 public sealed record EvaluationBatchWorkItem(
     Guid RunId,
     Guid BatchId,
-    int Sequence,
-    string CheckpointCursor,
-    string QueueName,
+    Guid DrawId,
+    Guid GameId,
+    string GameModuleId,
+    string GameModuleVersion,
+    string EvaluationVersion,
+    int AttemptNumber,
+    Guid CorrelationId,
+    Guid CausationId,
+    string IdempotencyKey,
+    string RoutingKey,
+    DateTimeOffset CreatedAt);
+
+public sealed record EvaluationBatchStartedEvent(
+    Guid RunId,
+    Guid BatchId,
+    Guid DrawId,
+    Guid GameId,
+    string GameModuleId,
+    string GameModuleVersion,
+    string EvaluationVersion,
+    int AttemptNumber,
+    Guid CorrelationId,
+    Guid CausationId,
+    string IdempotencyKey,
     DateTimeOffset CreatedAt);
 
 public sealed record EvaluationBatchCompletedEvent(
     Guid RunId,
     Guid BatchId,
+    Guid DrawId,
+    Guid GameId,
+    string GameModuleId,
+    string GameModuleVersion,
+    string EvaluationVersion,
+    int AttemptNumber,
+    Guid CorrelationId,
+    Guid CausationId,
+    string IdempotencyKey,
     int ProcessedCount,
     string LastProcessedMarker,
-    DateTimeOffset CompletedAt);
+    DateTimeOffset CreatedAt);
 
 public sealed record EvaluationBatchFailedEvent(
     Guid RunId,
     Guid BatchId,
+    Guid DrawId,
+    Guid GameId,
+    string GameModuleId,
+    string GameModuleVersion,
+    string EvaluationVersion,
+    int AttemptNumber,
+    Guid CorrelationId,
+    Guid CausationId,
+    string IdempotencyKey,
     string Reason,
     int RetryCount,
-    DateTimeOffset FailedAt);
+    DateTimeOffset CreatedAt);
+
+public sealed record EvaluationBatchRetryScheduledEvent(
+    Guid RunId,
+    Guid BatchId,
+    Guid DrawId,
+    Guid GameId,
+    string GameModuleId,
+    string GameModuleVersion,
+    string EvaluationVersion,
+    int AttemptNumber,
+    Guid CorrelationId,
+    Guid CausationId,
+    string IdempotencyKey,
+    string FailureReason,
+    DateTimeOffset CreatedAt);
+
+public sealed record EvaluationBatchDeadLetteredEvent(
+    Guid Id,
+    Guid RunId,
+    Guid BatchId,
+    Guid DrawId,
+    Guid GameId,
+    string GameModuleId,
+    string GameModuleVersion,
+    string EvaluationVersion,
+    int AttemptNumber,
+    Guid CorrelationId,
+    Guid CausationId,
+    string IdempotencyKey,
+    string DeadLetterReason,
+    bool PoisonMessageDetected,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? ReviewedAt);
+
+public sealed record EvaluationWorkerHeartbeatEvent(
+    string WorkerId,
+    Guid InstanceId,
+    string ServiceVersion,
+    int ProcessedBatchCount,
+    int FailedBatchCount,
+    DateTimeOffset LastHeartbeatAt,
+    EvaluationWorkerStatus Status,
+    Guid CorrelationId,
+    Guid CausationId,
+    string IdempotencyKey,
+    DateTimeOffset CreatedAt);
 
 public sealed record EvaluationRunCompletedEvent(
     Guid RunId,
@@ -150,4 +254,41 @@ public sealed record EvaluationOrchestratorStatus(
     bool ProductionRabbitMqWiringEnabled,
     bool SettlementIntegrationEnabled,
     IReadOnlyCollection<string> Reasons,
+    DateTimeOffset GeneratedAt);
+
+public sealed record EvaluationQueueDiagnostic(
+    string QueueName,
+    string RoutingKey,
+    int InMemoryMessageCount,
+    int DeadLetterCount,
+    bool ProductionRabbitMqPublishingEnabled,
+    bool ExternalBrokerMutationPerformed);
+
+public sealed record EvaluationPublishResult(
+    Guid RunId,
+    int PlannedBatchCount,
+    int WorkItemCount,
+    bool PublishingEnabled,
+    bool ExternalPublishAttempted,
+    bool FinancialMutationPerformed,
+    IReadOnlyCollection<EvaluationBatchWorkItem> WorkItems);
+
+public sealed record EvaluationProcessingResult(
+    Guid BatchId,
+    EvaluationMessageDisposition Disposition,
+    string Reason,
+    bool ExternalBrokerMutationPerformed,
+    bool SettlementIntegrationTriggered);
+
+public sealed record EvaluationProcessingStatus(
+    int RequestedCount,
+    int StartedCount,
+    int CompletedCount,
+    int FailedCount,
+    int RetryScheduledCount,
+    int DeadLetterCount,
+    int WorkerHeartbeatCount,
+    bool ProductionGameLogicEnabled,
+    bool TicketDbIntegrationEnabled,
+    bool SettlementIntegrationEnabled,
     DateTimeOffset GeneratedAt);

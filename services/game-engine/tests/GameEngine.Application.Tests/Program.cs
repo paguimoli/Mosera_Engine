@@ -478,4 +478,106 @@ if (orchestratorStatus.ProductionRabbitMqWiringEnabled || orchestratorStatus.Set
     throw new InvalidOperationException("Evaluation orchestrator must not wire production RabbitMQ or settlement.");
 }
 
+var rabbitMqDiagnostics = new EvaluationRabbitMqDiagnostics(evaluationOrchestrator);
+var queueNames = new[]
+{
+    EvaluationQueueNames.BatchRequested,
+    EvaluationQueueNames.BatchStarted,
+    EvaluationQueueNames.BatchCompleted,
+    EvaluationQueueNames.BatchFailed,
+    EvaluationQueueNames.BatchRetryScheduled,
+    EvaluationQueueNames.BatchDeadLettered,
+    EvaluationQueueNames.WorkerHeartbeat
+};
+if (queueNames.Distinct().Count() != 7 || queueNames.Any(string.IsNullOrWhiteSpace))
+{
+    throw new InvalidOperationException("Evaluation RabbitMQ routing key constants are invalid.");
+}
+
+var publishRun = evaluationOrchestrator.PlanRun(new EvaluationPlanRequest(
+    drawForEvaluation.DrawId,
+    bindingForEvaluation.Id,
+    Guid.NewGuid(),
+    EligibleTicketCount: 25,
+    GameSpecificBatchSize: 10,
+    moduleForEvaluation.ModuleId,
+    moduleForEvaluation.ModuleVersion,
+    "evaluation-rabbitmq"));
+var publish = rabbitMqDiagnostics.PublishBatches(publishRun.Id, Guid.NewGuid());
+if (publish.PublishingEnabled || publish.ExternalPublishAttempted || publish.FinancialMutationPerformed)
+{
+    throw new InvalidOperationException("Evaluation RabbitMQ publishing must remain disabled by default.");
+}
+
+if (publish.WorkItems.Count != publishRun.PlannedBatchCount ||
+    publish.WorkItems.Any(item => item.RoutingKey != EvaluationQueueNames.BatchRequested || item.DrawId != publishRun.DrawId || item.GameModuleId != publishRun.GameModuleId))
+{
+    throw new InvalidOperationException("Evaluation batch publisher produced invalid work item contracts.");
+}
+
+var processing = rabbitMqDiagnostics.ProcessFirstRequested();
+if (processing.Disposition != EvaluationMessageDisposition.Ack || processing.SettlementIntegrationTriggered || processing.ExternalBrokerMutationPerformed)
+{
+    throw new InvalidOperationException("Evaluation batch consumer skeleton did not ack safely.");
+}
+
+var processedBatch = evaluationOrchestrator.GetBatch(processing.BatchId);
+if (processedBatch?.Status != EvaluationBatchStatus.Completed)
+{
+    throw new InvalidOperationException("Evaluation batch consumer did not mark the batch completed.");
+}
+
+var duplicateProcessing = rabbitMqDiagnostics.ProcessFirstRequested();
+if (duplicateProcessing.Disposition != EvaluationMessageDisposition.Ack)
+{
+    throw new InvalidOperationException("Evaluation consumer should continue processing independent work items.");
+}
+
+var requeueRun = evaluationOrchestrator.PlanRun(new EvaluationPlanRequest(
+    drawForEvaluation.DrawId,
+    bindingForEvaluation.Id,
+    Guid.NewGuid(),
+    EligibleTicketCount: 1,
+    GameSpecificBatchSize: 1,
+    moduleForEvaluation.ModuleId,
+    moduleForEvaluation.ModuleVersion,
+    "evaluation-requeue"));
+var requeueBatch = evaluationOrchestrator.GetBatches(requeueRun.Id).Single();
+var requeue = rabbitMqDiagnostics.RequeueBatch(requeueBatch.Id);
+if (requeue.Disposition != EvaluationMessageDisposition.NackRetry ||
+    evaluationOrchestrator.GetBatch(requeueBatch.Id)?.Status != EvaluationBatchStatus.RetryPending)
+{
+    throw new InvalidOperationException("Evaluation retry eligibility model failed.");
+}
+
+var poison = rabbitMqDiagnostics.SimulatePoisonMessage();
+if (!poison.PoisonMessageDetected || poison.Id == Guid.Empty)
+{
+    throw new InvalidOperationException("Poison message dead-letter model failed.");
+}
+
+var reviewedDeadLetter = rabbitMqDiagnostics.ReviewDeadLetter(poison.Id);
+if (reviewedDeadLetter.ReviewedAt is null)
+{
+    throw new InvalidOperationException("Dead-letter operator review placeholder failed.");
+}
+
+var queueDiagnostics = rabbitMqDiagnostics.GetQueues();
+if (queueDiagnostics.Count != 7 || queueDiagnostics.Any(queue => queue.ExternalBrokerMutationPerformed))
+{
+    throw new InvalidOperationException("Evaluation queue diagnostics are invalid.");
+}
+
+var workerHeartbeats = rabbitMqDiagnostics.GetWorkerHeartbeats();
+if (workerHeartbeats.Count == 0 || workerHeartbeats.Any(heartbeat => heartbeat.Status == EvaluationWorkerStatus.Failed))
+{
+    throw new InvalidOperationException("Evaluation worker heartbeat model failed.");
+}
+
+var processingStatus = rabbitMqDiagnostics.GetProcessingStatus();
+if (processingStatus.ProductionGameLogicEnabled || processingStatus.TicketDbIntegrationEnabled || processingStatus.SettlementIntegrationEnabled)
+{
+    throw new InvalidOperationException("Evaluation processing diagnostics must keep production integrations disabled.");
+}
+
 Console.WriteLine("GameEngine.Application.Tests PASS");
