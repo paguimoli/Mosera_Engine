@@ -61,6 +61,155 @@ public sealed class AuthArchitectureService
             Models: [nameof(Token), nameof(OAuthClient), nameof(ServiceAccount), nameof(ApiClient)]);
     }
 
+    public SessionModelSummary GetSessionModel()
+    {
+        return new SessionModelSummary(
+            RuntimeEnabled: false,
+            DiagnosticOnly: true,
+            SessionTypes: Enum.GetNames<SessionType>(),
+            SessionStatuses: Enum.GetNames<SessionStatus>(),
+            Policy: new SessionPolicy(
+                MaxConcurrentSessions: 5,
+                IdleTimeout: TimeSpan.FromMinutes(30),
+                AbsoluteLifetime: TimeSpan.FromHours(12),
+                MfaRequired: true,
+                DeviceTrustPlaceholder: true,
+                IpGeographyPlaceholder: true,
+                ForcedLogoutSupported: true,
+                SessionRevocationSupported: true,
+                IdentityLifecycleValidationRequired: true),
+            Models:
+            [
+                nameof(AuthSession),
+                nameof(SessionCreationRequest),
+                nameof(SessionCreationResult),
+                nameof(SessionDevice),
+                nameof(SessionRiskContext),
+                nameof(SessionRevocationRecord)
+            ]);
+    }
+
+    public TokenIssuanceModelSummary GetTokenIssuanceModel()
+    {
+        return new TokenIssuanceModelSummary(
+            RuntimeEnabled: false,
+            AccessTokenTypes: Enum.GetNames<AccessTokenType>(),
+            AccessTokensShortLived: true,
+            RefreshTokensOptional: true,
+            RefreshTokenRotationModeled: true,
+            OpaqueTokensRequireIntrospection: true,
+            JwtSigningKeyMetadataRequired: true,
+            TokenRevocationModeled: true,
+            TokenIntrospectionModeled: true,
+            StandardClaims:
+            [
+                "identity_id",
+                "login_id",
+                "identity_type",
+                "lifecycle_state",
+                "session_id",
+                "roles",
+                "permissions",
+                "memberships",
+                "brand_ids",
+                "market_ids",
+                "operator_ids",
+                "jurisdiction_ids",
+                "mfa_level",
+                "auth_method",
+                "token_type",
+                "scopes"
+            ],
+            Models:
+            [
+                nameof(AccessToken),
+                nameof(JwtAccessTokenMetadata),
+                nameof(OpaqueAccessTokenMetadata),
+                nameof(RefreshToken),
+                nameof(RefreshTokenRotationPolicy),
+                nameof(TokenIssuanceRequest),
+                nameof(TokenIssuanceResult),
+                nameof(TokenAudience),
+                nameof(TokenScope),
+                nameof(TokenClaim),
+                nameof(TokenRevocationRecord),
+                nameof(TokenIntrospectionResult),
+                nameof(TokenExchangeRequest)
+            ]);
+    }
+
+    public OAuthRuntimeModelSummary GetOAuthRuntimeModel()
+    {
+        return new OAuthRuntimeModelSummary(
+            RuntimeEndpointsEnabled: false,
+            ProviderMode: "OAUTH2_OPENID_CONNECT_AUTHORIZATION_SERVER",
+            GrantTypes: Enum.GetNames<OAuthGrantType>(),
+            ClientTypes: Enum.GetNames<OAuthClientType>(),
+            RedirectUrisModeled: true,
+            ConsentModeled: true,
+            ClientSecretRotationModeled: true,
+            ClientCredentialsSupportedByModel: true,
+            OidcDiscoveryModeled: true,
+            Models:
+            [
+                nameof(OAuthClientRegistration),
+                nameof(OAuthClientType),
+                nameof(OAuthGrantType),
+                nameof(OAuthRedirectUri),
+                nameof(OAuthClientSecretMetadata),
+                nameof(OAuthConsentGrant),
+                nameof(OAuthAuthorizationRequest),
+                nameof(OAuthAuthorizationCode),
+                nameof(OAuthTokenRequest),
+                nameof(OAuthScope),
+                nameof(OidcIdentityTokenMetadata),
+                nameof(JwksDocument),
+                nameof(JwksKey),
+                nameof(OidcProviderMetadata)
+            ]);
+    }
+
+    public JwksModelSummary GetJwksModel()
+    {
+        return new JwksModelSummary(
+            JwksModeled: true,
+            PublicationEnabled: false,
+            SigningKeyGenerationEnabled: false,
+            ActiveSigningKeys: 0,
+            SupportedAlgorithms: ["RS256", "ES256"],
+            Document: new JwksDocument(
+                Issuer: "https://auth-service.local",
+                JwksUri: new Uri("https://auth-service.local/.well-known/jwks.json"),
+                Keys: [],
+                GeneratedAt: DateTimeOffset.UtcNow));
+    }
+
+    public ServiceAuthModelSummary GetServiceAuthModel()
+    {
+        return new ServiceAuthModelSummary(
+            RuntimeEnabled: false,
+            ClientCredentialsModeled: true,
+            ScopesRequired: true,
+            AuditRequired: true,
+            OptionalMtlsBindingPlaceholder: true,
+            SecretMaterialMetadataOnly: true,
+            TokenPolicy: new ServiceTokenPolicy(
+                AccessTokenLifetime: TimeSpan.FromMinutes(5),
+                ScopesRequired: true,
+                AuditRequired: true,
+                MtlsBindingPlaceholder: true,
+                ClientSecretMetadataOnly: true,
+                CertificateMetadataOnly: true),
+            Models:
+            [
+                nameof(ServiceClient),
+                nameof(ServiceScope),
+                nameof(ServiceTokenPolicy),
+                nameof(ClientCredentialsRequest),
+                nameof(ClientCredentialsResult)
+            ]);
+    }
+
     public PolicyModelSummary GetPolicyModel()
     {
         return new PolicyModelSummary(
@@ -343,6 +492,30 @@ public sealed class AuthArchitectureService
             DateTimeOffset.UtcNow);
     }
 
+    public SessionRuntimeActivationGate GetSessionReadiness()
+    {
+        return new SessionRuntimeActivationGate(
+            AuthRuntimeGateStatus.Blocked,
+            EnabledByDefault: false,
+            RuntimeGateBlockers());
+    }
+
+    public TokenIssuanceActivationGate GetTokenReadiness()
+    {
+        return new TokenIssuanceActivationGate(
+            AuthRuntimeGateStatus.Blocked,
+            EnabledByDefault: false,
+            RuntimeGateBlockers());
+    }
+
+    public OAuthRuntimeActivationGate GetOAuthReadiness()
+    {
+        return new OAuthRuntimeActivationGate(
+            AuthRuntimeGateStatus.Blocked,
+            EnabledByDefault: false,
+            RuntimeGateBlockers());
+    }
+
     public SchemaStatusSummary GetSchemaStatus()
     {
         return new SchemaStatusSummary(
@@ -407,6 +580,21 @@ public sealed class AuthArchitectureService
                 MayAttemptCredentialVerification: false,
                 Reason: "Identity lifecycle state is not eligible.")
         };
+    }
+
+    private static IReadOnlyCollection<AuthRuntimeGateBlocker> RuntimeGateBlockers()
+    {
+        return
+        [
+            new AuthRuntimeGateBlocker("SIGNING_KEYS_NOT_ACTIVE", "Signing keys are not active.", Resolved: false),
+            new AuthRuntimeGateBlocker("CREDENTIAL_VERIFICATION_NOT_ACTIVE", "Credential verification is architecture-only.", Resolved: false),
+            new AuthRuntimeGateBlocker("PERSISTENCE_NOT_ACTIVE", "Auth Service persistence is not active.", Resolved: false),
+            new AuthRuntimeGateBlocker("REFRESH_TOKEN_STORAGE_NOT_ACTIVE", "Refresh token storage is not active.", Resolved: false),
+            new AuthRuntimeGateBlocker("TOKEN_REVOCATION_NOT_ACTIVE", "Token revocation runtime is not active.", Resolved: false),
+            new AuthRuntimeGateBlocker("OAUTH_ENDPOINTS_NOT_APPROVED", "OAuth runtime endpoints are not approved.", Resolved: false),
+            new AuthRuntimeGateBlocker("CURRENT_PLATFORM_MIGRATION_NOT_APPROVED", "Current platform auth migration is not approved.", Resolved: false),
+            new AuthRuntimeGateBlocker("QA_NOT_PASSED", "Runtime activation QA has not passed.", Resolved: false)
+        ];
     }
 }
 
@@ -521,3 +709,54 @@ public sealed record CredentialVerifierDescriptor(
     string InterfaceName,
     bool ProductionVerifierImplemented,
     bool PlaceholderOnly);
+
+public sealed record SessionModelSummary(
+    bool RuntimeEnabled,
+    bool DiagnosticOnly,
+    IReadOnlyCollection<string> SessionTypes,
+    IReadOnlyCollection<string> SessionStatuses,
+    SessionPolicy Policy,
+    IReadOnlyCollection<string> Models);
+
+public sealed record TokenIssuanceModelSummary(
+    bool RuntimeEnabled,
+    IReadOnlyCollection<string> AccessTokenTypes,
+    bool AccessTokensShortLived,
+    bool RefreshTokensOptional,
+    bool RefreshTokenRotationModeled,
+    bool OpaqueTokensRequireIntrospection,
+    bool JwtSigningKeyMetadataRequired,
+    bool TokenRevocationModeled,
+    bool TokenIntrospectionModeled,
+    IReadOnlyCollection<string> StandardClaims,
+    IReadOnlyCollection<string> Models);
+
+public sealed record OAuthRuntimeModelSummary(
+    bool RuntimeEndpointsEnabled,
+    string ProviderMode,
+    IReadOnlyCollection<string> GrantTypes,
+    IReadOnlyCollection<string> ClientTypes,
+    bool RedirectUrisModeled,
+    bool ConsentModeled,
+    bool ClientSecretRotationModeled,
+    bool ClientCredentialsSupportedByModel,
+    bool OidcDiscoveryModeled,
+    IReadOnlyCollection<string> Models);
+
+public sealed record JwksModelSummary(
+    bool JwksModeled,
+    bool PublicationEnabled,
+    bool SigningKeyGenerationEnabled,
+    int ActiveSigningKeys,
+    IReadOnlyCollection<string> SupportedAlgorithms,
+    JwksDocument Document);
+
+public sealed record ServiceAuthModelSummary(
+    bool RuntimeEnabled,
+    bool ClientCredentialsModeled,
+    bool ScopesRequired,
+    bool AuditRequired,
+    bool OptionalMtlsBindingPlaceholder,
+    bool SecretMaterialMetadataOnly,
+    ServiceTokenPolicy TokenPolicy,
+    IReadOnlyCollection<string> Models);

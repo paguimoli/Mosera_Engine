@@ -50,10 +50,58 @@ group.MapGet("/oauth-model", (AuthArchitectureService service) => Results.Ok(new
     data = service.GetOAuthModel()
 }));
 
+group.MapGet("/oauth-model/runtime", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetOAuthRuntimeModel()
+}));
+
 group.MapGet("/policy-model", (AuthArchitectureService service) => Results.Ok(new
 {
     success = true,
     data = service.GetPolicyModel()
+}));
+
+group.MapGet("/session-model", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetSessionModel()
+}));
+
+group.MapGet("/token-issuance-model", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetTokenIssuanceModel()
+}));
+
+group.MapGet("/jwks-model", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetJwksModel()
+}));
+
+group.MapGet("/service-auth-model", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetServiceAuthModel()
+}));
+
+group.MapGet("/session-readiness", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetSessionReadiness()
+}));
+
+group.MapGet("/token-readiness", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetTokenReadiness()
+}));
+
+group.MapGet("/oauth-readiness", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetOAuthReadiness()
 }));
 
 group.MapGet("/persistence-model", (AuthArchitectureService service) => Results.Ok(new

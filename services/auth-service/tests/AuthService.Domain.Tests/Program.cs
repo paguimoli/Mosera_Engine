@@ -142,6 +142,62 @@ var verificationResult = new CredentialVerificationResult(
 Assert(verificationResult.FailureReason == CredentialFailureReason.UnsupportedCredentialType, "Unsupported credentials must return structured failure.");
 Assert(!verificationResult.AuditMetadata.Values.Any(value => value.Contains("password", StringComparison.OrdinalIgnoreCase)), "Verifier result must not expose secret values.");
 
+var sessionPolicy = new SessionPolicy(
+    MaxConcurrentSessions: 5,
+    IdleTimeout: TimeSpan.FromMinutes(30),
+    AbsoluteLifetime: TimeSpan.FromHours(12),
+    MfaRequired: true,
+    DeviceTrustPlaceholder: true,
+    IpGeographyPlaceholder: true,
+    ForcedLogoutSupported: true,
+    SessionRevocationSupported: true,
+    IdentityLifecycleValidationRequired: true);
+Assert(sessionPolicy.MaxConcurrentSessions == 5, "Session policy must model max concurrent sessions.");
+Assert(sessionPolicy.IdleTimeout < sessionPolicy.AbsoluteLifetime, "Session policy must model idle and absolute timeouts.");
+Assert(sessionPolicy.MfaRequired, "Session policy must model MFA requirements.");
+
+var accessToken = new AccessToken(
+    Guid.NewGuid(),
+    AccessTokenType.Jwt,
+    new TokenAudience("lottery-api", ServiceAudience: false, PlayerAudience: true),
+    [new TokenScope("tickets:read", "Read tickets", Required: true)],
+    [new TokenClaim("identity_id", identity.Id.ToString(), "string", "auth-service")],
+    DateTimeOffset.UtcNow,
+    DateTimeOffset.UtcNow.AddMinutes(5));
+Assert(accessToken.Type == AccessTokenType.Jwt, "JWT access token must be modeled.");
+
+var opaqueMetadata = new OpaqueAccessTokenMetadata(Guid.NewGuid(), "opaque-reference-hash", IntrospectionRequired: true, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddMinutes(5));
+Assert(opaqueMetadata.IntrospectionRequired, "Opaque token introspection must be modeled.");
+
+var rotationPolicy = new RefreshTokenRotationPolicy(Enabled: true, ReuseDetectionEnabled: true, TimeSpan.FromDays(30), TimeSpan.FromDays(7));
+Assert(rotationPolicy.Enabled && rotationPolicy.ReuseDetectionEnabled, "Refresh token rotation policy must be modeled.");
+
+var tokenRevocation = new AuthService.Domain.Models.TokenRevocationRecord(Guid.NewGuid(), "access_token", "operator_revoked", identity.Id, DateTimeOffset.UtcNow);
+Assert(tokenRevocation.Reason == "operator_revoked", "Token revocation must be modeled.");
+
+var introspection = new TokenIntrospectionResult(Active: false, AccessTokenType.OpaqueReference, identity.Id, Guid.NewGuid(), [new TokenScope("tickets:read", "Read tickets", true)], DateTimeOffset.UtcNow);
+Assert(!introspection.Active, "Token introspection result must be modeled.");
+
+var redirectUri = new OAuthRedirectUri(new Uri("https://client.example/callback"), ExactMatchRequired: true, LoopbackAllowed: false);
+var consent = new OAuthConsentGrant(Guid.NewGuid(), identity.Id, "client-web", [new OAuthScope("openid", "OpenID scope", RequiresConsent: true)], DateTimeOffset.UtcNow, null, Revoked: false);
+Assert(redirectUri.ExactMatchRequired, "OAuth redirect URI model must exist.");
+Assert(consent.Scopes.Count == 1, "OAuth consent grant must be modeled.");
+Assert(Enum.GetNames<OAuthGrantType>().Contains(nameof(OAuthGrantType.AuthorizationCode)), "Authorization code grant must be modeled.");
+Assert(Enum.GetNames<OAuthGrantType>().Contains(nameof(OAuthGrantType.ClientCredentials)), "Client credentials grant must be modeled.");
+Assert(Enum.GetNames<OAuthClientType>().Contains(nameof(OAuthClientType.Confidential)), "Confidential clients must be modeled.");
+
+var jwks = new JwksDocument("https://auth-service.local", new Uri("https://auth-service.local/.well-known/jwks.json"), [new JwksKey("kid-v1", "RSA", "RS256", "sig", new Dictionary<string, string> { ["n"] = "public", ["e"] = "AQAB" })], DateTimeOffset.UtcNow);
+Assert(jwks.Keys.Count == 1, "JWKS document must be modeled.");
+
+var serviceClient = new ServiceClient(
+    "settlement-service",
+    "settlement-service",
+    [new ServiceScope("settlement:write", "Write settlement events", Required: true)],
+    new ServiceTokenPolicy(TimeSpan.FromMinutes(5), ScopesRequired: true, AuditRequired: true, MtlsBindingPlaceholder: true, ClientSecretMetadataOnly: true, CertificateMetadataOnly: true),
+    Enabled: true);
+Assert(serviceClient.AllowedScopes.All(scope => scope.Required), "Service scopes must be required.");
+Assert(serviceClient.TokenPolicy.AuditRequired, "Service auth audit must be required.");
+
 Console.WriteLine("AuthService.Domain.Tests PASS");
 
 static void Assert(bool condition, string message)

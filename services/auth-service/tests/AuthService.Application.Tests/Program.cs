@@ -87,6 +87,53 @@ Assert(verifierCatalog.DefaultUnsupportedResult == AuthService.Domain.Models.Cre
 Assert(!verifierCatalog.ProductionVerificationImplemented, "Production verification must remain deferred.");
 Assert(!verifierCatalog.SecretValuesExposed, "Verifier catalog must not expose secret values.");
 
+var sessionModel = service.GetSessionModel();
+Assert(!sessionModel.RuntimeEnabled, "Session runtime must remain disabled.");
+Assert(sessionModel.SessionTypes.Contains("Interactive"), "Interactive sessions must be modeled.");
+Assert(sessionModel.SessionTypes.Contains("ServiceAccount"), "Service account sessions must be modeled.");
+Assert(sessionModel.Policy.MaxConcurrentSessions > 0, "Max concurrent session policy must be modeled.");
+Assert(sessionModel.Policy.IdleTimeout < sessionModel.Policy.AbsoluteLifetime, "Idle and absolute session timeouts must be modeled.");
+Assert(sessionModel.Policy.MfaRequired, "MFA session requirement must be modeled.");
+
+var tokenIssuance = service.GetTokenIssuanceModel();
+Assert(!tokenIssuance.RuntimeEnabled, "Token issuance runtime must remain disabled.");
+Assert(tokenIssuance.AccessTokenTypes.Contains("Jwt"), "JWT access token type must be modeled.");
+Assert(tokenIssuance.AccessTokenTypes.Contains("OpaqueReference"), "Opaque access token type must be modeled.");
+Assert(tokenIssuance.RefreshTokenRotationModeled, "Refresh token rotation must be modeled.");
+Assert(tokenIssuance.TokenRevocationModeled, "Token revocation must be modeled.");
+Assert(tokenIssuance.TokenIntrospectionModeled, "Token introspection must be modeled.");
+Assert(tokenIssuance.StandardClaims.Contains("identity_id"), "identity_id claim must be modeled.");
+Assert(tokenIssuance.StandardClaims.Contains("memberships"), "membership claims must be modeled.");
+
+var oauthRuntime = service.GetOAuthRuntimeModel();
+Assert(!oauthRuntime.RuntimeEndpointsEnabled, "OAuth runtime endpoints must remain disabled.");
+Assert(oauthRuntime.GrantTypes.Contains("AuthorizationCode"), "Authorization code grant must be modeled.");
+Assert(oauthRuntime.GrantTypes.Contains("ClientCredentials"), "Client credentials grant must be modeled.");
+Assert(oauthRuntime.GrantTypes.Contains("RefreshToken"), "Refresh token grant must be modeled.");
+Assert(oauthRuntime.ClientTypes.Contains("Confidential"), "Confidential clients must be modeled.");
+Assert(oauthRuntime.ClientTypes.Contains("Service"), "Service clients must be modeled.");
+Assert(oauthRuntime.RedirectUrisModeled, "Redirect URI model must exist.");
+Assert(oauthRuntime.ConsentModeled, "Consent grant must be modeled.");
+Assert(oauthRuntime.ClientSecretRotationModeled, "Client secret rotation must be modeled.");
+
+var jwks = service.GetJwksModel();
+Assert(jwks.JwksModeled, "JWKS must be modeled.");
+Assert(!jwks.PublicationEnabled, "JWKS publication must remain disabled.");
+Assert(!jwks.SigningKeyGenerationEnabled, "Signing key generation must remain disabled.");
+
+var serviceAuth = service.GetServiceAuthModel();
+Assert(!serviceAuth.RuntimeEnabled, "Service auth runtime must remain disabled.");
+Assert(serviceAuth.ClientCredentialsModeled, "Client credentials model must exist.");
+Assert(serviceAuth.ScopesRequired, "Service scopes must be required.");
+Assert(serviceAuth.AuditRequired, "Service auth audit must be required.");
+Assert(serviceAuth.OptionalMtlsBindingPlaceholder, "Optional mTLS binding placeholder must be modeled.");
+
+Assert(service.GetSessionReadiness().Status == AuthService.Domain.Models.AuthRuntimeGateStatus.Blocked, "Session activation gate must be blocked.");
+Assert(service.GetTokenReadiness().Status == AuthService.Domain.Models.AuthRuntimeGateStatus.Blocked, "Token activation gate must be blocked.");
+Assert(service.GetOAuthReadiness().Status == AuthService.Domain.Models.AuthRuntimeGateStatus.Blocked, "OAuth activation gate must be blocked.");
+Assert(service.GetTokenReadiness().Blockers.Any(blocker => blocker.Code == "SIGNING_KEYS_NOT_ACTIVE"), "Signing key blocker must be present.");
+Assert(service.GetTokenReadiness().Blockers.Any(blocker => blocker.Code == "CURRENT_PLATFORM_MIGRATION_NOT_APPROVED"), "Current platform migration blocker must be present.");
+
 var migration = service.GetMigrationReadiness();
 Assert(migration.Status == AuthService.Domain.Models.AuthMigrationGateStatus.Blocked, "Migration gate must be blocked by default.");
 Assert(migration.Blockers.Any(blocker => blocker.Code == "SCHEMA_NOT_APPLIED"), "Schema blocker must be present.");
