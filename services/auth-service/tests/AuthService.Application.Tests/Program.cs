@@ -48,6 +48,45 @@ Assert(tokenModel.RefreshTokenRotationModeled, "Refresh token rotation metadata 
 Assert(tokenModel.SigningKeyRotationModeled, "Signing key rotation metadata must exist.");
 Assert(!tokenModel.TokenIssuanceImplemented, "Token issuance must remain disabled.");
 
+var verificationModel = service.GetCredentialVerificationModel();
+Assert(verificationModel.ProviderBasedVerification, "Credential verification must be provider-based.");
+Assert(verificationModel.VerifierContracts.Contains("IPasswordCredentialVerifier"), "Password verifier contract must be present.");
+Assert(verificationModel.VerifierContracts.Contains("ITotpCredentialVerifier"), "TOTP verifier contract must be present.");
+Assert(verificationModel.VerifierContracts.Contains("IWebAuthnCredentialVerifier"), "WebAuthn verifier contract must be present.");
+Assert(verificationModel.ResultStatuses.Contains("UnsupportedCredential"), "Unsupported credentials must have structured status.");
+Assert(!verificationModel.SecretValuesExposed, "Verification model must not expose secret values.");
+Assert(!verificationModel.SessionCreationAllowed, "Credential verification must not create sessions in Phase 23.3.");
+Assert(!verificationModel.TokenIssuanceAllowed, "Credential verification must not issue tokens in Phase 23.3.");
+
+var passwordPolicy = service.GetPasswordPolicy();
+Assert(passwordPolicy.MinimumLength >= 12, "Password minimum length policy must exist.");
+Assert(passwordPolicy.PasswordlessAllowed, "Passwordless policy must be supported.");
+Assert(passwordPolicy.FailedLoginLockoutThreshold > 0, "Failed-login lockout threshold must be modeled.");
+Assert(!passwordPolicy.PlaintextPasswordStorageAllowed, "Plaintext password storage must remain disallowed.");
+
+var mfaPolicy = service.GetMfaPolicy();
+Assert(mfaPolicy.RequiredIdentityTypes.Contains(AuthService.Domain.Models.IdentityType.Admin), "MFA must be requireable by identity type.");
+Assert(mfaPolicy.RequiredRoles.Contains("operations_admin"), "MFA must be requireable by role.");
+Assert(mfaPolicy.RequiredPolicyCodes.Contains("authority.approval"), "MFA must be requireable by policy.");
+Assert(mfaPolicy.SupportedMethods.Contains(AuthService.Domain.Models.MfaMethod.Totp), "TOTP must be modeled as supported MFA method.");
+Assert(mfaPolicy.SupportedMethods.Contains(AuthService.Domain.Models.MfaMethod.WebAuthnPasskey), "WebAuthn/passkey must be modeled as supported MFA method.");
+Assert(!mfaPolicy.ProductionMfaVerificationImplemented, "Production MFA verification must remain deferred.");
+
+var eligibility = service.GetAuthenticationEligibility();
+Assert(eligibility.ActiveMayProceed, "Active identity must be eligible for credential verification.");
+Assert(eligibility.StructuredOutcomes.Any(outcome => outcome.Status == AuthService.Domain.Models.AuthenticationEligibilityStatus.PendingVerification), "Pending identity must return pending verification.");
+Assert(eligibility.StructuredOutcomes.Any(outcome => outcome.Status == AuthService.Domain.Models.AuthenticationEligibilityStatus.Locked), "Locked identity must return locked result.");
+Assert(eligibility.StructuredOutcomes.Any(outcome => outcome.Status == AuthService.Domain.Models.AuthenticationEligibilityStatus.Suspended), "Suspended identity must be blocked.");
+Assert(eligibility.StructuredOutcomes.Any(outcome => outcome.Status == AuthService.Domain.Models.AuthenticationEligibilityStatus.Disabled), "Disabled identity must be blocked.");
+Assert(eligibility.StructuredOutcomes.Any(outcome => outcome.Status == AuthService.Domain.Models.AuthenticationEligibilityStatus.Archived), "Archived identity must be blocked.");
+
+var verifierCatalog = service.GetCredentialVerifiers();
+Assert(verifierCatalog.Verifiers.Any(verifier => verifier.InterfaceName == "IPasswordCredentialVerifier"), "Password verifier must be cataloged.");
+Assert(verifierCatalog.Verifiers.Any(verifier => verifier.InterfaceName == "ICertificateCredentialVerifier"), "Certificate verifier must be cataloged.");
+Assert(verifierCatalog.DefaultUnsupportedResult == AuthService.Domain.Models.CredentialVerificationStatus.UnsupportedCredential, "Unsupported verifier result must be structured.");
+Assert(!verifierCatalog.ProductionVerificationImplemented, "Production verification must remain deferred.");
+Assert(!verifierCatalog.SecretValuesExposed, "Verifier catalog must not expose secret values.");
+
 var migration = service.GetMigrationReadiness();
 Assert(migration.Status == AuthService.Domain.Models.AuthMigrationGateStatus.Blocked, "Migration gate must be blocked by default.");
 Assert(migration.Blockers.Any(blocker => blocker.Code == "SCHEMA_NOT_APPLIED"), "Schema blocker must be present.");

@@ -18,8 +18,12 @@ public enum CredentialType
     Totp,
     RecoveryCode,
     OAuthFederation,
+    PamFederation,
+    ApiKey,
     ApiSecret,
+    ClientSecret,
     ClientCertificate,
+    Certificate,
     SsoAssertion
 }
 
@@ -31,6 +35,7 @@ public enum IdentityLifecycleState
     Suspended,
     Locked,
     Disabled,
+    Archived,
     Deleted
 }
 

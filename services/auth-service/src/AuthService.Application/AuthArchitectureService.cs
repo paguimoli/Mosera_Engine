@@ -8,7 +8,7 @@ public sealed class AuthArchitectureService
     {
         return new AuthServiceStatus(
             ServiceName: "auth-service",
-            ArchitecturePhase: "23.1",
+            ArchitecturePhase: "23.3",
             ProductionAuthenticationEnabled: false,
             ProductionTokenIssuanceEnabled: false,
             ExistingPlatformAuthBehaviorChanged: false,
@@ -152,6 +152,150 @@ public sealed class AuthArchitectureService
             ]);
     }
 
+    public CredentialVerificationModelSummary GetCredentialVerificationModel()
+    {
+        return new CredentialVerificationModelSummary(
+            ProviderBasedVerification: true,
+            ProductionVerificationImplemented: false,
+            SessionCreationAllowed: false,
+            TokenIssuanceAllowed: false,
+            Flow:
+            [
+                "Resolve identity by Login ID or alias.",
+                "Check lifecycle state.",
+                "Resolve enabled credentials.",
+                "Select credential verifier.",
+                "Verify credential with provider.",
+                "Evaluate MFA policy.",
+                "Emit audit/security event.",
+                "Return structured verification result."
+            ],
+            VerifierContracts:
+            [
+                "ICredentialVerifier",
+                "IPasswordCredentialVerifier",
+                "ITotpCredentialVerifier",
+                "IWebAuthnCredentialVerifier",
+                "IFederatedCredentialVerifier",
+                "IPamCredentialVerifier",
+                "IApiKeyCredentialVerifier",
+                "IClientSecretCredentialVerifier",
+                "ICertificateCredentialVerifier",
+                "ICredentialVerificationPolicy",
+                "ICredentialVerificationAuditSink"
+            ],
+            ResultStatuses: Enum.GetNames<CredentialVerificationStatus>(),
+            FailureReasons: Enum.GetNames<CredentialFailureReason>(),
+            RiskFlags: Enum.GetNames<SecurityRiskFlag>(),
+            SecretValuesExposed: false);
+    }
+
+    public PasswordPolicy GetPasswordPolicy()
+    {
+        return new PasswordPolicy(
+            MinimumLength: 12,
+            MaximumLength: 128,
+            RequireUppercase: true,
+            RequireLowercase: true,
+            RequireDigit: true,
+            RequireSymbol: false,
+            CompromisedPasswordCheckPlaceholder: true,
+            PasswordReusePreventionPlaceholder: true,
+            PasswordExpirationPolicyPlaceholder: true,
+            PasswordResetRequiredFlagSupported: true,
+            TemporaryPasswordFlagSupported: true,
+            FailedLoginLockoutThreshold: 10,
+            LockoutDuration: TimeSpan.FromMinutes(30),
+            AdminForcedResetSupported: true,
+            PasswordlessAllowed: true,
+            HashingDecision: PasswordHashingDecision.Deferred,
+            PlaintextPasswordStorageAllowed: false);
+    }
+
+    public MfaPolicy GetMfaPolicy()
+    {
+        return new MfaPolicy(
+            RequiredIdentityTypes:
+            [
+                IdentityType.Admin,
+                IdentityType.Operator,
+                IdentityType.ServiceAccount,
+                IdentityType.ApiClient
+            ],
+            RequiredRoles:
+            [
+                "super_admin",
+                "operations_admin",
+                "security_admin",
+                "authority_approver"
+            ],
+            RequiredPolicyCodes:
+            [
+                "authority.approval",
+                "credential.management",
+                "security.relationship.management"
+            ],
+            RequiredForPrivilegedOperations: true,
+            RequiredForSuspiciousLogin: true,
+            SupportedMethods:
+            [
+                MfaMethod.Totp,
+                MfaMethod.WebAuthnPasskey,
+                MfaMethod.EmailOtpPlaceholder,
+                MfaMethod.SmsOtpPlaceholder,
+                MfaMethod.RecoveryCodePlaceholder
+            ],
+            RememberedDevicePlaceholder: true,
+            StepUpAuthenticationPlaceholder: true,
+            ProductionMfaVerificationImplemented: false);
+    }
+
+    public AuthenticationEligibilityReport GetAuthenticationEligibility()
+    {
+        var samples = new[]
+        {
+            BuildEligibilitySample(IdentityLifecycleState.Active),
+            BuildEligibilitySample(IdentityLifecycleState.PendingActivation),
+            BuildEligibilitySample(IdentityLifecycleState.Locked),
+            BuildEligibilitySample(IdentityLifecycleState.Suspended),
+            BuildEligibilitySample(IdentityLifecycleState.Disabled),
+            BuildEligibilitySample(IdentityLifecycleState.Archived)
+        };
+
+        return new AuthenticationEligibilityReport(
+            LifecycleGateRequired: true,
+            ActiveMayProceed: true,
+            DeniedStates:
+            [
+                IdentityLifecycleState.Suspended.ToString(),
+                IdentityLifecycleState.Disabled.ToString(),
+                IdentityLifecycleState.Archived.ToString(),
+                IdentityLifecycleState.Deleted.ToString()
+            ],
+            StructuredOutcomes: samples,
+            GeneratedAt: DateTimeOffset.UtcNow);
+    }
+
+    public CredentialVerifierCatalog GetCredentialVerifiers()
+    {
+        return new CredentialVerifierCatalog(
+            Verifiers:
+            [
+                new CredentialVerifierDescriptor("Password", "IPasswordCredentialVerifier", false, true),
+                new CredentialVerifierDescriptor("Totp", "ITotpCredentialVerifier", false, true),
+                new CredentialVerifierDescriptor("WebAuthnPasskey", "IWebAuthnCredentialVerifier", false, true),
+                new CredentialVerifierDescriptor("OAuthFederated", "IFederatedCredentialVerifier", false, true),
+                new CredentialVerifierDescriptor("PAMFederated", "IPamCredentialVerifier", false, true),
+                new CredentialVerifierDescriptor("ApiKey", "IApiKeyCredentialVerifier", false, true),
+                new CredentialVerifierDescriptor("ClientSecret", "IClientSecretCredentialVerifier", false, true),
+                new CredentialVerifierDescriptor("Certificate", "ICertificateCredentialVerifier", false, true)
+            ],
+            ProductionVerificationImplemented: false,
+            DefaultUnsupportedResult: CredentialVerificationStatus.UnsupportedCredential,
+            SecretValuesExposed: false,
+            GeneratedAt: DateTimeOffset.UtcNow);
+    }
+
     public TokenModelSummary GetTokenModel()
     {
         return new TokenModelSummary(
@@ -214,6 +358,55 @@ public sealed class AuthArchitectureService
                 "Current platform auth is unchanged."
             ],
             GeneratedAt: DateTimeOffset.UtcNow);
+    }
+
+    private static AuthenticationEligibilityResult BuildEligibilitySample(IdentityLifecycleState lifecycleState)
+    {
+        return lifecycleState switch
+        {
+            IdentityLifecycleState.Active => new AuthenticationEligibilityResult(
+                Guid.Empty,
+                lifecycleState,
+                AuthenticationEligibilityStatus.Eligible,
+                MayAttemptCredentialVerification: true,
+                Reason: "Identity is active."),
+            IdentityLifecycleState.PendingActivation => new AuthenticationEligibilityResult(
+                Guid.Empty,
+                lifecycleState,
+                AuthenticationEligibilityStatus.PendingVerification,
+                MayAttemptCredentialVerification: false,
+                Reason: "Identity is pending verification."),
+            IdentityLifecycleState.Locked => new AuthenticationEligibilityResult(
+                Guid.Empty,
+                lifecycleState,
+                AuthenticationEligibilityStatus.Locked,
+                MayAttemptCredentialVerification: false,
+                Reason: "Identity is locked."),
+            IdentityLifecycleState.Suspended => new AuthenticationEligibilityResult(
+                Guid.Empty,
+                lifecycleState,
+                AuthenticationEligibilityStatus.Suspended,
+                MayAttemptCredentialVerification: false,
+                Reason: "Identity is suspended."),
+            IdentityLifecycleState.Disabled => new AuthenticationEligibilityResult(
+                Guid.Empty,
+                lifecycleState,
+                AuthenticationEligibilityStatus.Disabled,
+                MayAttemptCredentialVerification: false,
+                Reason: "Identity is disabled."),
+            IdentityLifecycleState.Archived or IdentityLifecycleState.Deleted => new AuthenticationEligibilityResult(
+                Guid.Empty,
+                lifecycleState,
+                AuthenticationEligibilityStatus.Archived,
+                MayAttemptCredentialVerification: false,
+                Reason: "Identity is archived."),
+            _ => new AuthenticationEligibilityResult(
+                Guid.Empty,
+                lifecycleState,
+                AuthenticationEligibilityStatus.Denied,
+                MayAttemptCredentialVerification: false,
+                Reason: "Identity lifecycle state is not eligible.")
+        };
     }
 }
 
@@ -296,3 +489,35 @@ public sealed record SchemaStatusSummary(
     bool MigrationAllowed,
     IReadOnlyCollection<string> Reasons,
     DateTimeOffset GeneratedAt);
+
+public sealed record CredentialVerificationModelSummary(
+    bool ProviderBasedVerification,
+    bool ProductionVerificationImplemented,
+    bool SessionCreationAllowed,
+    bool TokenIssuanceAllowed,
+    IReadOnlyCollection<string> Flow,
+    IReadOnlyCollection<string> VerifierContracts,
+    IReadOnlyCollection<string> ResultStatuses,
+    IReadOnlyCollection<string> FailureReasons,
+    IReadOnlyCollection<string> RiskFlags,
+    bool SecretValuesExposed);
+
+public sealed record AuthenticationEligibilityReport(
+    bool LifecycleGateRequired,
+    bool ActiveMayProceed,
+    IReadOnlyCollection<string> DeniedStates,
+    IReadOnlyCollection<AuthenticationEligibilityResult> StructuredOutcomes,
+    DateTimeOffset GeneratedAt);
+
+public sealed record CredentialVerifierCatalog(
+    IReadOnlyCollection<CredentialVerifierDescriptor> Verifiers,
+    bool ProductionVerificationImplemented,
+    CredentialVerificationStatus DefaultUnsupportedResult,
+    bool SecretValuesExposed,
+    DateTimeOffset GeneratedAt);
+
+public sealed record CredentialVerifierDescriptor(
+    string CredentialType,
+    string InterfaceName,
+    bool ProductionVerifierImplemented,
+    bool PlaceholderOnly);

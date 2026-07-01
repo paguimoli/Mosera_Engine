@@ -68,6 +68,36 @@ group.MapGet("/credential-model", (AuthArchitectureService service) => Results.O
     data = service.GetCredentialModel()
 }));
 
+group.MapGet("/credential-verification-model", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetCredentialVerificationModel()
+}));
+
+group.MapGet("/password-policy", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetPasswordPolicy()
+}));
+
+group.MapGet("/mfa-policy", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetMfaPolicy()
+}));
+
+group.MapGet("/authentication-eligibility", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetAuthenticationEligibility()
+}));
+
+group.MapGet("/credential-verifiers", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetCredentialVerifiers()
+}));
+
 group.MapGet("/token-model", (AuthArchitectureService service) => Results.Ok(new
 {
     success = true,
