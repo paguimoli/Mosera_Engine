@@ -1,4 +1,5 @@
 using AuthService.Domain.Models;
+using AuthService.Domain.Boundaries;
 
 var loginId = new LoginId(" global-admin ");
 Assert(loginId.Value == "global-admin", "Login ID should normalize surrounding whitespace.");
@@ -41,6 +42,35 @@ var policy = new Policy(
     EnforcedLocallyByServices: true);
 
 Assert(policy.EnforcedLocallyByServices, "Hybrid policy model requires local service enforcement.");
+
+var passwordCredential = new PasswordCredential(
+    Guid.NewGuid(),
+    identity.Id,
+    "password-public-reference",
+    "deferred",
+    "v0",
+    Enabled: true,
+    DateTimeOffset.UtcNow,
+    DisabledAt: null,
+    ExpiresAt: null);
+Assert(passwordCredential.Enabled, "Credentials must be individually enabled or disabled.");
+
+var secretBoundary = new CredentialSecretBoundary(passwordCredential.CredentialId, "vault://auth/password/placeholder", ReturnedByPublicQueryModel: false);
+Assert(!secretBoundary.ReturnedByPublicQueryModel, "Credential secret material must not be returned by public query models.");
+
+var refreshToken = new RefreshTokenMetadata(
+    Guid.NewGuid(),
+    Guid.NewGuid(),
+    RotationCounter: 1,
+    PreviousRefreshTokenId: Guid.NewGuid(),
+    DateTimeOffset.UtcNow,
+    DateTimeOffset.UtcNow.AddDays(7),
+    RotatedAt: DateTimeOffset.UtcNow,
+    RevokedAt: null);
+Assert(refreshToken.RotationCounter == 1 && refreshToken.PreviousRefreshTokenId is not null, "Refresh token rotation metadata must be modeled.");
+
+var signingKey = new SigningKeyMetadata(Guid.NewGuid(), "kid-auth-v1", "RS256", Version: 1, "PLANNED", DateTimeOffset.UtcNow, null, null);
+Assert(signingKey.Version == 1 && signingKey.KeyId == "kid-auth-v1", "Signing key metadata must be versioned.");
 
 Console.WriteLine("AuthService.Domain.Tests PASS");
 

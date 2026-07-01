@@ -65,6 +65,7 @@ const steps = [
   "qa:fault-injection",
   "qa:security-hardening",
   "qa:security-remediation",
+  "qa:auth-persistence-schema",
   "qa:performance-baseline",
   "qa:credit-launch",
   "qa:worker-observability",

@@ -56,4 +56,34 @@ group.MapGet("/policy-model", (AuthArchitectureService service) => Results.Ok(ne
     data = service.GetPolicyModel()
 }));
 
+group.MapGet("/persistence-model", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetPersistenceModel()
+}));
+
+group.MapGet("/credential-model", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetCredentialModel()
+}));
+
+group.MapGet("/token-model", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetTokenModel()
+}));
+
+group.MapGet("/migration-readiness", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetMigrationReadiness()
+}));
+
+group.MapGet("/schema-status", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetSchemaStatus()
+}));
+
 app.Run();
