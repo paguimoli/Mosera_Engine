@@ -677,6 +677,90 @@ if (rangeTickets.Count != 3 || cursorTickets.Count != 2)
     throw new InvalidOperationException("Database ticket reader range/cursor reads failed.");
 }
 
+var schemaPath = Path.Combine("services", "game-engine", "database", "002_durable_evaluation_storage.sql");
+if (!File.Exists(schemaPath))
+{
+    throw new InvalidOperationException("Durable evaluation storage schema artifact is missing.");
+}
+
+var schema = File.ReadAllText(schemaPath);
+if (!schema.Contains("game_engine.evaluation_records", StringComparison.OrdinalIgnoreCase) ||
+    !schema.Contains("idempotency_key text not null unique", StringComparison.OrdinalIgnoreCase) ||
+    !schema.Contains("prevent_evaluation_record_mutation", StringComparison.OrdinalIgnoreCase) ||
+    !schema.Contains("settlement_consumer_status", StringComparison.OrdinalIgnoreCase))
+{
+    throw new InvalidOperationException("Durable schema must document idempotency, append-only guards, and settlement consumer fields.");
+}
+
+var runRepository = new OrchestratorEvaluationRunRepository(evaluationOrchestrator);
+var batchRepository = new OrchestratorEvaluationBatchRepository(evaluationOrchestrator);
+var settlementReadService = new SettlementEvaluationReadService(runRepository, batchRepository, evaluationPersistence);
+var activationGate = new SettlementConsumerActivationGate(evaluationPersistence);
+var settlementRecords = settlementReadService.ListSettlementReadyRecords();
+if (settlementRecords.Count == 0 ||
+    settlementRecords.Any(record => record.Outcome == GameEvaluationOutcome.Rejected || record.ConsumerStatus == SettlementEvaluationConsumerStatus.Consumed))
+{
+    throw new InvalidOperationException("Settlement-ready read model must include only unconsumed evaluable records.");
+}
+
+var consumedRecord = firstPersistedRecord with
+{
+    Id = Guid.NewGuid(),
+    IdempotencyKey = $"consumed:{firstPersistedRecord.IdempotencyKey}",
+    EvaluationMetadata = new Dictionary<string, object?>(firstPersistedRecord.EvaluationMetadata)
+    {
+        ["settlementConsumerStatus"] = SettlementEvaluationConsumerStatus.Consumed.ToString(),
+        ["settlementConsumedAt"] = DateTimeOffset.UtcNow.ToString("O"),
+        ["settlementConsumedBy"] = "test-consumer"
+    }
+};
+evaluationPersistence.InsertEvaluationRecord(consumedRecord);
+if (settlementReadService.ListSettlementReadyRecords().Any(record => record.EvaluationRecordId == consumedRecord.Id))
+{
+    throw new InvalidOperationException("Consumed records must be excluded by default.");
+}
+
+var incompleteRun = evaluationOrchestrator.PlanRun(new EvaluationPlanRequest(
+    Guid.NewGuid(),
+    bindingForEvaluation.Id,
+    Guid.NewGuid(),
+    EligibleTicketCount: 1,
+    GameSpecificBatchSize: 1,
+    moduleForEvaluation.ModuleId,
+    moduleForEvaluation.ModuleVersion,
+    "evaluation-incomplete-settlement-filter"));
+var incompleteRecord = firstPersistedRecord with
+{
+    Id = Guid.NewGuid(),
+    IdempotencyKey = $"incomplete:{firstPersistedRecord.IdempotencyKey}",
+    RunId = incompleteRun.Id
+};
+evaluationPersistence.InsertEvaluationRecord(incompleteRecord);
+if (settlementReadService.ListSettlementReadyRecords().Any(record => record.EvaluationRecordId == incompleteRecord.Id))
+{
+    throw new InvalidOperationException("Incomplete runs must be excluded from settlement-ready records.");
+}
+
+var activationStatus = activationGate.GetStatus();
+if (activationStatus.Enabled ||
+    activationStatus.ActivationAllowed ||
+    activationStatus.Blockers.Count == 0 ||
+    activationStatus.SettlementMutationPerformed ||
+    activationStatus.FinancialMutationPerformed)
+{
+    throw new InvalidOperationException("Settlement consumer activation gate must remain disabled and mutation-free.");
+}
+
+var storageStatus = evaluationPersistence.GetStorageStatus();
+if (!storageStatus.DurableSchemaArtifactPresent ||
+    !storageStatus.DurableRepositoryContractsPresent ||
+    !storageStatus.AppendOnlyGuardDesigned ||
+    storageStatus.SettlementConsumerIntegrationEnabled ||
+    storageStatus.FinancialPostingEnabled)
+{
+    throw new InvalidOperationException("Durable evaluation storage status is invalid.");
+}
+
 if (!execution.TicketResults.Any(result => !result.ValidationAccepted && result.Outcome == GameEvaluationOutcome.Rejected))
 {
     throw new InvalidOperationException("Batch execution should continue after single-ticket validation failure.");

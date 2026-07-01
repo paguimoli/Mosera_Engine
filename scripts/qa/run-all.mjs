@@ -69,6 +69,7 @@ const steps = [
   "qa:credit-launch",
   "qa:worker-observability",
   "qa:evaluation-storage",
+  "qa:evaluation-settlement-prep",
 ];
 const results = [];
 

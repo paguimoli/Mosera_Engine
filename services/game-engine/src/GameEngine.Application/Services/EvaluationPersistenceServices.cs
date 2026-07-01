@@ -26,6 +26,48 @@ public interface IEvaluationRecordRepository
     IReadOnlyCollection<ImmutableEvaluationRecord> GetByBatch(Guid batchId);
 }
 
+public interface IEvaluationRunRepository
+{
+    IReadOnlyCollection<EvaluationRunDefinition> GetRuns();
+
+    EvaluationRunDefinition? GetRun(Guid runId);
+}
+
+public interface IEvaluationBatchRepository
+{
+    IReadOnlyCollection<EvaluationBatchDefinition> GetBatches(Guid runId);
+
+    EvaluationBatchDefinition? GetBatch(Guid batchId);
+}
+
+public interface IEvaluationCheckpointRepository
+{
+    PersistedEvaluationCheckpoint UpsertCheckpoint(
+        EvaluationRunDefinition run,
+        EvaluationBatchDefinition batch,
+        int processedCount,
+        int failedCount,
+        EvaluationCheckpointStatus status);
+
+    IReadOnlyCollection<PersistedEvaluationCheckpoint> GetCheckpoints();
+
+    IReadOnlyCollection<PersistedEvaluationCheckpoint> GetCheckpoints(Guid runId);
+}
+
+public sealed class OrchestratorEvaluationRunRepository(EvaluationOrchestrator orchestrator) : IEvaluationRunRepository
+{
+    public IReadOnlyCollection<EvaluationRunDefinition> GetRuns() => orchestrator.GetRuns();
+
+    public EvaluationRunDefinition? GetRun(Guid runId) => orchestrator.GetRun(runId);
+}
+
+public sealed class OrchestratorEvaluationBatchRepository(EvaluationOrchestrator orchestrator) : IEvaluationBatchRepository
+{
+    public IReadOnlyCollection<EvaluationBatchDefinition> GetBatches(Guid runId) => orchestrator.GetBatches(runId);
+
+    public EvaluationBatchDefinition? GetBatch(Guid batchId) => orchestrator.GetBatch(batchId);
+}
+
 public sealed class InMemoryEvaluationRecordRepository : IEvaluationRecordRepository
 {
     private readonly Dictionary<Guid, ImmutableEvaluationRecord> recordsById = [];
@@ -81,6 +123,7 @@ public sealed class InMemoryEvaluationRecordRepository : IEvaluationRecordReposi
 public sealed class EvaluationPersistenceService(
     IEvaluationRecordRepository repository,
     ITicketReader ticketReader)
+    : IEvaluationCheckpointRepository
 {
     private readonly Dictionary<Guid, PersistedEvaluationCheckpoint> checkpointsByBatch = [];
 
@@ -147,9 +190,39 @@ public sealed class EvaluationPersistenceService(
             repository.GetAll().Count,
             checkpointsByBatch.Count,
             ticketSourceCount,
+            DurableSchemaArtifactPresent: true,
+            DurableRepositoryWiringEnabled: false,
+            AppendOnlyGuardDesigned: true,
             SettlementIntegrationEnabled: false,
             FinancialPostingEnabled: false,
             ReplaySafePersistenceEnabled: true,
+            DateTimeOffset.UtcNow);
+    }
+
+    public DurableEvaluationStorageStatus GetStorageStatus()
+    {
+        return new DurableEvaluationStorageStatus(
+            DurableSchemaArtifactPresent: true,
+            DurableRepositoryContractsPresent: true,
+            DurableRepositoryWiringEnabled: false,
+            AppendOnlyGuardDesigned: true,
+            AppendOnlyTriggerDrafted: true,
+            IdempotencyConstraintDocumented: true,
+            SettlementConsumerIntegrationEnabled: false,
+            FinancialPostingEnabled: false,
+            [
+                "game_engine.evaluation_runs",
+                "game_engine.evaluation_batches",
+                "game_engine.evaluation_records",
+                "game_engine.evaluation_checkpoints"
+            ],
+            [
+                "Durable database repository wiring is not active in the skeleton runtime.",
+                "Settlement consumer activation is intentionally disabled."
+            ],
+            [
+                "Schema is a draft artifact until applied through a governed migration process."
+            ],
             DateTimeOffset.UtcNow);
     }
 }

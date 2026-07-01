@@ -632,6 +632,59 @@ public static class GameEngineEndpoints
             });
         });
 
+        group.MapGet("/evaluation-storage-status", (HttpContext context, EvaluationPersistenceService persistence) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                evaluationStorageStatus = persistence.GetStorageStatus(),
+                settlementIntegrationEnabled = false,
+                financialPostingEnabled = false,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/settlement-readiness", (HttpContext context, SettlementConsumerActivationGate activationGate) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                settlementReadiness = activationGate.GetStatus(),
+                status = "BLOCKED",
+                settlementIntegrationEnabled = false,
+                financialPostingEnabled = false,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/settlement-evaluation-records", (HttpContext context, ISettlementEvaluationReadModel readModel) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                settlementEvaluationRecords = readModel.ListSettlementReadyRecords(),
+                settlementEvaluationBatches = readModel.ListBatches(),
+                settlementEvaluationRuns = readModel.ListRunSummaries(),
+                settlementIntegrationEnabled = false,
+                financialPostingEnabled = false,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/settlement-consumer-status", (HttpContext context, SettlementConsumerActivationGate activationGate, ISettlementEvaluationReadModel readModel) =>
+        {
+            var readService = readModel as SettlementEvaluationReadService;
+            return Results.Ok(new
+            {
+                success = true,
+                settlementConsumerStatus = activationGate.GetStatus(),
+                cursor = readService?.GetCursor(),
+                settlementIntegrationEnabled = false,
+                financialPostingEnabled = false,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
         group.MapPost("/module-execution/run", (HttpContext context, GameModuleExecutionService executionService) =>
         {
             try
@@ -686,6 +739,20 @@ public static class GameEngineEndpoints
                     correlationId = context.GetCorrelationId()
                 });
             }
+        });
+
+        group.MapPost("/settlement-consumer/activate", (HttpContext context, SettlementConsumerActivationGate activationGate) =>
+        {
+            return Results.BadRequest(new
+            {
+                success = false,
+                message = "Settlement consumer activation is disabled in Phase 22.6L.",
+                settlementConsumerStatus = activationGate.GetStatus(),
+                settlementIntegrationEnabled = false,
+                financialPostingEnabled = false,
+                authBoundary = "admin_placeholder",
+                correlationId = context.GetCorrelationId()
+            });
         });
 
         group.MapPost("/evaluation-runs/plan", (HttpContext context, EvaluationOrchestrator orchestrator, GameModuleRegistry moduleRegistry, DrawSchedulerService scheduler) =>

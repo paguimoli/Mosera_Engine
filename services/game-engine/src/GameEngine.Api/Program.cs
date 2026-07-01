@@ -25,9 +25,14 @@ builder.Services.AddSingleton<DrawGenerationFramework>();
 builder.Services.AddSingleton<DrawSchedulerService>();
 builder.Services.AddSingleton<EvaluationOrchestrator>();
 builder.Services.AddSingleton<EvaluationRabbitMqDiagnostics>();
+builder.Services.AddSingleton<IEvaluationRunRepository, OrchestratorEvaluationRunRepository>();
+builder.Services.AddSingleton<IEvaluationBatchRepository, OrchestratorEvaluationBatchRepository>();
 builder.Services.AddSingleton<IEvaluationRecordRepository, InMemoryEvaluationRecordRepository>();
 builder.Services.AddSingleton<ITicketReader, DatabaseTicketReader>();
 builder.Services.AddSingleton<EvaluationPersistenceService>();
+builder.Services.AddSingleton<IEvaluationCheckpointRepository>(provider => provider.GetRequiredService<EvaluationPersistenceService>());
+builder.Services.AddSingleton<ISettlementEvaluationReadModel, SettlementEvaluationReadService>();
+builder.Services.AddSingleton<SettlementConsumerActivationGate>();
 builder.Services.AddSingleton<GameModuleExecutionService>();
 builder.Services.AddSingleton<GameEngineStatusService>();
 builder.Services.ConfigureHttpJsonOptions(options =>

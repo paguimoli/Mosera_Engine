@@ -42,6 +42,16 @@ public enum EvaluationMessageDisposition
     Rejected
 }
 
+public enum SettlementEvaluationConsumerStatus
+{
+    NotConsumed,
+    Ready,
+    Consumed,
+    Skipped,
+    Blocked,
+    Failed
+}
+
 public sealed record EvaluationPlanRequest(
     Guid DrawId,
     Guid GameBindingId,
@@ -179,9 +189,87 @@ public sealed record EvaluationStorageDiagnostics(
     int EvaluationRecordCount,
     int CheckpointCount,
     int TicketSourceCount,
+    bool DurableSchemaArtifactPresent,
+    bool DurableRepositoryWiringEnabled,
+    bool AppendOnlyGuardDesigned,
     bool SettlementIntegrationEnabled,
     bool FinancialPostingEnabled,
     bool ReplaySafePersistenceEnabled,
+    DateTimeOffset GeneratedAt);
+
+public sealed record DurableEvaluationStorageStatus(
+    bool DurableSchemaArtifactPresent,
+    bool DurableRepositoryContractsPresent,
+    bool DurableRepositoryWiringEnabled,
+    bool AppendOnlyGuardDesigned,
+    bool AppendOnlyTriggerDrafted,
+    bool IdempotencyConstraintDocumented,
+    bool SettlementConsumerIntegrationEnabled,
+    bool FinancialPostingEnabled,
+    IReadOnlyCollection<string> Tables,
+    IReadOnlyCollection<string> Blockers,
+    IReadOnlyCollection<string> Warnings,
+    DateTimeOffset GeneratedAt);
+
+public sealed record SettlementEvaluationRecord(
+    Guid EvaluationRecordId,
+    Guid RunId,
+    Guid BatchId,
+    Guid TicketId,
+    Guid DrawId,
+    Guid GameId,
+    string IdempotencyKey,
+    GameEvaluationOutcome Outcome,
+    GameEvaluationReason ReasonCode,
+    GameEvaluationAmount Amount,
+    string ModuleId,
+    string ModuleVersion,
+    string EvaluatorVersion,
+    string PaytableVersion,
+    SettlementEvaluationConsumerStatus ConsumerStatus,
+    DateTimeOffset? SettlementConsumedAt,
+    string? SettlementConsumedBy,
+    Guid? SettlementConsumerCorrelationId,
+    DateTimeOffset EvaluatedAt);
+
+public sealed record SettlementEvaluationBatch(
+    Guid BatchId,
+    Guid RunId,
+    int Sequence,
+    EvaluationBatchStatus Status,
+    int SettlementReadyRecordCount,
+    int ExcludedRecordCount,
+    DateTimeOffset GeneratedAt);
+
+public sealed record SettlementEvaluationRunSummary(
+    Guid RunId,
+    Guid DrawId,
+    Guid GameId,
+    EvaluationRunStatus Status,
+    int SettlementReadyRecordCount,
+    int ExcludedRecordCount,
+    bool SettlementIntegrationEnabled,
+    DateTimeOffset GeneratedAt);
+
+public sealed record SettlementEvaluationConsumerCursor(
+    Guid? LastEvaluationRecordId,
+    DateTimeOffset? LastEvaluatedAt,
+    int PageSize,
+    DateTimeOffset GeneratedAt);
+
+public sealed record SettlementConsumerActivationRequirement(
+    string Code,
+    bool Satisfied,
+    string Description);
+
+public sealed record SettlementConsumerActivationStatus(
+    bool Enabled,
+    bool ActivationAllowed,
+    IReadOnlyCollection<SettlementConsumerActivationRequirement> Requirements,
+    IReadOnlyCollection<string> Blockers,
+    IReadOnlyCollection<string> Warnings,
+    bool SettlementMutationPerformed,
+    bool FinancialMutationPerformed,
     DateTimeOffset GeneratedAt);
 
 public sealed record ModuleResolutionResult(
