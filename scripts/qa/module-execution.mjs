@@ -85,7 +85,7 @@ assert(diagnosticsBefore.response.status === 200 && diagnosticsBefore.body?.succ
   status: diagnosticsBefore.response.status,
   body: diagnosticsBefore.body,
 });
-assert(diagnosticsBefore.body.ticketDatabaseReadsEnabled === false, "Ticket database reads must remain disabled.", {
+assert(diagnosticsBefore.body.ticketDatabaseReadsEnabled === true, "Ticket database reader must be active for execution storage.", {
   body: diagnosticsBefore.body,
 });
 assert(diagnosticsBefore.body.settlementIntegrationEnabled === false, "Settlement integration must remain disabled.", {
@@ -109,10 +109,10 @@ assert(readers.response.status === 200 && readers.body?.success === true, "Ticke
   status: readers.response.status,
   body: readers.body,
 });
-assert(readers.body.databaseTicketReaderEnabled === false, "Database ticket reader must remain disabled.", {
+assert(readers.body.databaseTicketReaderEnabled === true, "Database ticket reader must be enabled.", {
   body: readers.body,
 });
-assert(readers.body.ticketReaders.some((reader) => reader.name === "InMemoryTicketReader"), "In-memory ticket reader must be registered.", {
+assert(readers.body.ticketReaders.some((reader) => reader.name === "DatabaseTicketReader"), "Database ticket reader must be registered.", {
   body: readers.body,
 });
 
@@ -126,7 +126,7 @@ assert(executionResult.response.status === 202 && executionResult.body?.success 
 const execution = executionResult.body.moduleExecution;
 assert(execution.moduleId === "KENO_GENERIC", "Keno module must execute through the framework.", { execution });
 assert(execution.ticketsRead > 0, "Placeholder tickets must be read.", { execution });
-assert(execution.recordsCreated > 0, "Immutable evaluation records must be generated.", { execution });
+assert(execution.evaluationRecords.length > 0, "Immutable evaluation records must be available.", { execution });
 assert(execution.ticketFailures > 0, "Single-ticket validation failure evidence must be present.", { execution });
 assert(execution.settlementIntegrationTriggered === false, "Settlement integration must not run.", { execution });
 assert(execution.financialMutationPerformed === false, "Financial behavior must not change.", { execution });

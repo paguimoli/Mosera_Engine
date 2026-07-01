@@ -580,7 +580,10 @@ if (processingStatus.ProductionGameLogicEnabled || processingStatus.TicketDbInte
     throw new InvalidOperationException("Evaluation processing diagnostics must keep production integrations disabled.");
 }
 
-var executionService = new GameModuleExecutionService(registry, evaluationOrchestrator, new InMemoryTicketReader());
+var databaseTicketReader = new DatabaseTicketReader();
+var evaluationRecordRepository = new InMemoryEvaluationRecordRepository();
+var evaluationPersistence = new EvaluationPersistenceService(evaluationRecordRepository, databaseTicketReader);
+var executionService = new GameModuleExecutionService(registry, evaluationOrchestrator, databaseTicketReader, evaluationPersistence);
 var resolution = executionService.GetModuleResolution();
 if (!resolution.Any(item => item.ModuleId == "KENO_GENERIC" && item.Resolved))
 {
@@ -611,12 +614,67 @@ if (execution.ModuleId != "KENO_GENERIC" ||
 
 if (execution.EvaluationRecords.Any(record =>
         record.DrawId == Guid.Empty ||
+        string.IsNullOrWhiteSpace(record.IdempotencyKey) ||
         record.GameId == Guid.Empty ||
         record.ModuleId != "KENO_GENERIC" ||
         string.IsNullOrWhiteSpace(record.EvaluatorVersion) ||
         string.IsNullOrWhiteSpace(record.PaytableVersion)))
 {
     throw new InvalidOperationException("Evaluation record builder produced incomplete records.");
+}
+
+var persistedRecords = evaluationPersistence.GetByRun(execution.RunId);
+if (persistedRecords.Count != execution.EvaluationRecords.Count)
+{
+    throw new InvalidOperationException("Evaluation records must be persisted by run.");
+}
+
+var firstPersistedRecord = persistedRecords.First();
+if (evaluationPersistence.FindById(firstPersistedRecord.Id) is null ||
+    evaluationPersistence.FindByIdempotencyKey(firstPersistedRecord.IdempotencyKey) is null)
+{
+    throw new InvalidOperationException("Evaluation record lookup by id and idempotency key failed.");
+}
+
+if (evaluationPersistence.GetByDraw(firstPersistedRecord.DrawId).Count == 0 ||
+    evaluationPersistence.GetByTicket(firstPersistedRecord.TicketId).Count != 1 ||
+    evaluationPersistence.GetByBatch(firstPersistedRecord.BatchId).Count == 0)
+{
+    throw new InvalidOperationException("Evaluation record query services are incomplete.");
+}
+
+var duplicatePersistence = evaluationPersistence.InsertEvaluationRecord(firstPersistedRecord with
+{
+    Amount = firstPersistedRecord.Amount with { PayoutAmount = firstPersistedRecord.Amount.PayoutAmount + 999m }
+});
+if (duplicatePersistence.Created ||
+    duplicatePersistence.Record.Id != firstPersistedRecord.Id ||
+    duplicatePersistence.Record.Amount.PayoutAmount != firstPersistedRecord.Amount.PayoutAmount)
+{
+    throw new InvalidOperationException("Persistent evaluation record duplicate insert must return the immutable original.");
+}
+
+var checkpoints = evaluationPersistence.GetCheckpoints(execution.RunId);
+if (checkpoints.Count == 0 ||
+    checkpoints.Any(checkpoint => checkpoint.Status != EvaluationCheckpointStatus.Completed || checkpoint.ProcessedCount == 0))
+{
+    throw new InvalidOperationException("Persistent evaluation checkpoints were not updated.");
+}
+
+var resume = executionService.ResumeRun(execution.RunId, Guid.NewGuid());
+if (resume.FinancialMutationPerformed ||
+    resume.SettlementIntegrationTriggered ||
+    resume.RecordsCreated != 0 ||
+    evaluationPersistence.GetByRun(execution.RunId).Count != persistedRecords.Count)
+{
+    throw new InvalidOperationException("Evaluation replay/resume must not duplicate completed records or mutate finances.");
+}
+
+var rangeTickets = databaseTicketReader.ReadByRange(firstPersistedRecord.DrawId, firstPersistedRecord.GameId, 0, 3);
+var cursorTickets = databaseTicketReader.ReadByCursor(firstPersistedRecord.DrawId, firstPersistedRecord.GameId, "2", 2);
+if (rangeTickets.Count != 3 || cursorTickets.Count != 2)
+{
+    throw new InvalidOperationException("Database ticket reader range/cursor reads failed.");
 }
 
 if (!execution.TicketResults.Any(result => !result.ValidationAccepted && result.Outcome == GameEvaluationOutcome.Rejected))
@@ -626,7 +684,7 @@ if (!execution.TicketResults.Any(result => !result.ValidationAccepted && result.
 
 var executionDiagnostics = executionService.GetDiagnostics();
 if (executionDiagnostics.ExecutionCount == 0 ||
-    executionDiagnostics.TicketDatabaseReadsEnabled ||
+    !executionDiagnostics.TicketDatabaseReadsEnabled ||
     executionDiagnostics.SettlementIntegrationEnabled ||
     executionDiagnostics.FinancialPostingEnabled)
 {

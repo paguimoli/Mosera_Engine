@@ -136,9 +136,11 @@ public sealed class EvaluationRecordBuilder
             context.ModuleId,
             context.ModuleVersion,
             context.EvaluatorVersion);
+        var idempotencyKey = $"evaluation:{key.DrawId:N}:{key.TicketId:N}:{key.GameId:N}:{key.GameModuleId}:{key.GameModuleVersion}:{key.EvaluationVersion}";
 
         return new ImmutableEvaluationRecord(
             EvaluationIds.Record(key),
+            idempotencyKey,
             context.RunId,
             context.BatchId,
             ticket.TicketId,
@@ -159,7 +161,8 @@ public sealed class EvaluationRecordBuilder
 public sealed class GameModuleExecutionService(
     GameModuleRegistry registry,
     EvaluationOrchestrator orchestrator,
-    ITicketReader ticketReader)
+    ITicketReader ticketReader,
+    EvaluationPersistenceService persistenceService)
 {
     private readonly ModuleResolver moduleResolver = new(registry);
     private readonly ModuleVersionResolver moduleVersionResolver = new(registry);
@@ -170,8 +173,8 @@ public sealed class GameModuleExecutionService(
     {
         return new ModuleExecutionDiagnostics(
             executions.Count,
-            executions.Sum(execution => execution.RecordsCreated),
-            TicketDatabaseReadsEnabled: false,
+            persistenceService.GetDiagnostics().EvaluationRecordCount,
+            TicketDatabaseReadsEnabled: ticketReader is DatabaseTicketReader,
             SettlementIntegrationEnabled: false,
             FinancialPostingEnabled: false,
             executions.OrderByDescending(execution => execution.ExecutedAt).Take(10).ToArray(),
@@ -193,6 +196,15 @@ public sealed class GameModuleExecutionService(
                 databaseAccessEnabled = false,
                 supportsReadBatch = true,
                 supportsReadByRange = true,
+                productionReady = false
+            },
+            new
+            {
+                name = "DatabaseTicketReader",
+                databaseAccessEnabled = true,
+                supportsReadBatch = true,
+                supportsReadByRange = true,
+                supportsReadByCursor = true,
                 productionReady = false
             }
         ];
@@ -266,6 +278,7 @@ public sealed class GameModuleExecutionService(
         var records = new List<ImmutableEvaluationRecord>();
         var ticketResults = new List<EvaluationExecutionTicketResult>();
         var failures = 0;
+        var createdRecords = 0;
 
         foreach (var ticket in tickets)
         {
@@ -308,7 +321,13 @@ public sealed class GameModuleExecutionService(
                     context.DrawAuthorityId.ToString("N"),
                     $"execution:{context.RunId:N}:{ticket.TicketId:N}")));
             var record = recordBuilder.Build(context, ticket, output);
-            records.Add(record);
+            var persisted = persistenceService.InsertEvaluationRecord(record);
+            if (persisted.Created)
+            {
+                createdRecords += 1;
+            }
+
+            records.Add(persisted.Record);
             orchestrator.RecordEvaluation(
                 context.RunId,
                 context.BatchId,
@@ -319,12 +338,13 @@ public sealed class GameModuleExecutionService(
                 true,
                 output.Outcome,
                 output.Reason,
-                record.Id,
+                persisted.Record.Id,
                 output.ValidationResult.Errors));
         }
 
         var completed = orchestrator.CompleteBatch(batch.Id, tickets.Count, tickets.LastOrDefault()?.TicketId.ToString("N") ?? "empty");
         var completedRun = orchestrator.GetRun(run.Id) ?? run;
+        persistenceService.UpsertCheckpoint(run, completed, tickets.Count, failures, EvaluationCheckpointStatus.Completed);
         var result = new EvaluationExecutionResult(
             run.Id,
             batch.Id,
@@ -332,7 +352,7 @@ public sealed class GameModuleExecutionService(
             context.ModuleId,
             context.ModuleVersion,
             tickets.Count,
-            records.Count,
+            createdRecords,
             failures,
             completed.Status,
             completedRun.Status,
@@ -343,6 +363,46 @@ public sealed class GameModuleExecutionService(
             DateTimeOffset.UtcNow);
         executions.Add(result);
         return result;
+    }
+
+    public EvaluationExecutionResult ResumeRun(Guid runId, Guid correlationId)
+    {
+        var run = orchestrator.GetRun(runId) ?? throw new InvalidOperationException("Evaluation run not found.");
+        var nextBatch = orchestrator.GetBatches(run.Id)
+            .OrderBy(batch => batch.Sequence)
+            .FirstOrDefault(batch => batch.Status is EvaluationBatchStatus.Pending or EvaluationBatchStatus.RetryPending or EvaluationBatchStatus.Failed or EvaluationBatchStatus.InProgress);
+        if (nextBatch is not null)
+        {
+            return ExecuteBatch(run.Id, nextBatch.Id, correlationId);
+        }
+
+        var latest = GetExecution(run.Id);
+        if (latest is not null)
+        {
+            return latest with
+            {
+                CorrelationId = correlationId,
+                RecordsCreated = 0,
+                ExecutedAt = DateTimeOffset.UtcNow
+            };
+        }
+
+        return new EvaluationExecutionResult(
+            run.Id,
+            Guid.Empty,
+            correlationId,
+            run.GameModuleId,
+            run.GameModuleVersion,
+            TicketsRead: 0,
+            RecordsCreated: 0,
+            TicketFailures: 0,
+            EvaluationBatchStatus.Skipped,
+            run.Status,
+            Array.Empty<ImmutableEvaluationRecord>(),
+            Array.Empty<EvaluationExecutionTicketResult>(),
+            SettlementIntegrationTriggered: false,
+            FinancialMutationPerformed: false,
+            DateTimeOffset.UtcNow);
     }
 
     private EvaluationExecutionContext CreateContext(

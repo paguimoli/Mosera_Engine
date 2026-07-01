@@ -527,7 +527,7 @@ public static class GameEngineEndpoints
                 moduleExecution = executionService.GetDiagnostics(),
                 settlementIntegrationEnabled = false,
                 financialPostingEnabled = false,
-                ticketDatabaseReadsEnabled = false,
+                ticketDatabaseReadsEnabled = true,
                 correlationId = context.GetCorrelationId()
             });
         });
@@ -569,7 +569,65 @@ public static class GameEngineEndpoints
             {
                 success = true,
                 ticketReaders = executionService.GetTicketReaders(),
-                databaseTicketReaderEnabled = false,
+                databaseTicketReaderEnabled = true,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/evaluation-records", (HttpContext context, EvaluationPersistenceService persistence) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                evaluationRecords = persistence.GetAll(),
+                diagnostics = persistence.GetDiagnostics(),
+                settlementIntegrationEnabled = false,
+                financialPostingEnabled = false,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/evaluation-records/{id:guid}", (Guid id, HttpContext context, EvaluationPersistenceService persistence) =>
+        {
+            var record = persistence.FindById(id);
+            return record is null
+                ? Results.NotFound(new
+                {
+                    success = false,
+                    message = "Evaluation record not found.",
+                    evaluationRecordId = id,
+                    correlationId = context.GetCorrelationId()
+                })
+                : Results.Ok(new
+                {
+                    success = true,
+                    evaluationRecord = record,
+                    settlementIntegrationEnabled = false,
+                    financialPostingEnabled = false,
+                    correlationId = context.GetCorrelationId()
+                });
+        });
+
+        group.MapGet("/evaluation-runs/{id:guid}/records", (Guid id, HttpContext context, EvaluationPersistenceService persistence) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                evaluationRunId = id,
+                evaluationRecords = persistence.GetByRun(id),
+                replaySafePersistenceEnabled = true,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/evaluation-checkpoints", (HttpContext context, EvaluationPersistenceService persistence) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                evaluationCheckpoints = persistence.GetCheckpoints(),
+                diagnostics = persistence.GetDiagnostics(),
+                persistentCheckpointingEnabled = true,
                 correlationId = context.GetCorrelationId()
             });
         });
@@ -582,7 +640,8 @@ public static class GameEngineEndpoints
                 {
                     success = true,
                     moduleExecution = executionService.ExecuteReferenceRun(Guid.NewGuid()),
-                    inMemoryOnly = true,
+                    inMemoryOnly = false,
+                    persistentStorageEnabled = true,
                     settlementIntegrationTriggered = false,
                     financialMutationPerformed = false,
                     authBoundary = "admin_placeholder",
@@ -597,6 +656,33 @@ public static class GameEngineEndpoints
                     message = ex.Message,
                     settlementIntegrationTriggered = false,
                     financialMutationPerformed = false,
+                    correlationId = context.GetCorrelationId()
+                });
+            }
+        });
+
+        group.MapPost("/evaluation-runs/{id:guid}/resume", (Guid id, HttpContext context, GameModuleExecutionService executionService) =>
+        {
+            try
+            {
+                return Results.Accepted(value: new
+                {
+                    success = true,
+                    moduleExecution = executionService.ResumeRun(id, Guid.NewGuid()),
+                    replaySafePersistenceEnabled = true,
+                    settlementIntegrationTriggered = false,
+                    financialMutationPerformed = false,
+                    authBoundary = "admin_placeholder",
+                    correlationId = context.GetCorrelationId()
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.NotFound(new
+                {
+                    success = false,
+                    message = ex.Message,
+                    evaluationRunId = id,
                     correlationId = context.GetCorrelationId()
                 });
             }

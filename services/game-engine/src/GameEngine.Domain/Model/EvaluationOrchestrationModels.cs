@@ -148,6 +148,7 @@ public sealed record TicketReadModel(
 
 public sealed record ImmutableEvaluationRecord(
     Guid Id,
+    string IdempotencyKey,
     Guid RunId,
     Guid BatchId,
     Guid TicketId,
@@ -162,6 +163,26 @@ public sealed record ImmutableEvaluationRecord(
     GameEvaluationAmount Amount,
     IReadOnlyDictionary<string, object?> EvaluationMetadata,
     DateTimeOffset EvaluatedAt);
+
+public sealed record PersistedEvaluationCheckpoint(
+    Guid RunId,
+    Guid BatchId,
+    string Cursor,
+    int ProcessedCount,
+    int FailedCount,
+    int RetryCount,
+    EvaluationCheckpointStatus Status,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
+public sealed record EvaluationStorageDiagnostics(
+    int EvaluationRecordCount,
+    int CheckpointCount,
+    int TicketSourceCount,
+    bool SettlementIntegrationEnabled,
+    bool FinancialPostingEnabled,
+    bool ReplaySafePersistenceEnabled,
+    DateTimeOffset GeneratedAt);
 
 public sealed record ModuleResolutionResult(
     bool Resolved,

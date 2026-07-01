@@ -68,6 +68,7 @@ const steps = [
   "qa:performance-baseline",
   "qa:credit-launch",
   "qa:worker-observability",
+  "qa:evaluation-storage",
 ];
 const results = [];
 
