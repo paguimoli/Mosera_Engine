@@ -112,6 +112,100 @@ public sealed record EvaluationRecordDefinition(
     IReadOnlyDictionary<string, object?> SettlementFacts,
     DateTimeOffset EvaluatedAt);
 
+public sealed record EvaluationExecutionContext(
+    Guid DrawId,
+    Guid GameId,
+    Guid GameBindingId,
+    string ModuleId,
+    string ModuleVersion,
+    string EvaluatorVersion,
+    Guid DrawAuthorityId,
+    string PaytableVersion,
+    IReadOnlyDictionary<string, object?> CertifiedResult,
+    IReadOnlyDictionary<string, object?> Configuration,
+    Guid RunId,
+    Guid BatchId,
+    int BatchSequence,
+    int StartInclusive,
+    int EndExclusive,
+    Guid CorrelationId);
+
+public sealed record TicketReadRequest(
+    Guid DrawId,
+    Guid GameId,
+    Guid BatchId,
+    int StartInclusive,
+    int EndExclusive,
+    IReadOnlyDictionary<string, object?> Configuration);
+
+public sealed record TicketReadModel(
+    Guid TicketId,
+    Guid PlayerId,
+    GameType GameType,
+    WagerType WagerType,
+    IReadOnlyDictionary<string, object?> Payload,
+    GameEvaluationAmount Stake);
+
+public sealed record ImmutableEvaluationRecord(
+    Guid Id,
+    Guid RunId,
+    Guid BatchId,
+    Guid TicketId,
+    Guid DrawId,
+    Guid GameId,
+    string ModuleId,
+    string ModuleVersion,
+    string EvaluatorVersion,
+    string PaytableVersion,
+    GameEvaluationOutcome Outcome,
+    GameEvaluationReason ReasonCode,
+    GameEvaluationAmount Amount,
+    IReadOnlyDictionary<string, object?> EvaluationMetadata,
+    DateTimeOffset EvaluatedAt);
+
+public sealed record ModuleResolutionResult(
+    bool Resolved,
+    string ModuleId,
+    string ModuleVersion,
+    string? Reason,
+    GameModuleLifecycleStatus? LifecycleStatus,
+    bool ProductionReady,
+    DateTimeOffset ResolvedAt);
+
+public sealed record EvaluationExecutionTicketResult(
+    Guid TicketId,
+    bool ValidationAccepted,
+    GameEvaluationOutcome Outcome,
+    GameEvaluationReason ReasonCode,
+    Guid? EvaluationRecordId,
+    IReadOnlyCollection<ValidationError> Errors);
+
+public sealed record EvaluationExecutionResult(
+    Guid RunId,
+    Guid BatchId,
+    Guid CorrelationId,
+    string ModuleId,
+    string ModuleVersion,
+    int TicketsRead,
+    int RecordsCreated,
+    int TicketFailures,
+    EvaluationBatchStatus BatchStatus,
+    EvaluationRunStatus RunStatus,
+    IReadOnlyCollection<ImmutableEvaluationRecord> EvaluationRecords,
+    IReadOnlyCollection<EvaluationExecutionTicketResult> TicketResults,
+    bool SettlementIntegrationTriggered,
+    bool FinancialMutationPerformed,
+    DateTimeOffset ExecutedAt);
+
+public sealed record ModuleExecutionDiagnostics(
+    int ExecutionCount,
+    int EvaluationRecordCount,
+    bool TicketDatabaseReadsEnabled,
+    bool SettlementIntegrationEnabled,
+    bool FinancialPostingEnabled,
+    IReadOnlyCollection<EvaluationExecutionResult> RecentExecutions,
+    DateTimeOffset GeneratedAt);
+
 public sealed record EvaluationRecordAttemptResult(
     EvaluationDuplicateStatus Status,
     EvaluationRecordDefinition Record);

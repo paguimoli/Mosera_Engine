@@ -23,9 +23,9 @@ if (status.SettlementIntegrationEnabled)
     throw new InvalidOperationException("Skeleton must not enable settlement integration.");
 }
 
-if (modules.Count != 2)
+if (modules.Count != 3)
 {
-    throw new InvalidOperationException("Expected skeleton HotSpot and TestModule module statuses.");
+    throw new InvalidOperationException("Expected HotSpot, TestModule, and Keno module statuses.");
 }
 
 if (modules.Any(module => module.Manifest.SupportedWagerTypes.Count == 0))
@@ -34,14 +34,14 @@ if (modules.Any(module => module.Manifest.SupportedWagerTypes.Count == 0))
 }
 
 var registryStatus = registry.GetRegistryStatus();
-if (registryStatus.RegisteredModuleCount != 2)
+if (registryStatus.RegisteredModuleCount != 3)
 {
-    throw new InvalidOperationException("Expected two registered modules.");
+    throw new InvalidOperationException("Expected three registered modules.");
 }
 
-if (registry.GetInactiveModules().Count != 2)
+if (registry.GetInactiveModules().Count != 3)
 {
-    throw new InvalidOperationException("Current placeholder modules must remain inactive.");
+    throw new InvalidOperationException("Current non-production modules must remain inactive.");
 }
 
 if (registry.GetProductionReadyModules().Count != 0)
@@ -50,7 +50,7 @@ if (registry.GetProductionReadyModules().Count != 0)
 }
 
 var bindings = registry.GetGameBindings();
-if (bindings.Count != 2)
+if (bindings.Count != 3)
 {
     throw new InvalidOperationException("Prospective bindings should be created for discovered modules.");
 }
@@ -578,6 +578,59 @@ var processingStatus = rabbitMqDiagnostics.GetProcessingStatus();
 if (processingStatus.ProductionGameLogicEnabled || processingStatus.TicketDbIntegrationEnabled || processingStatus.SettlementIntegrationEnabled)
 {
     throw new InvalidOperationException("Evaluation processing diagnostics must keep production integrations disabled.");
+}
+
+var executionService = new GameModuleExecutionService(registry, evaluationOrchestrator, new InMemoryTicketReader());
+var resolution = executionService.GetModuleResolution();
+if (!resolution.Any(item => item.ModuleId == "KENO_GENERIC" && item.Resolved))
+{
+    throw new InvalidOperationException("Keno module should resolve for execution.");
+}
+
+if (resolution.Any(item => item.ModuleId == "HOT_SPOT" && item.Resolved))
+{
+    throw new InvalidOperationException("Development lifecycle modules should not resolve for execution.");
+}
+
+var ticketReaders = executionService.GetTicketReaders();
+if (ticketReaders.Count == 0)
+{
+    throw new InvalidOperationException("Placeholder ticket reader should be exposed.");
+}
+
+var execution = executionService.ExecuteReferenceRun(Guid.NewGuid());
+if (execution.ModuleId != "KENO_GENERIC" ||
+    execution.TicketsRead == 0 ||
+    execution.RecordsCreated == 0 ||
+    execution.TicketFailures == 0 ||
+    execution.SettlementIntegrationTriggered ||
+    execution.FinancialMutationPerformed)
+{
+    throw new InvalidOperationException("Keno module execution framework did not execute safely.");
+}
+
+if (execution.EvaluationRecords.Any(record =>
+        record.DrawId == Guid.Empty ||
+        record.GameId == Guid.Empty ||
+        record.ModuleId != "KENO_GENERIC" ||
+        string.IsNullOrWhiteSpace(record.EvaluatorVersion) ||
+        string.IsNullOrWhiteSpace(record.PaytableVersion)))
+{
+    throw new InvalidOperationException("Evaluation record builder produced incomplete records.");
+}
+
+if (!execution.TicketResults.Any(result => !result.ValidationAccepted && result.Outcome == GameEvaluationOutcome.Rejected))
+{
+    throw new InvalidOperationException("Batch execution should continue after single-ticket validation failure.");
+}
+
+var executionDiagnostics = executionService.GetDiagnostics();
+if (executionDiagnostics.ExecutionCount == 0 ||
+    executionDiagnostics.TicketDatabaseReadsEnabled ||
+    executionDiagnostics.SettlementIntegrationEnabled ||
+    executionDiagnostics.FinancialPostingEnabled)
+{
+    throw new InvalidOperationException("Module execution diagnostics are invalid.");
 }
 
 Console.WriteLine("GameEngine.Application.Tests PASS");

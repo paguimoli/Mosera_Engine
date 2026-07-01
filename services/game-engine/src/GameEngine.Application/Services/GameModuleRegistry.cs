@@ -2,6 +2,7 @@ using System.Reflection;
 using GameEngine.Domain.Model;
 using GameEngine.Domain.Modules;
 using GameEngine.Modules.HotSpot;
+using GameEngine.Modules.Keno;
 using GameEngine.Modules.TestModule;
 
 namespace GameEngine.Application.Services;
@@ -12,6 +13,7 @@ public sealed class GameModuleRegistry
     private readonly List<GameModuleRegistryEntry> registeredModules = [];
     private readonly List<GameModuleRegistryEntry> rejectedModules = [];
     private readonly List<GameBinding> gameBindings = [];
+    private readonly Dictionary<string, IGameModule> moduleInstances = new(StringComparer.OrdinalIgnoreCase);
 
     public GameModuleRegistry()
     {
@@ -47,6 +49,11 @@ public sealed class GameModuleRegistry
         return registeredModules
             .Concat(rejectedModules)
             .FirstOrDefault(module => string.Equals(module.ModuleId, moduleId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public IGameModule? GetModuleInstance(string moduleId, string moduleVersion)
+    {
+        return moduleInstances.TryGetValue(ModuleInstanceKey(moduleId, moduleVersion), out var module) ? module : null;
     }
 
     public IReadOnlyCollection<GameModuleRegistryEntry> GetModuleVersions(string moduleId)
@@ -144,6 +151,7 @@ public sealed class GameModuleRegistry
     private void DiscoverModules()
     {
         _ = typeof(HotSpotModule).Assembly;
+        _ = typeof(KenoModule).Assembly;
         _ = typeof(TestGameModule).Assembly;
 
         var moduleTypes = AppDomain.CurrentDomain
@@ -175,6 +183,10 @@ public sealed class GameModuleRegistry
 
             var entry = ValidateModule(module, type.Assembly.GetName().Name ?? type.Assembly.FullName ?? type.FullName ?? "unknown");
             AddEntry(entry);
+            if (entry.RegistrationStatus == GameModuleRegistrationStatus.Registered)
+            {
+                moduleInstances[ModuleInstanceKey(entry.ModuleId, entry.ModuleVersion)] = module;
+            }
         }
         catch (Exception ex)
         {
@@ -557,5 +569,10 @@ public sealed class GameModuleRegistry
             ], []),
             [],
             []);
+    }
+
+    private static string ModuleInstanceKey(string moduleId, string moduleVersion)
+    {
+        return $"{moduleId}:{moduleVersion}";
     }
 }

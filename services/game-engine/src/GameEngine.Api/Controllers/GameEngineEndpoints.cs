@@ -519,6 +519,89 @@ public static class GameEngineEndpoints
             });
         });
 
+        group.MapGet("/module-execution", (HttpContext context, GameModuleExecutionService executionService) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                moduleExecution = executionService.GetDiagnostics(),
+                settlementIntegrationEnabled = false,
+                financialPostingEnabled = false,
+                ticketDatabaseReadsEnabled = false,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/module-execution/{runId:guid}", (Guid runId, HttpContext context, GameModuleExecutionService executionService) =>
+        {
+            var execution = executionService.GetExecution(runId);
+            return execution is null
+                ? Results.NotFound(new
+                {
+                    success = false,
+                    message = "Module execution run was not found.",
+                    runId,
+                    correlationId = context.GetCorrelationId()
+                })
+                : Results.Ok(new
+                {
+                    success = true,
+                    moduleExecution = execution,
+                    settlementIntegrationEnabled = false,
+                    financialPostingEnabled = false,
+                    correlationId = context.GetCorrelationId()
+                });
+        });
+
+        group.MapGet("/module-resolution", (HttpContext context, GameModuleExecutionService executionService) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                moduleResolution = executionService.GetModuleResolution(),
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapGet("/ticket-readers", (HttpContext context, GameModuleExecutionService executionService) =>
+        {
+            return Results.Ok(new
+            {
+                success = true,
+                ticketReaders = executionService.GetTicketReaders(),
+                databaseTicketReaderEnabled = false,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
+        group.MapPost("/module-execution/run", (HttpContext context, GameModuleExecutionService executionService) =>
+        {
+            try
+            {
+                return Results.Accepted(value: new
+                {
+                    success = true,
+                    moduleExecution = executionService.ExecuteReferenceRun(Guid.NewGuid()),
+                    inMemoryOnly = true,
+                    settlementIntegrationTriggered = false,
+                    financialMutationPerformed = false,
+                    authBoundary = "admin_placeholder",
+                    correlationId = context.GetCorrelationId()
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new
+                {
+                    success = false,
+                    message = ex.Message,
+                    settlementIntegrationTriggered = false,
+                    financialMutationPerformed = false,
+                    correlationId = context.GetCorrelationId()
+                });
+            }
+        });
+
         group.MapPost("/evaluation-runs/plan", (HttpContext context, EvaluationOrchestrator orchestrator, GameModuleRegistry moduleRegistry, DrawSchedulerService scheduler) =>
         {
             var binding = moduleRegistry.GetGameBindings().First();
