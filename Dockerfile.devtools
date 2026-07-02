@@ -20,6 +20,7 @@ RUN apt-get update \
         git \
         iproute2 \
         netcat-openbsd \
+        postgresql-client \
         redis-tools \
     && ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -sf /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \

@@ -83,13 +83,13 @@ const appendOnlyCoverage = files
   .map((file) => ({ path: file.path, signals: unique(file.appendOnlySignals.map((signal) => signal.toLowerCase())) }));
 
 const migrationRunnerSignals = [
-  "supabase/config.toml",
-  "supabase/seed.sql",
-  "dbmate.yml",
-  "flyway.conf",
-  "liquibase.properties",
-  "migrations",
+  "scripts/migrations/migration-manifest.json",
+  "scripts/migrations/run-local-migrations.mjs",
+  "scripts/migrations/validate-local-migrations.mjs",
+  "scripts/migrations/migration-status.mjs",
 ].filter((candidate) => existsSync(candidate));
+
+const localRunnerSelected = migrationRunnerSignals.length === 4;
 
 const report = {
   status: files.length > 0 ? "READY_FOR_LOCAL_REVIEW" : "NO_MIGRATIONS_FOUND",
@@ -113,14 +113,16 @@ const report = {
     status: appendOnlyCoverage.length > 0 ? "PARTIAL_SIGNALS_FOUND" : "NOT_DETECTED",
   },
   migrationRunner: {
-    status: migrationRunnerSignals.length > 0 ? "PARTIAL" : "MISSING",
+    status: localRunnerSelected ? "LOCAL_RUNNER_SELECTED" : migrationRunnerSignals.length > 0 ? "PARTIAL" : "MISSING",
     signals: migrationRunnerSignals,
-    blocker: "No repository-wide migration runner has been selected or normalized for local/staging/prod execution.",
+    blocker: localRunnerSelected
+      ? "Local disposable runner selected. Staging and production execution remain intentionally blocked."
+      : "No repository-wide migration runner has been selected or normalized for local/staging/prod execution.",
   },
   unsafeSequencingRisks: [
     ...duplicateCreateTableRisks.map((risk) => `Duplicate create-table risk for ${risk.table}.`),
     ...createTableIfNotExistsRisks.map((risk) => `Drift can be hidden by ${risk.path}.`),
-    ...(migrationRunnerSignals.length === 0 ? ["No migration runner signal found."] : []),
+    ...(localRunnerSelected ? ["Staging and production migration procedures are not yet approved."] : ["No complete migration runner signal found."]),
   ],
 };
 

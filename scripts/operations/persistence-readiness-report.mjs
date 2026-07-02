@@ -57,7 +57,7 @@ const report = {
     ...gameSignals,
     gaps: [
       "Database-backed Game Engine repositories are not normalized for local integrated runtime.",
-      "Migration application and version tracking are not active.",
+      "Local disposable migration application is active, but runtime repositories are not wired to it.",
       "Settlement consumption remains disabled by phase constraint.",
     ],
   },
@@ -76,9 +76,9 @@ const report = {
     note: "In-memory behavior remains acceptable for this readiness phase where production activation is prohibited.",
   },
   databaseBackedRepositoryGaps: [
-    "Game Engine durable evaluation repositories need database-backed implementation and local migration application.",
+    "Game Engine durable evaluation repositories need database-backed implementation against the local migration baseline.",
     "Auth Service identity, credential, lifecycle, role, claim, membership, session, token, OAuth, service-account, API-client, audit, and signing-key repositories need database-backed implementations.",
-    "Repository integration tests need a repeatable local database target.",
+    "Repository integration tests need to use the repeatable local database target.",
   ],
   schemaDraftConflicts: migrationInventory.ok
     ? {
@@ -89,17 +89,16 @@ const report = {
     : { error: migrationInventory.error },
   requiredMigrationFramework: {
     status: migrationInventory.ok ? migrationInventory.data.migrationRunner.status : "UNKNOWN",
-    recommendation: "Select one canonical local/staging/prod migration runner before applying service schemas.",
+    recommendation: "Use the local disposable runner for development only; define staging and production approval procedures before non-local execution.",
   },
   recommendedLocalMigrationOrder: [
-    "Supabase baseline migrations under supabase/migrations.",
-    "Game Engine schema draft in services/game-engine/database/001_game_engine_schema_draft.sql after runner normalization.",
-    "Game Engine durable evaluation storage in services/game-engine/database/002_durable_evaluation_storage.sql.",
-    "Auth Service schema draft in services/auth-service/database/001_auth_service_schema_draft.sql after shadow validation review.",
+    "scripts/migrations/local/001_create_game_engine_schema.sql",
+    "scripts/migrations/local/002_create_auth_service_schema.sql",
+    "scripts/migrations/local/003_add_game_engine_evaluation_storage.sql",
   ],
   productionBlockers: [
-    "No canonical migration runner selected.",
-    "No local migration application baseline captured.",
+    "No staging migration rehearsal procedure approved.",
+    "No production migration approval, backup, rollback, or drift-detection procedure approved.",
     "Game Engine database repositories are not wired.",
     "Auth Service database repositories are not wired for production identity persistence.",
     "Auth Service login/token/session runtime remains intentionally disabled.",
@@ -107,8 +106,12 @@ const report = {
   ],
   availableScripts: {
     migrationInventory: Boolean(packageScripts["ops:migration-inventory"]),
+    migrationStatus: Boolean(packageScripts["migrations:status"]),
+    localMigrationRun: Boolean(packageScripts["migrations:local:run"]),
+    localMigrationValidate: Boolean(packageScripts["migrations:local:validate"]),
     localRuntimeInventory: Boolean(packageScripts["ops:local-runtime-inventory"]),
     qaLocalIntegratedRuntime: Boolean(packageScripts["qa:local-integrated-runtime"]),
+    qaLocalMigrations: Boolean(packageScripts["qa:local-migrations"]),
     qaDevtools: Boolean(packageScripts["qa:devtools"]),
   },
   sourceChecks: {

@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "runner": "raw-sql-node-psql",
+  "disposableDatabaseAllowlist": [
+    "lottery_local",
+    "lottery_test",
+    "lottery_disposable"
+  ],
+  "localMigrationDirectory": "scripts/migrations/local",
+  "rules": [
+    {
+      "pathPrefix": "supabase/migrations/",
+      "classification": "manual_review_required",
+      "reason": "Existing public Supabase migrations may rely on active platform context and are not auto-applied to the disposable service-schema database."
+    }
+  ],
+  "entries": [
+    {
+      "id": "001_create_game_engine_schema",
+      "path": "scripts/migrations/local/001_create_game_engine_schema.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Consolidated local-only Game Engine schema baseline for disposable database validation."
+    },
+    {
+      "id": "002_create_auth_service_schema",
+      "path": "scripts/migrations/local/002_create_auth_service_schema.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "auth_service"
+      ],
+      "reason": "Consolidated local-only Auth Service schema baseline for disposable database validation."
+    },
+    {
+      "id": "003_add_game_engine_evaluation_storage",
+      "path": "scripts/migrations/local/003_add_game_engine_evaluation_storage.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds durable evaluation tables after the consolidated Game Engine baseline so the draft conflict is not applied blindly."
+    },
+    {
+      "id": "game_engine_schema_draft",
+      "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
+      "classification": "draft_only",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Phase 22.6A draft only; intentionally excluded from automatic execution."
+    },
+    {
+      "id": "game_engine_durable_evaluation_storage_draft",
+      "path": "services/game-engine/database/002_durable_evaluation_storage.sql",
+      "classification": "superseded",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Superseded for local disposable application by scripts/migrations/local/003_add_game_engine_evaluation_storage.sql."
+    },
+    {
+      "id": "auth_service_schema_draft",
+      "path": "services/auth-service/database/001_auth_service_schema_draft.sql",
+      "classification": "draft_only",
+      "schemas": [
+        "auth_service"
+      ],
+      "reason": "Phase 23.2 draft only; consolidated local-only migration is used for disposable validation."
+    }
+  ],
+  "knownConflicts": [
+    {
+      "id": "game_engine_evaluation_table_duplicate_create",
+      "status": "resolved_for_local_runner",
+      "files": [
+        "services/game-engine/database/001_game_engine_schema_draft.sql",
+        "services/game-engine/database/002_durable_evaluation_storage.sql"
+      ],
+      "resolution": "Both drafts are excluded from automatic execution; local migrations create baseline tables first and add the evaluation storage shape once."
+    }
+  ]
+}
