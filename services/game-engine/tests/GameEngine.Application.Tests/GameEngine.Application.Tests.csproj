@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\GameEngine.Application\GameEngine.Application.csproj" />
     <ProjectReference Include="..\..\src\GameEngine.Domain\GameEngine.Domain.csproj" />
+    <ProjectReference Include="..\..\src\GameEngine.Infrastructure\GameEngine.Infrastructure.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

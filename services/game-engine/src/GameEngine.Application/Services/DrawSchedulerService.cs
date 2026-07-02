@@ -1,3 +1,4 @@
+using GameEngine.Application.Interfaces;
 using GameEngine.Domain.Model;
 
 namespace GameEngine.Application.Services;
@@ -6,14 +7,20 @@ public sealed class DrawSchedulerService
 {
     private readonly GameModuleRegistry gameModuleRegistry;
     private readonly DrawAuthorityRegistry drawAuthorityRegistry;
+    private readonly IDrawScheduleRepository? drawScheduleRepository;
     private readonly List<DrawScheduleDefinition> schedules = [];
     private readonly Dictionary<Guid, DrawLifecycleRecord> manualLifecycleOverrides = new();
 
-    public DrawSchedulerService(GameModuleRegistry gameModuleRegistry, DrawAuthorityRegistry drawAuthorityRegistry)
+    public DrawSchedulerService(
+        GameModuleRegistry gameModuleRegistry,
+        DrawAuthorityRegistry drawAuthorityRegistry,
+        IDrawScheduleRepository? drawScheduleRepository = null)
     {
         this.gameModuleRegistry = gameModuleRegistry;
         this.drawAuthorityRegistry = drawAuthorityRegistry;
+        this.drawScheduleRepository = drawScheduleRepository;
         SeedSchedules();
+        PersistLifecycleSnapshot();
     }
 
     public IReadOnlyCollection<DrawScheduleDefinition> GetSchedules() => schedules.ToArray();
@@ -62,6 +69,7 @@ public sealed class DrawSchedulerService
             UpdatedAt = DateTimeOffset.UtcNow
         };
         manualLifecycleOverrides[drawId] = marked;
+        PersistLifecycleRecord(marked);
         return marked;
     }
 
@@ -395,6 +403,38 @@ public sealed class DrawSchedulerService
             DrawRecoveryPolicy.AwaitOfficialResult,
             ProductionActivationEnabled: false,
             DateTimeOffset.UnixEpoch));
+    }
+
+    private void PersistLifecycleSnapshot()
+    {
+        if (drawScheduleRepository is null)
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        foreach (var record in schedules.SelectMany(schedule => GenerateLifecycleWindow(schedule, now)))
+        {
+            PersistLifecycleRecord(record);
+        }
+    }
+
+    private void PersistLifecycleRecord(DrawLifecycleRecord record)
+    {
+        if (drawScheduleRepository is null)
+        {
+            return;
+        }
+
+        var schedule = new DrawSchedule(
+            record.DrawId,
+            record.GameBindingId,
+            record.DrawScheduleId,
+            record.SalesOpenAt,
+            record.SalesCloseAt,
+            record.DrawAt,
+            record.Status);
+        drawScheduleRepository.UpsertAsync(schedule, CancellationToken.None).GetAwaiter().GetResult();
     }
 
     private static Guid StableGuid(string input)

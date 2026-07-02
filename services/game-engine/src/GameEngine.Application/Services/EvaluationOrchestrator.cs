@@ -6,31 +6,37 @@ public sealed class EvaluationOrchestrator
 {
     private readonly GameModuleRegistry gameModuleRegistry;
     private readonly DrawSchedulerService drawSchedulerService;
+    private readonly IEvaluationRunRepository runRepository;
+    private readonly IEvaluationBatchRepository batchRepository;
     private readonly BatchPlanner batchPlanner = new();
     private readonly BatchCheckpointService checkpointService = new();
     private readonly EvaluationProgressService progressService = new();
-    private readonly List<EvaluationRunDefinition> runs = [];
-    private readonly List<EvaluationBatchDefinition> batches = [];
     private readonly List<EvaluationCheckpoint> checkpoints = [];
     private readonly List<EvaluationRecordDefinition> records = [];
 
-    public EvaluationOrchestrator(GameModuleRegistry gameModuleRegistry, DrawSchedulerService drawSchedulerService)
+    public EvaluationOrchestrator(
+        GameModuleRegistry gameModuleRegistry,
+        DrawSchedulerService drawSchedulerService,
+        IEvaluationRunRepository? runRepository = null,
+        IEvaluationBatchRepository? batchRepository = null)
     {
         this.gameModuleRegistry = gameModuleRegistry;
         this.drawSchedulerService = drawSchedulerService;
+        this.runRepository = runRepository ?? new InMemoryEvaluationRunRepository();
+        this.batchRepository = batchRepository ?? new InMemoryEvaluationBatchRepository();
         SeedRun();
     }
 
-    public IReadOnlyCollection<EvaluationRunDefinition> GetRuns() => runs.ToArray();
+    public IReadOnlyCollection<EvaluationRunDefinition> GetRuns() => runRepository.GetRuns();
 
-    public EvaluationRunDefinition? GetRun(Guid id) => runs.FirstOrDefault(run => run.Id == id);
+    public EvaluationRunDefinition? GetRun(Guid id) => runRepository.GetRun(id);
 
     public IReadOnlyCollection<EvaluationBatchDefinition> GetBatches(Guid runId)
     {
-        return batches.Where(batch => batch.EvaluationRunId == runId).OrderBy(batch => batch.Sequence).ToArray();
+        return batchRepository.GetBatches(runId);
     }
 
-    public EvaluationBatchDefinition? GetBatch(Guid id) => batches.FirstOrDefault(batch => batch.Id == id);
+    public EvaluationBatchDefinition? GetBatch(Guid id) => batchRepository.GetBatch(id);
 
     public IReadOnlyCollection<EvaluationCheckpoint> GetCheckpoints(Guid runId)
     {
@@ -68,10 +74,8 @@ public sealed class EvaluationOrchestrator
             CompletedAt: null,
             preconditions);
 
-        runs.RemoveAll(existing => existing.Id == run.Id);
-        batches.RemoveAll(batch => batch.EvaluationRunId == run.Id);
         checkpoints.RemoveAll(checkpoint => checkpoint.RunId == run.Id);
-        runs.Add(run);
+        runRepository.UpsertRun(run);
         PlanBatches(run);
         return run;
     }
@@ -229,8 +233,8 @@ public sealed class EvaluationOrchestrator
     {
         return new EvaluationOrchestratorStatus(
             EvaluationOrchestratorHealth.Warning,
-            runs.Count,
-            batches.Count,
+            GetRuns().Count,
+            GetRuns().SelectMany(run => GetBatches(run.Id)).Count(),
             records.Count,
             checkpoints.Count,
             ProductionRabbitMqWiringEnabled: false,
@@ -247,7 +251,7 @@ public sealed class EvaluationOrchestrator
     {
         foreach (var batch in batchPlanner.Plan(run))
         {
-            batches.Add(batch);
+            batchRepository.UpsertBatch(run, batch);
             UpsertCheckpoint(batch, EvaluationCheckpointStatus.Pending, processedCount: 0, failedCount: 0);
         }
     }
@@ -301,14 +305,13 @@ public sealed class EvaluationOrchestrator
 
     private void ReplaceRun(EvaluationRunDefinition run)
     {
-        runs.RemoveAll(existing => existing.Id == run.Id);
-        runs.Add(run);
+        runRepository.UpsertRun(run);
     }
 
     private void ReplaceBatch(EvaluationBatchDefinition batch)
     {
-        batches.RemoveAll(existing => existing.Id == batch.Id);
-        batches.Add(batch);
+        var run = GetRun(batch.EvaluationRunId) ?? throw new InvalidOperationException("Evaluation run not found.");
+        batchRepository.UpsertBatch(run, batch);
     }
 
     private void SeedRun()

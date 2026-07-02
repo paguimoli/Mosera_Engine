@@ -31,6 +31,8 @@ public interface IEvaluationRunRepository
     IReadOnlyCollection<EvaluationRunDefinition> GetRuns();
 
     EvaluationRunDefinition? GetRun(Guid runId);
+
+    EvaluationRunDefinition UpsertRun(EvaluationRunDefinition run);
 }
 
 public interface IEvaluationBatchRepository
@@ -38,6 +40,8 @@ public interface IEvaluationBatchRepository
     IReadOnlyCollection<EvaluationBatchDefinition> GetBatches(Guid runId);
 
     EvaluationBatchDefinition? GetBatch(Guid batchId);
+
+    EvaluationBatchDefinition UpsertBatch(EvaluationRunDefinition run, EvaluationBatchDefinition batch);
 }
 
 public interface IEvaluationCheckpointRepository
@@ -54,18 +58,44 @@ public interface IEvaluationCheckpointRepository
     IReadOnlyCollection<PersistedEvaluationCheckpoint> GetCheckpoints(Guid runId);
 }
 
-public sealed class OrchestratorEvaluationRunRepository(EvaluationOrchestrator orchestrator) : IEvaluationRunRepository
+public sealed class InMemoryEvaluationRunRepository : IEvaluationRunRepository
 {
-    public IReadOnlyCollection<EvaluationRunDefinition> GetRuns() => orchestrator.GetRuns();
+    private readonly Dictionary<Guid, EvaluationRunDefinition> runsById = [];
 
-    public EvaluationRunDefinition? GetRun(Guid runId) => orchestrator.GetRun(runId);
+    public IReadOnlyCollection<EvaluationRunDefinition> GetRuns()
+    {
+        return runsById.Values.OrderBy(run => run.CreatedAt).ThenBy(run => run.Id).ToArray();
+    }
+
+    public EvaluationRunDefinition? GetRun(Guid runId) => runsById.GetValueOrDefault(runId);
+
+    public EvaluationRunDefinition UpsertRun(EvaluationRunDefinition run)
+    {
+        runsById[run.Id] = run;
+        return run;
+    }
 }
 
-public sealed class OrchestratorEvaluationBatchRepository(EvaluationOrchestrator orchestrator) : IEvaluationBatchRepository
+public sealed class InMemoryEvaluationBatchRepository : IEvaluationBatchRepository
 {
-    public IReadOnlyCollection<EvaluationBatchDefinition> GetBatches(Guid runId) => orchestrator.GetBatches(runId);
+    private readonly Dictionary<Guid, EvaluationBatchDefinition> batchesById = [];
 
-    public EvaluationBatchDefinition? GetBatch(Guid batchId) => orchestrator.GetBatch(batchId);
+    public IReadOnlyCollection<EvaluationBatchDefinition> GetBatches(Guid runId)
+    {
+        return batchesById.Values
+            .Where(batch => batch.EvaluationRunId == runId)
+            .OrderBy(batch => batch.Sequence)
+            .ThenBy(batch => batch.Id)
+            .ToArray();
+    }
+
+    public EvaluationBatchDefinition? GetBatch(Guid batchId) => batchesById.GetValueOrDefault(batchId);
+
+    public EvaluationBatchDefinition UpsertBatch(EvaluationRunDefinition run, EvaluationBatchDefinition batch)
+    {
+        batchesById[batch.Id] = batch;
+        return batch;
+    }
 }
 
 public sealed class InMemoryEvaluationRecordRepository : IEvaluationRecordRepository
@@ -120,31 +150,9 @@ public sealed class InMemoryEvaluationRecordRepository : IEvaluationRecordReposi
     }
 }
 
-public sealed class EvaluationPersistenceService(
-    IEvaluationRecordRepository repository,
-    ITicketReader ticketReader)
-    : IEvaluationCheckpointRepository
+public sealed class InMemoryEvaluationCheckpointRepository : IEvaluationCheckpointRepository
 {
     private readonly Dictionary<Guid, PersistedEvaluationCheckpoint> checkpointsByBatch = [];
-
-    public EvaluationRecordPersistenceResult InsertEvaluationRecord(ImmutableEvaluationRecord record)
-    {
-        return repository.InsertEvaluationRecord(record);
-    }
-
-    public ImmutableEvaluationRecord? FindById(Guid id) => repository.FindById(id);
-
-    public ImmutableEvaluationRecord? FindByIdempotencyKey(string idempotencyKey) => repository.FindByIdempotencyKey(idempotencyKey);
-
-    public IReadOnlyCollection<ImmutableEvaluationRecord> GetAll() => repository.GetAll();
-
-    public IReadOnlyCollection<ImmutableEvaluationRecord> GetByRun(Guid runId) => repository.GetByRun(runId);
-
-    public IReadOnlyCollection<ImmutableEvaluationRecord> GetByDraw(Guid drawId) => repository.GetByDraw(drawId);
-
-    public IReadOnlyCollection<ImmutableEvaluationRecord> GetByTicket(Guid ticketId) => repository.GetByTicket(ticketId);
-
-    public IReadOnlyCollection<ImmutableEvaluationRecord> GetByBatch(Guid batchId) => repository.GetByBatch(batchId);
 
     public PersistedEvaluationCheckpoint UpsertCheckpoint(
         EvaluationRunDefinition run,
@@ -172,12 +180,60 @@ public sealed class EvaluationPersistenceService(
 
     public IReadOnlyCollection<PersistedEvaluationCheckpoint> GetCheckpoints()
     {
-        return checkpointsByBatch.Values.OrderBy(checkpoint => checkpoint.UpdatedAt).ToArray();
+        return checkpointsByBatch.Values
+            .OrderBy(checkpoint => checkpoint.RunId)
+            .ThenBy(checkpoint => checkpoint.BatchId)
+            .ToArray();
     }
 
     public IReadOnlyCollection<PersistedEvaluationCheckpoint> GetCheckpoints(Guid runId)
     {
         return GetCheckpoints().Where(checkpoint => checkpoint.RunId == runId).ToArray();
+    }
+}
+
+public sealed class EvaluationPersistenceService(
+    IEvaluationRecordRepository repository,
+    IEvaluationCheckpointRepository checkpointRepository,
+    ITicketReader ticketReader)
+{
+    public EvaluationRecordPersistenceResult InsertEvaluationRecord(ImmutableEvaluationRecord record)
+    {
+        return repository.InsertEvaluationRecord(record);
+    }
+
+    public ImmutableEvaluationRecord? FindById(Guid id) => repository.FindById(id);
+
+    public ImmutableEvaluationRecord? FindByIdempotencyKey(string idempotencyKey) => repository.FindByIdempotencyKey(idempotencyKey);
+
+    public IReadOnlyCollection<ImmutableEvaluationRecord> GetAll() => repository.GetAll();
+
+    public IReadOnlyCollection<ImmutableEvaluationRecord> GetByRun(Guid runId) => repository.GetByRun(runId);
+
+    public IReadOnlyCollection<ImmutableEvaluationRecord> GetByDraw(Guid drawId) => repository.GetByDraw(drawId);
+
+    public IReadOnlyCollection<ImmutableEvaluationRecord> GetByTicket(Guid ticketId) => repository.GetByTicket(ticketId);
+
+    public IReadOnlyCollection<ImmutableEvaluationRecord> GetByBatch(Guid batchId) => repository.GetByBatch(batchId);
+
+    public PersistedEvaluationCheckpoint UpsertCheckpoint(
+        EvaluationRunDefinition run,
+        EvaluationBatchDefinition batch,
+        int processedCount,
+        int failedCount,
+        EvaluationCheckpointStatus status)
+    {
+        return checkpointRepository.UpsertCheckpoint(run, batch, processedCount, failedCount, status);
+    }
+
+    public IReadOnlyCollection<PersistedEvaluationCheckpoint> GetCheckpoints()
+    {
+        return checkpointRepository.GetCheckpoints();
+    }
+
+    public IReadOnlyCollection<PersistedEvaluationCheckpoint> GetCheckpoints(Guid runId)
+    {
+        return checkpointRepository.GetCheckpoints(runId);
     }
 
     public EvaluationStorageDiagnostics GetDiagnostics()
@@ -188,10 +244,10 @@ public sealed class EvaluationPersistenceService(
 
         return new EvaluationStorageDiagnostics(
             repository.GetAll().Count,
-            checkpointsByBatch.Count,
+            checkpointRepository.GetCheckpoints().Count,
             ticketSourceCount,
             DurableSchemaArtifactPresent: true,
-            DurableRepositoryWiringEnabled: false,
+            DurableRepositoryWiringEnabled: repository is not InMemoryEvaluationRecordRepository,
             AppendOnlyGuardDesigned: true,
             SettlementIntegrationEnabled: false,
             FinancialPostingEnabled: false,
@@ -204,7 +260,7 @@ public sealed class EvaluationPersistenceService(
         return new DurableEvaluationStorageStatus(
             DurableSchemaArtifactPresent: true,
             DurableRepositoryContractsPresent: true,
-            DurableRepositoryWiringEnabled: false,
+            DurableRepositoryWiringEnabled: repository is not InMemoryEvaluationRecordRepository,
             AppendOnlyGuardDesigned: true,
             AppendOnlyTriggerDrafted: true,
             IdempotencyConstraintDocumented: true,
@@ -216,12 +272,16 @@ public sealed class EvaluationPersistenceService(
                 "game_engine.evaluation_records",
                 "game_engine.evaluation_checkpoints"
             ],
+            repository is InMemoryEvaluationRecordRepository
+                ? [
+                    "Durable database repository wiring is not active because DATABASE_URL is not configured.",
+                    "Settlement consumer activation is intentionally disabled."
+                ]
+                : [
+                    "Settlement consumer activation is intentionally disabled."
+                ],
             [
-                "Durable database repository wiring is not active in the skeleton runtime.",
-                "Settlement consumer activation is intentionally disabled."
-            ],
-            [
-                "Schema is a draft artifact until applied through a governed migration process."
+                "Schema must be applied through the local migration runner before DATABASE_URL-backed repositories are used."
             ],
             DateTimeOffset.UtcNow);
     }

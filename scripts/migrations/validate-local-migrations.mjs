@@ -48,6 +48,21 @@ select exists (
 `) === "t";
 }
 
+function indexExists(schema, table, indexName) {
+  return queryScalar(`
+select exists (
+  select 1
+  from pg_class i
+  join pg_namespace n on n.oid = i.relnamespace
+  join pg_index ix on ix.indexrelid = i.oid
+  join pg_class t on t.oid = ix.indrelid
+  where n.nspname = '${schema}'
+    and t.relname = '${table}'
+    and i.relname = '${indexName}'
+);
+`) === "t";
+}
+
 if (!guardrails.ok) {
   addCheck("guardrails_pass", false, { errors: guardrails.errors });
 } else {
@@ -93,6 +108,11 @@ for (const entry of classifications.applyLocal) {
 }
 
 addCheck("evaluation_records_idempotency_unique", uniqueIndexExists("game_engine", "evaluation_records", "idempotency_key"));
+addCheck("evaluation_runs_draw_id_index", indexExists("game_engine", "evaluation_runs", "idx_evaluation_runs_draw_id"));
+addCheck("evaluation_runs_game_binding_id_index", indexExists("game_engine", "evaluation_runs", "idx_evaluation_runs_game_binding_id"));
+addCheck("evaluation_runs_status_index", indexExists("game_engine", "evaluation_runs", "idx_evaluation_runs_status"));
+addCheck("evaluation_batches_run_status_index", indexExists("game_engine", "evaluation_batches", "idx_evaluation_batches_run_status"));
+addCheck("evaluation_checkpoints_run_id_index", indexExists("game_engine", "evaluation_checkpoints", "idx_evaluation_checkpoints_run_id"));
 addCheck("identities_login_id_unique", uniqueIndexExists("auth_service", "identities", "login_id"));
 addCheck("evaluation_records_update_trigger", triggerExists("game_engine", "evaluation_records", "trg_prevent_evaluation_record_update"));
 addCheck("evaluation_records_delete_trigger", triggerExists("game_engine", "evaluation_records", "trg_prevent_evaluation_record_delete"));

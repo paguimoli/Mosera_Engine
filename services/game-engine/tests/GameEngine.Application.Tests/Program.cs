@@ -1,6 +1,7 @@
 using GameEngine.Application.Services;
 using GameEngine.Domain.Model;
 using GameEngine.Domain.Randomness;
+using GameEngine.Infrastructure.Persistence;
 
 var registry = new GameModuleRegistry();
 var drawAuthorityRegistry = new DrawAuthorityRegistry();
@@ -55,6 +56,38 @@ if (bindings.Count != 3)
     throw new InvalidOperationException("Prospective bindings should be created for discovered modules.");
 }
 
+var inMemoryModuleRepository = new InMemoryGameModuleRepository();
+var inMemoryModuleVersionRepository = new InMemoryGameModuleVersionRepository();
+var inMemoryDefinitionRepository = new InMemoryGameDefinitionRepository();
+var inMemoryDefinitionVersionRepository = new InMemoryGameDefinitionVersionRepository();
+var persistedRegistry = new GameModuleRegistry(
+    inMemoryModuleRepository,
+    inMemoryModuleVersionRepository,
+    inMemoryDefinitionRepository,
+    inMemoryDefinitionVersionRepository);
+var persistedModules = await inMemoryModuleRepository.ListAsync(CancellationToken.None);
+var persistedDefinitions = await inMemoryDefinitionRepository.ListAsync(CancellationToken.None);
+if (persistedRegistry.GetRegisteredModules().Count != 3 ||
+    persistedModules.Count != 3 ||
+    persistedDefinitions.Count != 3)
+{
+    throw new InvalidOperationException("In-memory catalog repositories should mirror discovered modules and prospective definitions.");
+}
+
+var firstPersistedModule = persistedModules.First();
+var firstPersistedModuleVersions = await inMemoryModuleVersionRepository.ListAsync(firstPersistedModule.Id, CancellationToken.None);
+if (firstPersistedModuleVersions.Count == 0)
+{
+    throw new InvalidOperationException("In-memory module version persistence failed.");
+}
+
+var firstPersistedDefinition = persistedDefinitions.First();
+var firstPersistedDefinitionVersions = await inMemoryDefinitionVersionRepository.ListAsync(firstPersistedDefinition.Id, CancellationToken.None);
+if (firstPersistedDefinitionVersions.Count == 0)
+{
+    throw new InvalidOperationException("In-memory game definition version persistence failed.");
+}
+
 var testBinding = registry.CreateProspectiveBinding(new GameBindingRequest(
     "test-specific-version",
     "Test Specific Version",
@@ -95,6 +128,38 @@ var drawAuthorityStatus = drawAuthorityRegistry.GetRegistryStatus();
 if (drawAuthorityStatus.RegisteredAuthorityCount < 5)
 {
     throw new InvalidOperationException("Expected placeholder Draw Authorities to be registered.");
+}
+
+var inMemoryAuthorityRepository = new InMemoryDrawAuthorityRepository();
+var inMemoryAuthorityVersionRepository = new InMemoryDrawAuthorityVersionRepository();
+var inMemoryAuthorityAssignmentRepository = new InMemoryDrawAuthorityAssignmentRepository();
+var persistedAuthorityRegistry = new DrawAuthorityRegistry(inMemoryAuthorityRepository, inMemoryAuthorityVersionRepository);
+var persistedAuthorities = await inMemoryAuthorityRepository.ListAsync(CancellationToken.None);
+if (persistedAuthorityRegistry.GetRegisteredAuthorities().Count < 5 ||
+    persistedAuthorities.Count < 5)
+{
+    throw new InvalidOperationException("In-memory draw authority repositories should mirror registered authorities.");
+}
+
+var firstPersistedAuthority = persistedAuthorities.First();
+var firstPersistedAuthorityVersions = await inMemoryAuthorityVersionRepository.ListAsync(firstPersistedAuthority.Id, CancellationToken.None);
+if (firstPersistedAuthorityVersions.Count == 0)
+{
+    throw new InvalidOperationException("In-memory draw authority version persistence failed.");
+}
+
+var inMemoryAssignment = new DrawAuthorityAssignment(
+    Guid.NewGuid(),
+    Guid.NewGuid(),
+    firstPersistedAuthority.Id,
+    firstPersistedAuthority.ActiveVersionId,
+    SettlementTriggerPolicy.Manual,
+    DateTimeOffset.UtcNow,
+    EffectiveTo: null);
+await inMemoryAuthorityAssignmentRepository.UpsertAsync(inMemoryAssignment, CancellationToken.None);
+if ((await inMemoryAuthorityAssignmentRepository.ListAsync(inMemoryAssignment.GameDefinitionId, CancellationToken.None)).All(assignment => assignment.Id != inMemoryAssignment.Id))
+{
+    throw new InvalidOperationException("In-memory draw authority assignment persistence failed.");
 }
 
 var testPrng = drawAuthorityRegistry.GetRegisteredAuthorities().Single(entry => entry.Authority.Code == "internal-test-prng");
@@ -346,6 +411,27 @@ if (schedulerStatus.ScheduleCount < 2 || schedulerStatus.ProductionActivationEna
     throw new InvalidOperationException("Scheduler health reporting is invalid.");
 }
 
+var inMemoryDrawScheduleRepository = new InMemoryDrawScheduleRepository();
+var persistentScheduler = new DrawSchedulerService(registry, drawAuthorityRegistry, inMemoryDrawScheduleRepository);
+var persistentLifecycle = persistentScheduler.GetLifecycle();
+var persistedSchedules = await inMemoryDrawScheduleRepository.ListAsync(CancellationToken.None);
+if (persistedSchedules.Count == 0 ||
+    persistedSchedules.Any(schedule => persistentLifecycle.All(draw => draw.DrawId != schedule.Id)))
+{
+    throw new InvalidOperationException("In-memory draw schedule repository fallback did not persist lifecycle rows.");
+}
+
+var persistentMissedDraw = persistentLifecycle
+    .Where(draw => draw.ResultSource == DrawResultSource.ManualCertified)
+    .OrderBy(draw => draw.DrawAt)
+    .First();
+var persistentMarked = persistentScheduler.MarkMissed(persistentMissedDraw.DrawId);
+var persistedMarked = await inMemoryDrawScheduleRepository.GetAsync(persistentMarked.DrawId, CancellationToken.None);
+if (persistedMarked?.Status != DrawLifecycleStatus.ManualReviewRequired)
+{
+    throw new InvalidOperationException("In-memory mark-missed lifecycle persistence failed.");
+}
+
 var evaluationOrchestrator = new EvaluationOrchestrator(registry, scheduler);
 var seededRun = evaluationOrchestrator.GetRuns().Single();
 if (seededRun.Status != EvaluationRunStatus.InProgress)
@@ -582,7 +668,8 @@ if (processingStatus.ProductionGameLogicEnabled || processingStatus.TicketDbInte
 
 var databaseTicketReader = new DatabaseTicketReader();
 var evaluationRecordRepository = new InMemoryEvaluationRecordRepository();
-var evaluationPersistence = new EvaluationPersistenceService(evaluationRecordRepository, databaseTicketReader);
+var evaluationCheckpointRepository = new InMemoryEvaluationCheckpointRepository();
+var evaluationPersistence = new EvaluationPersistenceService(evaluationRecordRepository, evaluationCheckpointRepository, databaseTicketReader);
 var executionService = new GameModuleExecutionService(registry, evaluationOrchestrator, databaseTicketReader, evaluationPersistence);
 var resolution = executionService.GetModuleResolution();
 if (!resolution.Any(item => item.ModuleId == "KENO_GENERIC" && item.Resolved))
@@ -661,6 +748,346 @@ if (checkpoints.Count == 0 ||
     throw new InvalidOperationException("Persistent evaluation checkpoints were not updated.");
 }
 
+if (evaluationPersistence.GetStorageStatus().DurableRepositoryWiringEnabled)
+{
+    throw new InvalidOperationException("Evaluation persistence must use in-memory fallback when DATABASE_URL is absent from test setup.");
+}
+
+var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
+if (!string.IsNullOrWhiteSpace(databaseUrl))
+{
+    var postgresModuleRepository = new PostgresGameModuleRepository(databaseUrl);
+    var postgresModuleVersionRepository = new PostgresGameModuleVersionRepository(databaseUrl);
+    var postgresDefinitionRepository = new PostgresGameDefinitionRepository(databaseUrl);
+    var postgresDefinitionVersionRepository = new PostgresGameDefinitionVersionRepository(databaseUrl);
+    var postgresAuthorityRepository = new PostgresDrawAuthorityRepository(databaseUrl);
+    var postgresAuthorityVersionRepository = new PostgresDrawAuthorityVersionRepository(databaseUrl);
+    var postgresAuthorityAssignmentRepository = new PostgresDrawAuthorityAssignmentRepository(databaseUrl);
+    var postgresDrawScheduleRepository = new PostgresDrawScheduleRepository(databaseUrl);
+    var postgresRunRepository = new PostgresEvaluationRunRepository(databaseUrl);
+    var postgresBatchRepository = new PostgresEvaluationBatchRepository(databaseUrl);
+    var postgresRecordRepository = new PostgresEvaluationRecordRepository(databaseUrl);
+    var postgresCheckpointRepository = new PostgresEvaluationCheckpointRepository(databaseUrl);
+    var catalogModuleId = Guid.NewGuid();
+    var catalogModuleVersionId = Guid.NewGuid();
+    var catalogDefinitionId = Guid.NewGuid();
+    var catalogDefinitionVersionId = Guid.NewGuid();
+    var catalogModule = new GameModule(
+        catalogModuleId,
+        $"phase-24-2c-module-{catalogModuleId:N}",
+        "Phase 24.2C Module",
+        GameModuleLifecycleStatus.Approved,
+        catalogModuleVersionId);
+    var persistedCatalogModule = await postgresModuleRepository.UpsertAsync(catalogModule, CancellationToken.None);
+    if (persistedCatalogModule.Id != catalogModuleId ||
+        persistedCatalogModule.ActiveVersionId != catalogModuleVersionId ||
+        (await postgresModuleRepository.GetAsync(catalogModuleId, CancellationToken.None)) is null)
+    {
+        throw new InvalidOperationException("Postgres game module persistence failed.");
+    }
+
+    var catalogModuleVersion = new GameModuleVersion(
+        catalogModuleVersionId,
+        catalogModuleId,
+        "24.2C-test",
+        "sdk-test",
+        $"manifest-{catalogModuleVersionId:N}",
+        GameModuleLifecycleStatus.Approved,
+        DateTimeOffset.UtcNow);
+    var persistedCatalogModuleVersion = await postgresModuleVersionRepository.UpsertAsync(catalogModuleVersion, CancellationToken.None);
+    if (persistedCatalogModuleVersion.Id != catalogModuleVersionId ||
+        (await postgresModuleVersionRepository.ListAsync(catalogModuleId, CancellationToken.None)).All(version => version.Id != catalogModuleVersionId))
+    {
+        throw new InvalidOperationException("Postgres game module version persistence failed.");
+    }
+
+    var catalogDefinition = new GameDefinition(
+        catalogDefinitionId,
+        $"phase-24-2c-definition-{catalogDefinitionId:N}",
+        "Phase 24.2C Definition",
+        catalogDefinitionVersionId,
+        catalogModuleId,
+        DateTimeOffset.UtcNow);
+    var persistedCatalogDefinition = await postgresDefinitionRepository.UpsertAsync(catalogDefinition, CancellationToken.None);
+    if (persistedCatalogDefinition.Id != catalogDefinitionId ||
+        persistedCatalogDefinition.GameModuleId != catalogModuleId ||
+        (await postgresDefinitionRepository.GetAsync(catalogDefinitionId, CancellationToken.None)) is null)
+    {
+        throw new InvalidOperationException("Postgres game definition persistence failed.");
+    }
+
+    var catalogDefinitionVersion = new GameDefinitionVersion(
+        catalogDefinitionVersionId,
+        catalogDefinitionId,
+        VersionNumber: 1,
+        $"definition-{catalogDefinitionVersionId:N}",
+        "paytable-test",
+        "evaluator-test",
+        "draw-generator-test",
+        DateTimeOffset.UtcNow,
+        EffectiveTo: null);
+    var persistedCatalogDefinitionVersion = await postgresDefinitionVersionRepository.UpsertAsync(catalogDefinitionVersion, CancellationToken.None);
+    if (persistedCatalogDefinitionVersion.Id != catalogDefinitionVersionId ||
+        (await postgresDefinitionVersionRepository.ListAsync(catalogDefinitionId, CancellationToken.None)).All(version => version.Id != catalogDefinitionVersionId))
+    {
+        throw new InvalidOperationException("Postgres game definition version persistence failed.");
+    }
+
+    var authorityId = Guid.NewGuid();
+    var authorityVersionId = Guid.NewGuid();
+    var authority = new DrawAuthority(
+        authorityId,
+        $"phase-24-2d-authority-{authorityId:N}",
+        "Phase 24.2D Authority",
+        DrawProviderType.ManualCertifiedEntry,
+        DrawAuthorityStatus.Testing,
+        authorityVersionId);
+    var persistedAuthority = await postgresAuthorityRepository.UpsertAsync(authority, CancellationToken.None);
+    if (persistedAuthority.Id != authorityId ||
+        persistedAuthority.ActiveVersionId != authorityVersionId ||
+        (await postgresAuthorityRepository.GetAsync(authorityId, CancellationToken.None)) is null)
+    {
+        throw new InvalidOperationException("Postgres draw authority persistence failed.");
+    }
+
+    var authorityVersion = new DrawAuthorityVersion(
+        authorityVersionId,
+        authorityId,
+        "24.2D-test",
+        "provider-test",
+        $"configuration-{authorityVersionId:N}",
+        DrawAuthorityStatus.Testing,
+        DateTimeOffset.UtcNow);
+    var persistedAuthorityVersion = await postgresAuthorityVersionRepository.UpsertAsync(authorityVersion, CancellationToken.None);
+    if (persistedAuthorityVersion.Id != authorityVersionId ||
+        (await postgresAuthorityVersionRepository.ListAsync(authorityId, CancellationToken.None)).All(version => version.Id != authorityVersionId))
+    {
+        throw new InvalidOperationException("Postgres draw authority version persistence failed.");
+    }
+
+    var authorityAssignment = new DrawAuthorityAssignment(
+        Guid.NewGuid(),
+        catalogDefinitionId,
+        authorityId,
+        authorityVersionId,
+        SettlementTriggerPolicy.Manual,
+        DateTimeOffset.UtcNow,
+        EffectiveTo: null);
+    var persistedAuthorityAssignment = await postgresAuthorityAssignmentRepository.UpsertAsync(authorityAssignment, CancellationToken.None);
+    if (persistedAuthorityAssignment.Id != authorityAssignment.Id ||
+        (await postgresAuthorityAssignmentRepository.ListAsync(catalogDefinitionId, CancellationToken.None)).All(assignment => assignment.Id != authorityAssignment.Id))
+    {
+        throw new InvalidOperationException("Postgres draw authority assignment persistence failed.");
+    }
+
+    var drawScheduleId = Guid.NewGuid();
+    var postgresDrawSchedule = new DrawSchedule(
+        drawScheduleId,
+        catalogDefinitionId,
+        authorityAssignment.Id,
+        DateTimeOffset.UtcNow.AddMinutes(-10),
+        DateTimeOffset.UtcNow.AddMinutes(-1),
+        DateTimeOffset.UtcNow,
+        DrawLifecycleStatus.AwaitingResult);
+    var persistedDrawSchedule = await postgresDrawScheduleRepository.UpsertAsync(postgresDrawSchedule, CancellationToken.None);
+    if (persistedDrawSchedule.Id != drawScheduleId ||
+        persistedDrawSchedule.Status != DrawLifecycleStatus.AwaitingResult ||
+        (await postgresDrawScheduleRepository.GetAsync(drawScheduleId, CancellationToken.None)) is null)
+    {
+        throw new InvalidOperationException("Postgres draw schedule persistence failed.");
+    }
+
+    var missedDrawSchedule = await postgresDrawScheduleRepository.UpsertAsync(
+        postgresDrawSchedule with { Status = DrawLifecycleStatus.ManualReviewRequired },
+        CancellationToken.None);
+    if (missedDrawSchedule.Status != DrawLifecycleStatus.ManualReviewRequired ||
+        (await postgresDrawScheduleRepository.ListAsync(CancellationToken.None)).All(schedule => schedule.Id != drawScheduleId))
+    {
+        throw new InvalidOperationException("Postgres draw schedule lifecycle update did not persist.");
+    }
+
+    var postgresCatalogRegistry = new GameModuleRegistry(
+        postgresModuleRepository,
+        postgresModuleVersionRepository,
+        postgresDefinitionRepository,
+        postgresDefinitionVersionRepository);
+    if (postgresCatalogRegistry.GetRegisteredModules().Count != 3 ||
+        postgresCatalogRegistry.GetGameBindings().Count != 3)
+    {
+        throw new InvalidOperationException("Postgres-backed catalog registry must preserve existing API-facing behavior.");
+    }
+
+    var postgresScheduler = new DrawSchedulerService(registry, drawAuthorityRegistry, postgresDrawScheduleRepository);
+    var postgresLifecycle = postgresScheduler.GetLifecycle();
+    var postgresLifecycleDraw = postgresLifecycle
+        .Where(draw => draw.ResultSource == DrawResultSource.ManualCertified)
+        .OrderBy(draw => draw.DrawAt)
+        .First();
+    if (await postgresDrawScheduleRepository.GetAsync(postgresLifecycleDraw.DrawId, CancellationToken.None) is null)
+    {
+        throw new InvalidOperationException("Postgres-backed scheduler did not persist lifecycle records.");
+    }
+
+    var postgresMarked = postgresScheduler.MarkMissed(postgresLifecycleDraw.DrawId);
+    var postgresMarkedSchedule = await postgresDrawScheduleRepository.GetAsync(postgresMarked.DrawId, CancellationToken.None);
+    if (postgresMarkedSchedule?.Status != DrawLifecycleStatus.ManualReviewRequired)
+    {
+        throw new InvalidOperationException("Postgres-backed scheduler mark-missed did not persist.");
+    }
+
+    var postgresRunId = Guid.NewGuid();
+    var postgresBatchId = Guid.NewGuid();
+    var postgresDrawId = Guid.NewGuid();
+    var postgresGameId = Guid.NewGuid();
+    var postgresRun = new EvaluationRunDefinition(
+        postgresRunId,
+        postgresDrawId,
+        postgresGameId,
+        Guid.NewGuid(),
+        "KENO_GENERIC",
+        "1.0.0",
+        "postgres-evaluator-test",
+        EvaluationRunStatus.Planned,
+        BatchSize: 5,
+        EligibleTicketCount: 5,
+        PlannedBatchCount: 1,
+        DateTimeOffset.UtcNow,
+        StartedAt: null,
+        CompletedAt: null,
+        Array.Empty<string>());
+    var persistedRun = postgresRunRepository.UpsertRun(postgresRun);
+    if (persistedRun.Id != postgresRunId ||
+        persistedRun.Status != EvaluationRunStatus.Planned ||
+        postgresRunRepository.GetRuns().All(run => run.Id != postgresRunId))
+    {
+        throw new InvalidOperationException("Postgres evaluation run create/read did not persist.");
+    }
+
+    var startedRun = postgresRunRepository.UpsertRun(postgresRun with
+    {
+        Status = EvaluationRunStatus.InProgress,
+        StartedAt = DateTimeOffset.UtcNow
+    });
+    if (startedRun.Status != EvaluationRunStatus.InProgress ||
+        startedRun.StartedAt is null ||
+        postgresRunRepository.GetRun(postgresRunId)?.Status != EvaluationRunStatus.InProgress)
+    {
+        throw new InvalidOperationException("Postgres evaluation run status update did not persist.");
+    }
+
+    var postgresBatch = new EvaluationBatchDefinition(
+        postgresBatchId,
+        postgresRunId,
+        Sequence: 0,
+        StartInclusive: 0,
+        EndExclusive: 5,
+        EvaluationBatchStatus.Pending,
+        CheckpointCursor: "0",
+        RetryCount: 0,
+        DateTimeOffset.UtcNow,
+        ClaimedAt: null,
+        CompletedAt: null);
+    var persistedBatch = postgresBatchRepository.UpsertBatch(startedRun, postgresBatch);
+    if (persistedBatch.Id != postgresBatchId ||
+        persistedBatch.Status != EvaluationBatchStatus.Pending ||
+        postgresBatchRepository.GetBatches(postgresRunId).Count != 1)
+    {
+        throw new InvalidOperationException("Postgres evaluation batch create/read did not persist.");
+    }
+
+    var completedBatch = postgresBatchRepository.UpsertBatch(
+        startedRun,
+        postgresBatch with
+        {
+            Status = EvaluationBatchStatus.Completed,
+            CheckpointCursor = "5",
+            CompletedAt = DateTimeOffset.UtcNow
+        });
+    var completedRun = postgresRunRepository.UpsertRun(startedRun with
+    {
+        Status = EvaluationRunStatus.Completed,
+        CompletedAt = DateTimeOffset.UtcNow
+    });
+    if (completedBatch.Status != EvaluationBatchStatus.Completed ||
+        completedBatch.CompletedAt is null ||
+        completedBatch.CheckpointCursor != "5" ||
+        completedRun.Status != EvaluationRunStatus.Completed ||
+        completedRun.CompletedAt is null)
+    {
+        throw new InvalidOperationException("Postgres run/batch progress updates did not persist.");
+    }
+
+    var postgresRecord = new ImmutableEvaluationRecord(
+        Guid.NewGuid(),
+        $"phase-24-2a:{Guid.NewGuid():N}",
+        postgresRunId,
+        postgresBatchId,
+        Guid.NewGuid(),
+        postgresDrawId,
+        postgresGameId,
+        "KENO_GENERIC",
+        "1.0.0",
+        "postgres-evaluator-test",
+        "postgres-paytable-test",
+        GameEvaluationOutcome.Win,
+        GameEvaluationReason.KenoSpotMatch,
+        new GameEvaluationAmount("USD", 10m, 20m, 10m),
+        new Dictionary<string, object?> { ["source"] = "postgres-repository-test" },
+        DateTimeOffset.UtcNow);
+
+    var postgresInsert = postgresRecordRepository.InsertEvaluationRecord(postgresRecord);
+    if (!postgresInsert.Created || postgresInsert.Record.Id != postgresRecord.Id)
+    {
+        throw new InvalidOperationException("Postgres evaluation record insert did not persist the new record.");
+    }
+
+    var postgresDuplicate = postgresRecordRepository.InsertEvaluationRecord(postgresRecord with
+    {
+        Id = Guid.NewGuid(),
+        Amount = postgresRecord.Amount with { PayoutAmount = 999m }
+    });
+    if (postgresDuplicate.Created ||
+        postgresDuplicate.Record.Id != postgresRecord.Id ||
+        postgresDuplicate.Record.Amount.PayoutAmount != postgresRecord.Amount.PayoutAmount)
+    {
+        throw new InvalidOperationException("Postgres duplicate idempotency key must return the existing immutable record.");
+    }
+
+    if (postgresRecordRepository.GetByRun(postgresRunId).All(record => record.Id != postgresRecord.Id) ||
+        postgresRecordRepository.GetByBatch(postgresBatchId).All(record => record.Id != postgresRecord.Id))
+    {
+        throw new InvalidOperationException("Postgres evaluation record lookup by run/batch failed.");
+    }
+
+    var postgresCheckpoint = postgresCheckpointRepository.UpsertCheckpoint(
+        completedRun,
+        completedBatch,
+        processedCount: 5,
+        failedCount: 1,
+        EvaluationCheckpointStatus.Completed);
+    if (postgresCheckpoint.RunId != postgresRunId ||
+        postgresCheckpoint.BatchId != postgresBatchId ||
+        postgresCheckpoint.ProcessedCount != 5 ||
+        postgresCheckpoint.FailedCount != 1)
+    {
+        throw new InvalidOperationException("Postgres checkpoint upsert did not persist the checkpoint.");
+    }
+
+    var postgresCheckpointUpdate = postgresCheckpointRepository.UpsertCheckpoint(
+        completedRun,
+        completedBatch with { RetryCount = 1, CheckpointCursor = "5" },
+        processedCount: 6,
+        failedCount: 0,
+        EvaluationCheckpointStatus.RetryPending);
+    if (postgresCheckpointUpdate.RetryCount != 1 ||
+        postgresCheckpointUpdate.Cursor != "5" ||
+        postgresCheckpointUpdate.ProcessedCount != 6 ||
+        postgresCheckpointRepository.GetCheckpoints(postgresRunId).Count != 1)
+    {
+        throw new InvalidOperationException("Postgres checkpoint upsert must update the existing run/batch checkpoint deterministically.");
+    }
+}
+
 var resume = executionService.ResumeRun(execution.RunId, Guid.NewGuid());
 if (resume.FinancialMutationPerformed ||
     resume.SettlementIntegrationTriggered ||
@@ -692,8 +1119,17 @@ if (!schema.Contains("game_engine.evaluation_records", StringComparison.OrdinalI
     throw new InvalidOperationException("Durable schema must document idempotency, append-only guards, and settlement consumer fields.");
 }
 
-var runRepository = new OrchestratorEvaluationRunRepository(evaluationOrchestrator);
-var batchRepository = new OrchestratorEvaluationBatchRepository(evaluationOrchestrator);
+var runRepository = new InMemoryEvaluationRunRepository();
+var batchRepository = new InMemoryEvaluationBatchRepository();
+foreach (var runForReadModel in evaluationOrchestrator.GetRuns())
+{
+    runRepository.UpsertRun(runForReadModel);
+    foreach (var batchForReadModel in evaluationOrchestrator.GetBatches(runForReadModel.Id))
+    {
+        batchRepository.UpsertBatch(runForReadModel, batchForReadModel);
+    }
+}
+
 var settlementReadService = new SettlementEvaluationReadService(runRepository, batchRepository, evaluationPersistence);
 var activationGate = new SettlementConsumerActivationGate(evaluationPersistence);
 var settlementRecords = settlementReadService.ListSettlementReadyRecords();

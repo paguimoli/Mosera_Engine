@@ -1,0 +1,5 @@
+create index idx_evaluation_runs_draw_id on game_engine.evaluation_runs(draw_id);
+create index idx_evaluation_runs_game_binding_id on game_engine.evaluation_runs(game_binding_id);
+create index idx_evaluation_runs_status on game_engine.evaluation_runs(status);
+create index idx_evaluation_batches_run_status on game_engine.evaluation_batches(evaluation_run_id, status);
+create index idx_evaluation_checkpoints_run_id on game_engine.evaluation_checkpoints(evaluation_run_id);

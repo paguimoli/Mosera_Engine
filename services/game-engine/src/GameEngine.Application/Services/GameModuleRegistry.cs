@@ -1,4 +1,7 @@
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
+using GameEngine.Application.Interfaces;
 using GameEngine.Domain.Model;
 using GameEngine.Domain.Modules;
 using GameEngine.Modules.HotSpot;
@@ -14,11 +17,24 @@ public sealed class GameModuleRegistry
     private readonly List<GameModuleRegistryEntry> rejectedModules = [];
     private readonly List<GameBinding> gameBindings = [];
     private readonly Dictionary<string, IGameModule> moduleInstances = new(StringComparer.OrdinalIgnoreCase);
+    private readonly IGameModuleRepository? gameModuleRepository;
+    private readonly IGameModuleVersionRepository? gameModuleVersionRepository;
+    private readonly IGameDefinitionRepository? gameDefinitionRepository;
+    private readonly IGameDefinitionVersionRepository? gameDefinitionVersionRepository;
 
-    public GameModuleRegistry()
+    public GameModuleRegistry(
+        IGameModuleRepository? gameModuleRepository = null,
+        IGameModuleVersionRepository? gameModuleVersionRepository = null,
+        IGameDefinitionRepository? gameDefinitionRepository = null,
+        IGameDefinitionVersionRepository? gameDefinitionVersionRepository = null)
     {
+        this.gameModuleRepository = gameModuleRepository;
+        this.gameModuleVersionRepository = gameModuleVersionRepository;
+        this.gameDefinitionRepository = gameDefinitionRepository;
+        this.gameDefinitionVersionRepository = gameDefinitionVersionRepository;
         DiscoverModules();
         SeedProspectiveBindings();
+        PersistCatalogSnapshot();
     }
 
     public IReadOnlyCollection<GameModuleRegistryEntry> GetRegisteredModules() => registeredModules.ToArray();
@@ -436,6 +452,84 @@ public sealed class GameModuleRegistry
                 new Dictionary<string, object?>(),
                 new Dictionary<string, object?>()));
         }
+    }
+
+    private void PersistCatalogSnapshot()
+    {
+        if (gameModuleRepository is null ||
+            gameModuleVersionRepository is null ||
+            gameDefinitionRepository is null ||
+            gameDefinitionVersionRepository is null)
+        {
+            return;
+        }
+
+        foreach (var module in registeredModules)
+        {
+            var moduleId = StableGuid($"module:{module.ModuleId}");
+            var moduleVersionId = StableGuid($"module-version:{module.ModuleId}:{module.ModuleVersion}");
+            var persistedModule = new GameModule(
+                moduleId,
+                module.ModuleId,
+                module.ModuleName,
+                module.LifecycleStatus,
+                moduleVersionId);
+
+            var storedModule = gameModuleRepository.UpsertAsync(persistedModule, CancellationToken.None).GetAwaiter().GetResult();
+            var persistedVersion = new GameModuleVersion(
+                moduleVersionId,
+                storedModule.Id,
+                module.ModuleVersion,
+                module.ConfigurationSchemaVersion,
+                module.Validation.IsValid ? module.ModuleVersion : $"rejected:{module.ModuleVersion}",
+                module.LifecycleStatus,
+                module.LoadTimestamp);
+
+            gameModuleVersionRepository.UpsertAsync(persistedVersion, CancellationToken.None).GetAwaiter().GetResult();
+        }
+
+        foreach (var binding in gameBindings)
+        {
+            var activeVersion = binding.Versions.First(version => version.Id == binding.ActiveVersionId);
+            var moduleId = gameModuleRepository.ListAsync(CancellationToken.None)
+                .GetAwaiter()
+                .GetResult()
+                .FirstOrDefault(module => string.Equals(module.Code, activeVersion.ModuleId, StringComparison.OrdinalIgnoreCase))
+                ?.Id ?? StableGuid($"module:{activeVersion.ModuleId}");
+            var definitionId = StableGuid($"game-definition:{binding.GameCode}");
+            var definitionVersionId = StableGuid($"game-definition-version:{binding.GameCode}:{activeVersion.ConfigurationHash}");
+            var definition = new GameDefinition(
+                definitionId,
+                binding.GameCode,
+                binding.DisplayName,
+                definitionVersionId,
+                moduleId,
+                binding.CreatedAt);
+            var definitionVersion = new GameDefinitionVersion(
+                definitionVersionId,
+                definitionId,
+                VersionNumber: 1,
+                activeVersion.ConfigurationHash,
+                ReadString(activeVersion.DefaultConfiguration, "paytableVersion") ?? "REFERENCE_PAYTABLE_V1",
+                activeVersion.ModuleVersion,
+                activeVersion.DrawSchedule,
+                activeVersion.EffectiveFrom,
+                activeVersion.EffectiveTo);
+
+            gameDefinitionRepository.UpsertAsync(definition, CancellationToken.None).GetAwaiter().GetResult();
+            gameDefinitionVersionRepository.UpsertAsync(definitionVersion, CancellationToken.None).GetAwaiter().GetResult();
+        }
+    }
+
+    private static string? ReadString(IReadOnlyDictionary<string, object?> payload, string key)
+    {
+        return payload.TryGetValue(key, out var value) ? value?.ToString() : null;
+    }
+
+    private static Guid StableGuid(string value)
+    {
+        var bytes = MD5.HashData(Encoding.UTF8.GetBytes(value));
+        return new Guid(bytes);
     }
 
     private static void ValidateManifest(
