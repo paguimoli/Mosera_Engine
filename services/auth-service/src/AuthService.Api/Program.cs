@@ -1,11 +1,22 @@
 using System.Text.Json.Serialization;
 using AuthService.Application;
+using AuthService.Application.Services;
 using AuthService.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddSingleton<AuthArchitectureService>();
 builder.Services.AddSingleton<AuthInfrastructureStatusProvider>();
+builder.Services.AddSingleton<IdentityMappingService>();
+builder.Services.AddSingleton<ShadowValidationService>();
+builder.Services.AddHttpClient<SupabaseLegacyPlatformIdentitySource>();
+builder.Services.AddSingleton<ILegacyPlatformIdentitySource>(services =>
+{
+    var source = services.GetRequiredService<SupabaseLegacyPlatformIdentitySource>();
+    return source.Configured ? source : new EmptyLegacyPlatformIdentitySource();
+});
+builder.Services.AddSingleton<ShadowIdentityImportService>();
+builder.Services.AddSingleton<MigrationReadinessService>();
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
@@ -180,6 +191,30 @@ group.MapGet("/schema-status", (AuthArchitectureService service) => Results.Ok(n
 {
     success = true,
     data = service.GetSchemaStatus()
+}));
+
+group.MapGet("/shadow-import-status", async (ShadowIdentityImportService service, CancellationToken cancellationToken) => Results.Ok(new
+{
+    success = true,
+    data = await service.GetStatusAsync(cancellationToken)
+}));
+
+group.MapGet("/migration-validation", async (MigrationReadinessService service, CancellationToken cancellationToken) => Results.Ok(new
+{
+    success = true,
+    data = await service.ValidateAsync(cancellationToken)
+}));
+
+group.MapGet("/migration-report", async (MigrationReadinessService service, CancellationToken cancellationToken) => Results.Ok(new
+{
+    success = true,
+    data = await service.BuildReportAsync(cancellationToken)
+}));
+
+group.MapPost("/shadow-import/run", async (ShadowIdentityImportService service, CancellationToken cancellationToken) => Results.Ok(new
+{
+    success = true,
+    data = await service.RunAsync(cancellationToken)
 }));
 
 app.Run();

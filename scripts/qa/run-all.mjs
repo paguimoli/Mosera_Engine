@@ -69,6 +69,7 @@ const steps = [
   "qa:auth-credential-policy",
   "qa:auth-session-token-oauth",
   "qa:auth-migration-plan",
+  "qa:shadow-import",
   "qa:performance-baseline",
   "qa:credit-launch",
   "qa:worker-observability",

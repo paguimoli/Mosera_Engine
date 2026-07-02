@@ -1,4 +1,5 @@
 using AuthService.Application;
+using AuthService.Application.Services;
 
 var service = new AuthArchitectureService();
 var status = service.GetStatus();
@@ -170,6 +171,65 @@ Assert(migration.Status == AuthService.Domain.Models.AuthMigrationGateStatus.Blo
 Assert(migration.Blockers.Any(blocker => blocker.Code == "SCHEMA_NOT_APPLIED"), "Schema blocker must be present.");
 Assert(migration.Blockers.Any(blocker => blocker.Code == "TOKEN_ISSUANCE_NOT_IMPLEMENTED"), "Token issuance blocker must be present.");
 
+var shadowSource = new TestLegacyPlatformIdentitySource();
+var identityMapping = new IdentityMappingService();
+var shadowValidation = new ShadowValidationService();
+var shadowImport = new ShadowIdentityImportService(shadowSource, identityMapping, shadowValidation);
+var migrationReadiness = new MigrationReadinessService(shadowImport);
+var snapshot = await shadowSource.ReadSnapshotAsync();
+var mappedIdentities = identityMapping.MapAll(snapshot).ToArray();
+
+Assert(mappedIdentities.Length == snapshot.Identities.Count, "Every platform identity must map to a shadow identity.");
+Assert(mappedIdentities.Select(mapping => mapping.IdentityId).Distinct().Count() == mappedIdentities.Length, "Identity IDs must be deterministic and unique for source identities.");
+var adminSource = snapshot.Identities.Single(identity => identity.SourceId == "admin-1");
+var firstAdminMapping = identityMapping.Map(adminSource);
+var secondAdminMapping = identityMapping.Map(adminSource);
+Assert(firstAdminMapping.IdentityId == secondAdminMapping.IdentityId && firstAdminMapping.LoginId == secondAdminMapping.LoginId, "Identity mapping must be deterministic.");
+Assert(mappedIdentities.Any(mapping => mapping.IdentityType == AuthService.Domain.Models.IdentityType.Admin), "Admin identities must map.");
+Assert(mappedIdentities.Any(mapping => mapping.IdentityType == AuthService.Domain.Models.IdentityType.Player), "Player identities must map.");
+Assert(mappedIdentities.Any(mapping => mapping.IdentityType == AuthService.Domain.Models.IdentityType.Agent), "Agent identities must map.");
+Assert(mappedIdentities.Any(mapping => mapping.IdentityType == AuthService.Domain.Models.IdentityType.ApiClient), "API clients must map.");
+Assert(mappedIdentities.Any(mapping => mapping.IdentityType == AuthService.Domain.Models.IdentityType.ServiceAccount), "Service accounts must map.");
+Assert(mappedIdentities.Any(mapping => mapping.Roles.Contains("SUPER_ADMIN")), "Role mapping must preserve platform groups.");
+Assert(mappedIdentities.Any(mapping => mapping.Claims.Any(claim => claim.Type == "PERMISSION" && claim.Value == "system.admin")), "Claim mapping must preserve permissions.");
+Assert(mappedIdentities.Any(mapping => mapping.Memberships.Any(membership => membership.ScopeType == "ACCOUNT")), "Membership mapping must preserve account scopes.");
+
+var validation = shadowValidation.Validate(snapshot, mappedIdentities);
+Assert(validation.Issues.Any(issue => issue.Code == "DUPLICATE_USERNAME"), "Duplicate usernames must be detected.");
+Assert(validation.Issues.Any(issue => issue.Code == "DUPLICATE_EMAIL"), "Duplicate emails must be detected.");
+Assert(validation.Issues.Any(issue => issue.Code == "DUPLICATE_LOGIN_ID"), "Duplicate login IDs must be detected.");
+Assert(validation.Issues.Any(issue => issue.Code == "MISSING_CREDENTIALS"), "Missing credentials must be detected.");
+Assert(validation.Issues.Any(issue => issue.Code == "INVALID_ROLE_MAPPING"), "Invalid role mappings must be detected.");
+Assert(validation.Issues.Any(issue => issue.Code == "INVALID_MEMBERSHIP"), "Invalid memberships must be detected.");
+Assert(validation.Issues.Any(issue => issue.Code == "UNSUPPORTED_CREDENTIAL_TYPE"), "Unsupported credentials must be detected.");
+Assert(validation.Issues.Any(issue => issue.Code == "MISSING_LIFECYCLE_STATE"), "Missing lifecycle state must be detected.");
+Assert(validation.Issues.Any(issue => issue.Code == "UNKNOWN_ACCOUNT_TYPE"), "Unknown account types must be detected.");
+
+var shadowRun = await shadowImport.RunAsync();
+Assert(shadowRun.ImportedIdentities.Count == mappedIdentities.Length, "Shadow import must create in-memory identities.");
+Assert(shadowRun.ReadOnly, "Shadow import must be read-only.");
+Assert(!shadowRun.Persisted, "Shadow import must not persist identities.");
+Assert(!shadowRun.Authenticated, "Shadow import must not authenticate.");
+Assert(!shadowRun.SessionsCreated, "Shadow import must not create sessions.");
+Assert(!shadowRun.TokensIssued, "Shadow import must not issue tokens.");
+Assert(!shadowRun.LegacyAuthChanged, "Shadow import must leave legacy auth unchanged.");
+Assert(shadowRun.WriteOperationsAttempted == 0, "Shadow import must not attempt DB writes.");
+Assert(shadowSource.ReadCount == 2, "Shadow source must only be read.");
+Assert(shadowSource.WriteCount == 0, "Shadow source writes must remain zero.");
+
+var report = await migrationReadiness.BuildReportAsync();
+var secondReport = await migrationReadiness.BuildReportAsync();
+Assert(report.Summary.IdentitiesDiscovered == mappedIdentities.Length, "Report must include identity count.");
+Assert(report.IdentityTypes.ContainsKey("Admin"), "Report must include identity types.");
+Assert(report.Conflicts.Count > 0, "Report must include conflicts.");
+Assert(report.Errors.Count > 0, "Report must include errors.");
+Assert(report.MigrationBlockers.Count > 0, "Report must include migration blockers.");
+Assert(report.EstimatedMigrationDuration.StartsWith("PT", StringComparison.Ordinal), "Report must estimate migration duration.");
+Assert(report.ReadinessScore < 100, "Readiness score must reflect blockers.");
+Assert(report.ExportableJsonReport, "Report must be exportable as JSON.");
+Assert(report.GeneratedAt == secondReport.GeneratedAt, "Reports must be deterministic.");
+Assert(report.ReadinessScore == secondReport.ReadinessScore, "Report scoring must be deterministic.");
+
 Console.WriteLine("AuthService.Application.Tests PASS");
 
 static void Assert(bool condition, string message)
@@ -177,5 +237,96 @@ static void Assert(bool condition, string message)
     if (!condition)
     {
         throw new InvalidOperationException(message);
+    }
+}
+
+sealed class TestLegacyPlatformIdentitySource : ILegacyPlatformIdentitySource
+{
+    public int ReadCount { get; private set; }
+    public int WriteCount { get; private set; }
+
+    public Task<LegacyPlatformSnapshot> ReadSnapshotAsync(CancellationToken cancellationToken = default)
+    {
+        ReadCount++;
+        return Task.FromResult(new LegacyPlatformSnapshot(
+            Source: "test-legacy-platform",
+            SourceWired: true,
+            CapturedAt: new DateTimeOffset(2026, 7, 1, 12, 0, 0, TimeSpan.Zero),
+            Identities:
+            [
+                Identity("platform_users", "admin-1", "ADMIN", "PLATFORM_OPERATOR", "admin", "admin@example.com", "ACTIVE", [Role("SUPER_ADMIN", ["system.admin"])], [Claim("permission", "system.admin")], [Credential("PASSWORD_HASH", "platform_users:admin-1:password", "ARGON2ID")], [Membership("GLOBAL", "platform", ["SUPER_ADMIN"])]),
+                Identity("accounts", "player-1", "PLAYER", "PLAYER", "player", "player@example.com", "ACTIVE", [Role("PLAYER", ["players.view"])], [Claim("permission", "players.view")], [Credential("PASSWORD_HASH", "accounts:player-1:password", "BCRYPT")], [Membership("ACCOUNT", "player-1", ["PLAYER"])]),
+                Identity("accounts", "agent-1", "AGENT", "AGENT", "agent", "agent@example.com", "ACTIVE", [Role("AGENT", ["agents.view"])], [Claim("permission", "agents.view")], [Credential("PASSWORD_HASH", "accounts:agent-1:password", "BCRYPT")], [Membership("ACCOUNT", "agent-1", ["AGENT"])]),
+                Identity("oauth_clients", "api-client-1", "API_CLIENT", null, "client-a", "client-a@example.com", "ACTIVE", [Role("API_CLIENT", ["system.api"])], [Claim("scope", "tickets.read")], [Credential("CLIENT_SECRET", "oauth_clients:api-client-1:secret", "SHA256")], [Membership("GLOBAL", "platform", ["API_CLIENT"])]),
+                Identity("service_accounts", "service-1", "SERVICE_ACCOUNT", null, "settlement-service", "settlement@example.com", "ACTIVE", [Role("SERVICE_ACCOUNT", ["settlement.run"])], [Claim("scope", "settlement.run")], [Credential("CERTIFICATE", "service_accounts:service-1:certificate", null)], [Membership("GLOBAL", "platform", ["SERVICE_ACCOUNT"])]),
+                Identity("platform_users", "dupe-1", "ADMIN", "PLATFORM_OPERATOR", "dupe", "dupe@example.com", "ACTIVE", [Role("OPERATIONS_ADMIN", ["operations.view"])], [Claim("permission", "operations.view")], [Credential("PASSWORD_HASH", "platform_users:dupe-1:password", "ARGON2ID")], [Membership("GLOBAL", "platform", ["OPERATIONS_ADMIN"])]),
+                Identity("platform_users", "dupe-2", "ADMIN", "PLATFORM_OPERATOR", "dupe", "dupe@example.com", "ACTIVE", [Role("OPERATIONS_ADMIN", ["operations.view"])], [Claim("permission", "operations.view")], [Credential("PASSWORD_HASH", "platform_users:dupe-2:password", "ARGON2ID")], [Membership("GLOBAL", "platform", ["OPERATIONS_ADMIN"])]),
+                Identity("platform_users", "bad-1", "ALIEN", "UNKNOWN", "bad", "bad@example.com", null, [Role("UNKNOWN_ROLE", [])], [Claim("permission", "bad.permission")], [Credential("LEGACY_MD5", "platform_users:bad-1:password", "MD5")], [Membership("UNKNOWN_SCOPE", "bad", ["UNKNOWN_ROLE"])]),
+                Identity("platform_users", "missing-credential-1", "ADMIN", "PLATFORM_OPERATOR", "missing", "missing@example.com", "ACTIVE", [Role("SUPPORT_ADMIN", ["support.view"])], [Claim("permission", "support.view")], [], [Membership("GLOBAL", "platform", ["SUPPORT_ADMIN"])])
+            ],
+            Sessions:
+            [
+                new LegacySessionMetadata("session-1", "platform_users:admin-1", "ACTIVE", new DateTimeOffset(2026, 7, 1, 13, 0, 0, TimeSpan.Zero)),
+                new LegacySessionMetadata("session-orphan", "platform_users:missing-user", "ACTIVE", new DateTimeOffset(2026, 7, 1, 13, 0, 0, TimeSpan.Zero))
+            ],
+            Roles: [Role("SUPER_ADMIN", ["system.admin"]), Role("PLAYER", ["players.view"])],
+            Permissions: ["system.admin", "players.view", "agents.view"],
+            PlayerAccountCount: 1,
+            AgentAccountCount: 1,
+            AdminAccountCount: 5,
+            ServiceAccountCount: 1,
+            ApiClientCount: 1));
+    }
+
+    private static LegacyPlatformIdentity Identity(
+        string sourceSystem,
+        string sourceId,
+        string accountType,
+        string? identityClass,
+        string username,
+        string email,
+        string? status,
+        IReadOnlyCollection<LegacyRoleMetadata> roles,
+        IReadOnlyCollection<LegacyClaimMetadata> claims,
+        IReadOnlyCollection<LegacyCredentialMetadata> credentials,
+        IReadOnlyCollection<LegacyMembershipMetadata> memberships)
+    {
+        return new LegacyPlatformIdentity(
+            sourceSystem,
+            sourceId,
+            accountType,
+            identityClass,
+            username,
+            username,
+            email,
+            status,
+            null,
+            roles,
+            claims,
+            credentials,
+            memberships);
+    }
+
+    private static LegacyRoleMetadata Role(string code, IReadOnlyCollection<string> permissions)
+    {
+        return new LegacyRoleMetadata(code, permissions);
+    }
+
+    private static LegacyClaimMetadata Claim(string type, string value)
+    {
+        return new LegacyClaimMetadata(type, value, "legacy-platform");
+    }
+
+    private static LegacyCredentialMetadata Credential(string type, string reference, string? hashAlgorithm)
+    {
+        return new LegacyCredentialMetadata(type, reference, hashAlgorithm, Active: true);
+    }
+
+    private static LegacyMembershipMetadata Membership(
+        string scopeType,
+        string scopeId,
+        IReadOnlyCollection<string> roles)
+    {
+        return new LegacyMembershipMetadata(scopeType, scopeId, roles);
     }
 }
