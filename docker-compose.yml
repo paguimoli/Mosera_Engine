@@ -186,6 +186,38 @@ services:
       - rabbitmq
       - redis
 
+  devtools:
+    build:
+      context: .
+      dockerfile: Dockerfile.devtools
+    profiles:
+      - devtools
+    working_dir: /workspace
+    environment:
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:54321}
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:-${SUPABASE_ANON_KEY:-dummy-publishable-key}}
+      SUPABASE_URL: ${SUPABASE_URL:-${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:54321}}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-dummy-service-role-key}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-dummy-anon-key}
+      AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://auth-service:8080}
+      APP_URL: ${APP_URL:-http://app:3000}
+      GAME_ENGINE_URL: ${GAME_ENGINE_URL:-http://game-engine:8080}
+      SETTLEMENT_SERVICE_URL: ${SETTLEMENT_SERVICE_URL:-http://settlement-service:8080}
+      LEDGER_SERVICE_URL: ${LEDGER_SERVICE_URL:-http://ledger-service:8080}
+      CREDIT_SERVICE_URL: ${CREDIT_SERVICE_URL:-http://credit-wallet-service:8080}
+      RABBITMQ_MANAGEMENT_URL: ${RABBITMQ_MANAGEMENT_URL:-http://rabbitmq:15672}
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+    volumes:
+      - .:/workspace
+      - devtools_node_modules:/workspace/node_modules
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - rabbitmq
+      - redis
+
   rabbitmq:
     image: rabbitmq:3-management
     ports:
@@ -208,3 +240,4 @@ services:
 volumes:
   rabbitmq_data:
   redis_data:
+  devtools_node_modules:
