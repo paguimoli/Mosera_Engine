@@ -158,6 +158,24 @@ group.MapGet("/migration-readiness", (AuthArchitectureService service) => Result
     data = service.GetMigrationReadiness()
 }));
 
+group.MapGet("/migration-plan", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetMigrationPlan()
+}));
+
+group.MapGet("/coexistence-status", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetCoexistenceStatus()
+}));
+
+group.MapGet("/compatibility-model", (AuthArchitectureService service) => Results.Ok(new
+{
+    success = true,
+    data = service.GetCompatibilityModel()
+}));
+
 group.MapGet("/schema-status", (AuthArchitectureService service) => Results.Ok(new
 {
     success = true,

@@ -134,6 +134,37 @@ Assert(service.GetOAuthReadiness().Status == AuthService.Domain.Models.AuthRunti
 Assert(service.GetTokenReadiness().Blockers.Any(blocker => blocker.Code == "SIGNING_KEYS_NOT_ACTIVE"), "Signing key blocker must be present.");
 Assert(service.GetTokenReadiness().Blockers.Any(blocker => blocker.Code == "CURRENT_PLATFORM_MIGRATION_NOT_APPROVED"), "Current platform migration blocker must be present.");
 
+var migrationPlan = service.GetMigrationPlan();
+Assert(migrationPlan.Phases.Count == 8, "Migration phases must be documented.");
+Assert(migrationPlan.Phases.Any(phase => phase.Name.Contains("Shadow validation", StringComparison.Ordinal)), "Shadow validation phase must exist.");
+Assert(migrationPlan.Phases.Any(phase => phase.Name.Contains("Legacy retirement", StringComparison.Ordinal)), "Legacy retirement phase must exist.");
+Assert(migrationPlan.Phases.All(phase => phase.RollbackCriteria.Count > 0), "Every migration phase must include rollback criteria.");
+Assert(migrationPlan.IdentityMappings.Count >= 6, "Identity mapping must be complete.");
+Assert(migrationPlan.IdentityMappings.All(mapping => mapping.DuplicatePreventionRequired), "Identity mapping must prevent duplicates.");
+Assert(migrationPlan.IdentityMappings.All(mapping => mapping.AuditHistoryPreserved), "Identity mapping must preserve audit history.");
+Assert(migrationPlan.CredentialMappings.Any(mapping => mapping.CredentialSource == "password hashes" && mapping.TransparentUpgradeSupported), "Password hash transparent upgrade must be modeled.");
+Assert(migrationPlan.CredentialMappings.Any(mapping => mapping.CredentialSource == "service accounts"), "Service account credential migration must be modeled.");
+Assert(migrationPlan.SessionMigration.ParallelValidationModeled, "Session coexistence must be modeled.");
+Assert(migrationPlan.TokenMigration.LegacyTokensValidDuringCoexistence, "Legacy token coexistence must be modeled.");
+Assert(migrationPlan.OAuthMigration.OidcModeled, "OIDC migration must be modeled.");
+Assert(migrationPlan.CompatibilityLayer.MigrationBridge, "Compatibility migration bridge must be modeled.");
+Assert(!migrationPlan.MigrationExecutionEnabled, "Migration execution must remain disabled.");
+Assert(migrationPlan.LegacyAuthUnchanged, "Legacy auth must remain unchanged.");
+
+var coexistence = service.GetCoexistenceStatus();
+Assert(coexistence.ExistingPlatformAuthAuthoritative, "Existing auth must remain authoritative.");
+Assert(!coexistence.AuthServiceRuntimeTrafficEnabled, "Auth Service runtime traffic must remain disabled.");
+Assert(coexistence.RollbackAvailable, "Rollback strategy must exist.");
+Assert(coexistence.Blockers.Count > 0, "Coexistence status must expose blockers.");
+
+var compatibility = service.GetCompatibilityModel();
+Assert(compatibility.LegacySessionValidator, "Legacy session validator must be modeled.");
+Assert(compatibility.LegacyTokenValidator, "Legacy token validator must be modeled.");
+Assert(compatibility.LegacyUserLookup, "Legacy user lookup must be modeled.");
+Assert(compatibility.FeatureFlags, "Feature flags must be modeled.");
+Assert(compatibility.CompatibilityDiagnostics, "Compatibility diagnostics must be modeled.");
+Assert(!compatibility.RuntimeImplemented, "Compatibility runtime must remain unimplemented.");
+
 var migration = service.GetMigrationReadiness();
 Assert(migration.Status == AuthService.Domain.Models.AuthMigrationGateStatus.Blocked, "Migration gate must be blocked by default.");
 Assert(migration.Blockers.Any(blocker => blocker.Code == "SCHEMA_NOT_APPLIED"), "Schema blocker must be present.");

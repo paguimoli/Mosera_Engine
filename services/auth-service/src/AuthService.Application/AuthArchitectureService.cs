@@ -210,6 +210,108 @@ public sealed class AuthArchitectureService
             ]);
     }
 
+    public AuthRuntimeMigrationPlan GetMigrationPlan()
+    {
+        return new AuthRuntimeMigrationPlan(
+            AuthCoexistenceMode.LegacyAuthoritative,
+            Phases:
+            [
+                MigrationPhase(1, "Auth Service deployed, no traffic"),
+                MigrationPhase(2, "Shadow validation"),
+                MigrationPhase(3, "Dual authentication"),
+                MigrationPhase(4, "Admin migration"),
+                MigrationPhase(5, "Internal service migration"),
+                MigrationPhase(6, "Player migration"),
+                MigrationPhase(7, "OAuth activation"),
+                MigrationPhase(8, "Legacy retirement")
+            ],
+            IdentityMappings:
+            [
+                new IdentityMigrationMapping("platform_users.id", nameof(Identity), "Use legacy user id as external correlation and create one Auth identity per unique login.", true, true),
+                new IdentityMigrationMapping("platform_users.username", nameof(LoginId), "Normalize into immutable LoginId; aliases preserve historical usernames.", true, true),
+                new IdentityMigrationMapping("roles/permissions", nameof(Role), "Map legacy roles to Auth roles, claims, and service-enforced permissions.", true, true),
+                new IdentityMigrationMapping("account hierarchy membership", nameof(Membership), "Map tenant/brand/market/operator memberships only; business hierarchy remains external.", true, true),
+                new IdentityMigrationMapping("session records", nameof(Session), "Preserve session audit and correlate to future Auth sessions during coexistence.", true, true),
+                new IdentityMigrationMapping("account status", nameof(IdentityLifecycleState), "Map active, locked, disabled, suspended, archived states without hard deletes.", true, true)
+            ],
+            CredentialMappings:
+            [
+                new CredentialMigrationMapping("password hashes", "PasswordCredential", "Preserve hash metadata and use transparent upgrade on successful future login if formats differ.", true, false),
+                new CredentialMigrationMapping("MFA secrets", "TotpCredential/WebAuthnCredential", "Migrate secret references only after enrollment verification and recovery evidence.", false, false),
+                new CredentialMigrationMapping("recovery codes", "RecoveryCode", "Reissue or migrate hashed recovery codes with display-once controls.", false, true),
+                new CredentialMigrationMapping("OAuth identities", "OAuthFederatedCredential", "Map provider subject and issuer to federated credential metadata.", false, false),
+                new CredentialMigrationMapping("API clients", "ApiKeyCredential", "Map API client metadata; secret rotation required before runtime activation.", false, true),
+                new CredentialMigrationMapping("service accounts", "ClientSecretCredential/CertificateCredential", "Map service identity, client metadata, scopes, and optional mTLS certificate references.", false, false),
+                new CredentialMigrationMapping("federated identities", "PamFederatedCredential/OAuthFederatedCredential", "Preserve provider relationship with immutable external subject references.", false, false)
+            ],
+            SessionMigration: new SessionMigrationPlan(
+                LegacySessionsRemainAuthoritative: true,
+                ParallelValidationModeled: true,
+                ControlledCutoverModeled: true,
+                ForcedLogoutStrategyModeled: true,
+                RollbackModeled: true),
+            TokenMigration: new TokenMigrationPlan(
+                LegacyTokensValidDuringCoexistence: true,
+                JwtModeled: true,
+                OpaqueTokensModeled: true,
+                RefreshTokensModeled: true,
+                ServiceTokensModeled: true,
+                ExpirationStrategyModeled: true,
+                RevocationStrategyModeled: true),
+            OAuthMigration: new OAuthMigrationPlan(
+                ActivationOrder:
+                [
+                    "deploy Auth Service without traffic",
+                    "enable shadow validation diagnostics",
+                    "enable dual-auth compatibility checks",
+                    "migrate admin identities",
+                    "migrate internal service clients",
+                    "migrate players",
+                    "activate OAuth/OIDC runtime after approval",
+                    "retire legacy auth after compatibility window"
+                ],
+                AuthorizationServerModeled: true,
+                OidcModeled: true,
+                ServiceAuthenticationModeled: true,
+                ExternalClientMigrationModeled: true),
+            CompatibilityLayer: GetCompatibilityModel(),
+            LegacyAuthUnchanged: true,
+            MigrationExecutionEnabled: false);
+    }
+
+    public AuthCoexistenceStatus GetCoexistenceStatus()
+    {
+        return new AuthCoexistenceStatus(
+            CurrentMode: AuthCoexistenceMode.LegacyAuthoritative,
+            ExistingPlatformAuthAuthoritative: true,
+            AuthServiceRuntimeTrafficEnabled: false,
+            DualAuthEnabled: false,
+            CompatibilityLayerRuntimeImplemented: false,
+            MigrationExecutionEnabled: false,
+            RollbackAvailable: true,
+            Blockers:
+            [
+                "Auth Service persistence is not active.",
+                "Credential verification runtime is not active.",
+                "Session and token runtime are not active.",
+                "OAuth runtime endpoints are not approved.",
+                "Migration execution approval is not captured."
+            ],
+            GeneratedAt: DateTimeOffset.UtcNow);
+    }
+
+    public CompatibilityLayerModel GetCompatibilityModel()
+    {
+        return new CompatibilityLayerModel(
+            LegacySessionValidator: true,
+            LegacyTokenValidator: true,
+            LegacyUserLookup: true,
+            MigrationBridge: true,
+            FeatureFlags: true,
+            CompatibilityDiagnostics: true,
+            RuntimeImplemented: false);
+    }
+
     public PolicyModelSummary GetPolicyModel()
     {
         return new PolicyModelSummary(
@@ -596,6 +698,31 @@ public sealed class AuthArchitectureService
             new AuthRuntimeGateBlocker("QA_NOT_PASSED", "Runtime activation QA has not passed.", Resolved: false)
         ];
     }
+
+    private static AuthMigrationPhase MigrationPhase(int order, string name)
+    {
+        return new AuthMigrationPhase(
+            order,
+            name,
+            AuthMigrationPhaseStatus.NotStarted,
+            SuccessCriteria:
+            [
+                "No permission loss.",
+                "No duplicate identities.",
+                "No audit history loss.",
+                "Legacy auth rollback remains available.",
+                "Phase-specific QA passes."
+            ],
+            RollbackCriteria:
+            [
+                "Authentication failure rate exceeds approved threshold.",
+                "Permission mismatch is detected.",
+                "Session validation mismatch is detected.",
+                "Operator approval is withdrawn.",
+                "Service health is degraded."
+            ],
+            ApprovalGate: $"AUTH_MIGRATION_PHASE_{order}_APPROVAL");
+    }
 }
 
 public sealed record AuthServiceStatus(
@@ -760,3 +887,14 @@ public sealed record ServiceAuthModelSummary(
     bool SecretMaterialMetadataOnly,
     ServiceTokenPolicy TokenPolicy,
     IReadOnlyCollection<string> Models);
+
+public sealed record AuthCoexistenceStatus(
+    AuthCoexistenceMode CurrentMode,
+    bool ExistingPlatformAuthAuthoritative,
+    bool AuthServiceRuntimeTrafficEnabled,
+    bool DualAuthEnabled,
+    bool CompatibilityLayerRuntimeImplemented,
+    bool MigrationExecutionEnabled,
+    bool RollbackAvailable,
+    IReadOnlyCollection<string> Blockers,
+    DateTimeOffset GeneratedAt);
