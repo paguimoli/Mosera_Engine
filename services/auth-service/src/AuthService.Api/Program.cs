@@ -32,14 +32,25 @@ app.MapGet("/health", () => Results.Ok(new
     timestamp = DateTimeOffset.UtcNow
 }));
 
-app.MapGet("/ready", (AuthInfrastructureStatusProvider infrastructure) => Results.Ok(new
+app.MapGet("/health/live", () => Results.Ok(new
+{
+    status = "ok",
+    service = "auth-service",
+    check = "live",
+    timestamp = DateTimeOffset.UtcNow
+}));
+
+object ReadyResponse(AuthInfrastructureStatusProvider infrastructure) => new
 {
     status = "ready",
     service = "auth-service",
     architectureOnly = true,
     infrastructure = infrastructure.GetStatus(),
     timestamp = DateTimeOffset.UtcNow
-}));
+};
+
+app.MapGet("/ready", (AuthInfrastructureStatusProvider infrastructure) => Results.Ok(ReadyResponse(infrastructure)));
+app.MapGet("/health/ready", (AuthInfrastructureStatusProvider infrastructure) => Results.Ok(ReadyResponse(infrastructure)));
 
 var group = app.MapGroup("/api/auth-service");
 

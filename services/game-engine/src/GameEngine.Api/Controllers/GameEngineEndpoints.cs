@@ -1,4 +1,5 @@
 using GameEngine.Api.Configuration;
+using GameEngine.Api.Infrastructure;
 using GameEngine.Application.Services;
 
 namespace GameEngine.Api.Controllers;
@@ -20,19 +21,20 @@ public static class GameEngineEndpoints
             });
         });
 
-        app.MapGet("/ready", (HttpContext context, ServiceConfiguration configuration) =>
+        app.MapGet("/health/live", (HttpContext context, ServiceConfiguration configuration) =>
         {
             return Results.Ok(new
             {
-                status = "ready",
+                status = "ok",
                 service = configuration.ServiceName,
-                schema = configuration.Schema.SchemaName,
-                messaging = "not_wired",
-                database = "schema_draft_only",
+                check = "live",
                 timestamp = DateTimeOffset.UtcNow,
                 correlationId = context.GetCorrelationId()
             });
         });
+
+        app.MapGet("/ready", ReadinessResponse);
+        app.MapGet("/health/ready", ReadinessResponse);
 
         var group = app.MapGroup("/api/game-engine");
 
@@ -1030,6 +1032,39 @@ public static class GameEngineEndpoints
                 });
             }
         });
+    }
+
+    private static async Task<IResult> ReadinessResponse(
+        HttpContext context,
+        ServiceConfiguration configuration,
+        InfrastructureReadinessChecks readinessChecks)
+    {
+        var rabbitMqReady = await readinessChecks.CheckRabbitMqAsync(context.RequestAborted);
+        var redisReady = await readinessChecks.CheckRedisAsync(context.RequestAborted);
+        var databaseReady = await readinessChecks.CheckDatabaseAsync(context.RequestAborted);
+        var dependencies = new[] { rabbitMqReady, redisReady, databaseReady };
+        var ready = dependencies.All(dependency => dependency.Ready);
+
+        var response = new
+        {
+            status = ready ? "ready" : "not_ready",
+            service = configuration.ServiceName,
+            schema = configuration.Schema.SchemaName,
+            dependencies = dependencies.ToDictionary(
+                dependency => dependency.Name,
+                dependency => dependency.Ready ? "ready" : "not_ready"),
+            dependencyDetails = dependencies
+                .Where(dependency => !dependency.Ready)
+                .Select(dependency => new
+                {
+                    dependency.Name,
+                    dependency.Message
+                }),
+            timestamp = DateTimeOffset.UtcNow,
+            correlationId = context.GetCorrelationId()
+        };
+
+        return ready ? Results.Ok(response) : Results.Json(response, statusCode: 503);
     }
 
     private static object ToModuleDiagnostic(GameEngine.Domain.Model.GameModuleRegistryEntry entry)

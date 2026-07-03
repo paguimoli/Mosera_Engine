@@ -1,5 +1,6 @@
 using GameEngine.Api.Configuration;
 using GameEngine.Api.Controllers;
+using GameEngine.Api.Infrastructure;
 using GameEngine.Api.Middleware;
 using GameEngine.Application.Interfaces;
 using GameEngine.Application.Services;
@@ -20,6 +21,7 @@ var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
 var persistenceMode = string.IsNullOrWhiteSpace(databaseUrl) ? "in-memory" : "postgres";
 
 builder.Services.AddSingleton(serviceConfiguration);
+builder.Services.AddSingleton<InfrastructureReadinessChecks>();
 builder.Services.AddSingleton<GameModuleRegistry>();
 builder.Services.AddSingleton<DrawAuthorityRegistry>();
 builder.Services.AddSingleton<RandomnessRegistry>();

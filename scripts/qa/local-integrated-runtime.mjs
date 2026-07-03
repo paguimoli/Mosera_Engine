@@ -33,8 +33,13 @@ function health(name) {
   return inventory.serviceHealth.find((item) => item.name === name);
 }
 
+function readiness(name) {
+  return inventory.serviceReadiness?.find((item) => item.name === name);
+}
+
 for (const name of [
   "app",
+  "auth-service",
   "game-engine",
   "settlement-service",
   "ledger-service",
@@ -43,12 +48,24 @@ for (const name of [
   assert(health(name)?.status === "UP", `${name} must be reachable.`, { service: health(name) });
 }
 
+for (const name of [
+  "auth-service",
+  "game-engine",
+  "settlement-service",
+  "ledger-service",
+  "credit-wallet-service",
+]) {
+  assert(readiness(name)?.status === "READY", `${name} readiness endpoint must pass.`, {
+    readiness: readiness(name),
+  });
+}
+
+const notReadyDependencies = (inventory.dependencyReadiness ?? []).filter((item) => item.status === "NOT_READY");
+assert(notReadyDependencies.length === 0, "All reported service dependencies must be ready.", {
+  notReadyDependencies,
+});
+
 const auth = health("auth-service");
-assert(
-  auth?.status === "UP" || auth?.status === "NOT_REGISTERED",
-  "Auth Service must be healthy when registered, or explicitly NOT_REGISTERED.",
-  { auth }
-);
 
 const rabbitmqManagement = health("rabbitmq-management");
 const rabbitmqBroker = health("rabbitmq-broker");
@@ -61,13 +78,63 @@ assert(
 const redis = health("redis");
 assert(redis?.status === "UP", "Redis must be reachable.", { redis });
 
+assert(
+  inventory.durablePersistence?.gameEngineDatabaseUrlConfigured,
+  "Game Engine must have DATABASE_URL configured in local runtime.",
+  { durablePersistence: inventory.durablePersistence }
+);
+assert(
+  inventory.durablePersistence?.gameEngineDurablePersistenceModeActive,
+  "Game Engine durable persistence mode must be active.",
+  { durablePersistence: inventory.durablePersistence }
+);
+assert(
+  inventory.durablePersistence?.migrationsCurrent,
+  "Local migrations must validate before runtime QA passes.",
+  { durablePersistence: inventory.durablePersistence }
+);
+
+const durableSmokeResult = spawnSync("node", ["scripts/qa/game-engine-durable-runtime-smoke.mjs"], {
+  encoding: "utf8",
+  env: process.env,
+});
+
+assert(durableSmokeResult.status === 0, "Game Engine durable runtime smoke QA failed.", {
+  stdout: durableSmokeResult.stdout,
+  stderr: durableSmokeResult.stderr,
+  exitCode: durableSmokeResult.status,
+});
+
+let durableSmoke;
+try {
+  durableSmoke = JSON.parse(durableSmokeResult.stdout);
+} catch (error) {
+  fail("Game Engine durable runtime smoke QA did not return JSON.", {
+    error: error instanceof Error ? error.message : String(error),
+    stdout: durableSmokeResult.stdout,
+  });
+}
+
 console.log(
   JSON.stringify(
     {
       status: "PASS",
       message: "Local integrated runtime baseline is reachable.",
       authServiceStatus: auth.status,
+      durablePersistence: {
+        gameEngineDatabaseUrlConfigured: inventory.durablePersistence.gameEngineDatabaseUrlConfigured,
+        gameEngineDurablePersistenceModeActive: inventory.durablePersistence.gameEngineDurablePersistenceModeActive,
+        migrationsCurrent: inventory.durablePersistence.migrationsCurrent,
+      },
+      gameEngineDurableSmoke: {
+        status: durableSmoke.status,
+        coverage: durableSmoke.coverage,
+      },
       checkedServices: inventory.serviceHealth.map((item) => ({
+        name: item.name,
+        status: item.status,
+      })),
+      checkedReadiness: (inventory.serviceReadiness ?? []).map((item) => ({
         name: item.name,
         status: item.status,
       })),

@@ -16,8 +16,17 @@ x-worker-service: &worker-service
   restart: unless-stopped
   environment: *worker-environment
   depends_on:
-    - rabbitmq
-    - redis
+    rabbitmq:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+x-dotnet-healthcheck: &dotnet-healthcheck
+  test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health/ready >/dev/null || exit 1"]
+  interval: 10s
+  timeout: 5s
+  retries: 12
+  start_period: 20s
 
 services:
   app:
@@ -60,8 +69,10 @@ services:
       CREDIT_SHADOW_MODE_ENABLED: ${CREDIT_SHADOW_MODE_ENABLED:-false}
       CREDIT_SERVICE_URL: ${CREDIT_SERVICE_URL:-http://credit-wallet-service:8080}
     depends_on:
-      - rabbitmq
-      - redis
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   outbox-dispatcher:
     <<: *worker-service
@@ -112,8 +123,25 @@ services:
       RABBITMQ_EXCHANGE_NAME: ${RABBITMQ_EXCHANGE_NAME:-lottery.events}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     depends_on:
-      - rabbitmq
-      - redis
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck: *dotnet-healthcheck
+
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    ports:
+      - "5600:8080"
+    environment:
+      SERVICE_NAME: ${AUTH_SERVICE_NAME:-auth-service}
+      ASPNETCORE_ENVIRONMENT: ${AUTH_SERVICE_ENVIRONMENT:-Production}
+      SUPABASE_URL: ${SUPABASE_URL:-${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:54321}}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-dummy-service-role-key}
+      AUTH_PRODUCTION_AUTHENTICATION_ENABLED: ${AUTH_PRODUCTION_AUTHENTICATION_ENABLED:-false}
+    healthcheck: *dotnet-healthcheck
 
   ledger-service:
     build:
@@ -130,8 +158,11 @@ services:
       SUPABASE_URL: ${SUPABASE_URL:-${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:54321}}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-dummy-service-role-key}
     depends_on:
-      - rabbitmq
-      - redis
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck: *dotnet-healthcheck
 
   credit-wallet-service:
     build:
@@ -148,8 +179,11 @@ services:
       SUPABASE_URL: ${SUPABASE_URL:-${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:54321}}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-dummy-service-role-key}
     depends_on:
-      - rabbitmq
-      - redis
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck: *dotnet-healthcheck
 
   settlement-service:
     build:
@@ -166,8 +200,11 @@ services:
       SUPABASE_URL: ${SUPABASE_URL:-${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:54321}}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-dummy-service-role-key}
     depends_on:
-      - rabbitmq
-      - redis
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck: *dotnet-healthcheck
 
   game-engine:
     build:
@@ -182,9 +219,34 @@ services:
       RABBITMQ_EXCHANGE_NAME: ${RABBITMQ_EXCHANGE_NAME:-lottery.events}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       GAME_ENGINE_SCHEMA: ${GAME_ENGINE_SCHEMA:-game_engine}
+      DATABASE_URL: ${LOCAL_DATABASE_URL:-postgresql://lottery:lottery_dev_password@local-postgres:5432/lottery_local}
     depends_on:
-      - rabbitmq
-      - redis
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      local-postgres:
+        condition: service_healthy
+      migration-runner:
+        condition: service_completed_successfully
+    healthcheck: *dotnet-healthcheck
+
+  migration-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.devtools
+    working_dir: /workspace
+    command: ["npm", "run", "migrations:local:run"]
+    environment:
+      DATABASE_URL: ${LOCAL_DATABASE_URL:-postgresql://lottery:lottery_dev_password@local-postgres:5432/lottery_local}
+      ALLOW_DISPOSABLE_DB_MIGRATIONS: ${ALLOW_DISPOSABLE_DB_MIGRATIONS:-true}
+    volumes:
+      - .:/workspace
+      - devtools_node_modules:/workspace/node_modules
+    depends_on:
+      local-postgres:
+        condition: service_healthy
+    restart: "no"
 
   devtools:
     build:
@@ -217,14 +279,15 @@ services:
       - devtools_node_modules:/workspace/node_modules
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
-      - rabbitmq
-      - redis
-      - local-postgres
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      local-postgres:
+        condition: service_healthy
 
   local-postgres:
     image: postgres:16-alpine
-    profiles:
-      - devtools
     ports:
       - "${LOCAL_POSTGRES_PORT:-55432}:5432"
     environment:
@@ -249,6 +312,12 @@ services:
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-lottery_dev_password}
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping && rabbitmq-diagnostics -q check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   redis:
     image: redis:7-alpine
@@ -257,6 +326,12 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
 volumes:
   rabbitmq_data:

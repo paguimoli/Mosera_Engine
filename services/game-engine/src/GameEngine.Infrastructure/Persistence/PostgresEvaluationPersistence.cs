@@ -824,15 +824,32 @@ internal static class PostgresEvaluationStorageSupport
             """
 insert into game_engine.game_modules (id, code, display_name, lifecycle_status, active_version_id, created_at)
 values (@module_id, @module_code, @module_code, 'ACTIVE', @module_version_id, @timestamp)
-on conflict (id) do nothing;
+on conflict (code) do update set
+  active_version_id = coalesce(game_engine.game_modules.active_version_id, excluded.active_version_id);
 
 insert into game_engine.game_module_versions (id, game_module_id, version, sdk_version, manifest_hash, lifecycle_status, created_at)
-values (@module_version_id, @module_id, @module_version, 'runtime', @module_version_id_text, 'ACTIVE', @timestamp)
+values (
+  @module_version_id,
+  (select id from game_engine.game_modules where code = @module_code),
+  @module_version,
+  'runtime',
+  @module_version_id_text,
+  'ACTIVE',
+  @timestamp
+)
 on conflict (game_module_id, version) do nothing;
 
 insert into game_engine.game_definitions (id, code, display_name, active_version_id, game_module_id, created_at)
-values (@game_id, @game_code, @game_code, @game_definition_version_id, @module_id, @timestamp)
-on conflict (id) do nothing;
+values (
+  @game_id,
+  @game_code,
+  @game_code,
+  @game_definition_version_id,
+  (select id from game_engine.game_modules where code = @module_code),
+  @timestamp
+)
+on conflict (id) do update set
+  active_version_id = coalesce(game_engine.game_definitions.active_version_id, excluded.active_version_id);
 
 insert into game_engine.game_definition_versions (
   id,
@@ -857,10 +874,19 @@ on conflict (game_definition_id, version_number) do nothing;
 
 insert into game_engine.draw_authorities (id, code, display_name, provider_type, status, active_version_id, created_at)
 values (@draw_authority_id, 'evaluation-persistence-placeholder', 'Evaluation Persistence Placeholder', 'ManualCertifiedEntry', 'ACTIVE', @draw_authority_version_id, @timestamp)
-on conflict (id) do nothing;
+on conflict (code) do update set
+  active_version_id = coalesce(game_engine.draw_authorities.active_version_id, excluded.active_version_id);
 
 insert into game_engine.draw_authority_versions (id, draw_authority_id, version, provider_version, configuration_hash, status, created_at)
-values (@draw_authority_version_id, @draw_authority_id, '0.0.0-local', '0.0.0-local', @draw_authority_version_id_text, 'ACTIVE', @timestamp)
+values (
+  @draw_authority_version_id,
+  (select id from game_engine.draw_authorities where code = 'evaluation-persistence-placeholder'),
+  '0.0.0-local',
+  '0.0.0-local',
+  @draw_authority_version_id_text,
+  'ACTIVE',
+  @timestamp
+)
 on conflict (draw_authority_id, version) do nothing;
 
 insert into game_engine.draw_authority_assignments (
@@ -873,8 +899,8 @@ insert into game_engine.draw_authority_assignments (
 ) values (
   @assignment_id,
   @game_id,
-  @draw_authority_id,
-  @draw_authority_version_id,
+  (select id from game_engine.draw_authorities where code = 'evaluation-persistence-placeholder'),
+  (select id from game_engine.draw_authority_versions where id = @draw_authority_version_id),
   'Manual',
   @timestamp
 )
@@ -911,7 +937,7 @@ insert into game_engine.draw_result_submissions (
 ) values (
   @submission_id,
   @draw_id,
-  @draw_authority_id,
+  (select id from game_engine.draw_authorities where code = 'evaluation-persistence-placeholder'),
   @submission_hash,
   @submission_reference,
   'evaluation-persistence',
