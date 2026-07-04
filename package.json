@@ -93,6 +93,8 @@
     "qa:auth-credential-policy": "node scripts/qa/auth-credential-policy.mjs",
     "qa:auth-session-token-oauth": "node scripts/qa/auth-session-token-oauth.mjs",
     "qa:auth-migration-plan": "node scripts/qa/auth-migration-plan.mjs",
+    "qa:auth-service-seed-local": "node scripts/qa/seed-local-auth-service-user.mjs",
+    "qa:auth-service-cutover": "node scripts/qa/auth-service-cutover.mjs",
     "qa:shadow-import": "node scripts/qa/shadow-import.mjs",
     "qa:local-integrated-runtime": "node scripts/qa/local-integrated-runtime.mjs",
     "qa:local-migrations": "node scripts/qa/local-migrations.mjs",

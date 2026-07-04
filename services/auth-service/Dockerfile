@@ -12,8 +12,7 @@ RUN dotnet restore src/AuthService.Api/AuthService.Api.csproj
 COPY . .
 RUN dotnet publish src/AuthService.Api/AuthService.Api.csproj \
   --configuration Release \
-  --output /app/publish \
-  --no-restore
+  --output /app/publish
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 

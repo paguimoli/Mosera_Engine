@@ -49,6 +49,8 @@ services:
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://lottery:lottery_dev_password@rabbitmq:5672}
       RABBITMQ_EXCHANGE_NAME: ${RABBITMQ_EXCHANGE_NAME:-lottery.events}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      AUTH_PROVIDER: ${AUTH_PROVIDER:-auth-service}
+      AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://auth-service:8080}
       SECURITY_ENFORCE_PRODUCTION_SECRETS: ${SECURITY_ENFORCE_PRODUCTION_SECRETS:-false}
       SECURITY_AUDIT_LEVEL: ${SECURITY_AUDIT_LEVEL:-critical}
       SETTLEMENT_AUTHORITY: ${SETTLEMENT_AUTHORITY:-MONOLITH}
@@ -69,6 +71,8 @@ services:
       CREDIT_SHADOW_MODE_ENABLED: ${CREDIT_SHADOW_MODE_ENABLED:-false}
       CREDIT_SERVICE_URL: ${CREDIT_SERVICE_URL:-http://credit-wallet-service:8080}
     depends_on:
+      auth-service:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
       redis:
@@ -140,7 +144,13 @@ services:
       ASPNETCORE_ENVIRONMENT: ${AUTH_SERVICE_ENVIRONMENT:-Production}
       SUPABASE_URL: ${SUPABASE_URL:-${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:54321}}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-dummy-service-role-key}
-      AUTH_PRODUCTION_AUTHENTICATION_ENABLED: ${AUTH_PRODUCTION_AUTHENTICATION_ENABLED:-false}
+      AUTH_PRODUCTION_AUTHENTICATION_ENABLED: ${AUTH_PRODUCTION_AUTHENTICATION_ENABLED:-true}
+      DATABASE_URL: ${LOCAL_DATABASE_URL:-postgresql://lottery:lottery_dev_password@local-postgres:5432/lottery_local}
+    depends_on:
+      local-postgres:
+        condition: service_healthy
+      migration-runner:
+        condition: service_completed_successfully
     healthcheck: *dotnet-healthcheck
 
   ledger-service:

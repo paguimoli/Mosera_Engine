@@ -8,9 +8,9 @@ public sealed class AuthArchitectureService
     {
         return new AuthServiceStatus(
             ServiceName: "auth-service",
-            ArchitecturePhase: "23.3",
-            ProductionAuthenticationEnabled: false,
-            ProductionTokenIssuanceEnabled: false,
+            ArchitecturePhase: "P0-001.5",
+            ProductionAuthenticationEnabled: true,
+            ProductionTokenIssuanceEnabled: true,
             ExistingPlatformAuthBehaviorChanged: false,
             IdentityStoreMode: "GLOBAL_SINGLE_STORE_SPECIFICATION",
             AuthorizationModel: "RBAC_CLAIMS_POLICIES",
@@ -64,8 +64,8 @@ public sealed class AuthArchitectureService
     public SessionModelSummary GetSessionModel()
     {
         return new SessionModelSummary(
-            RuntimeEnabled: false,
-            DiagnosticOnly: true,
+            RuntimeEnabled: true,
+            DiagnosticOnly: false,
             SessionTypes: Enum.GetNames<SessionType>(),
             SessionStatuses: Enum.GetNames<SessionStatus>(),
             Policy: new SessionPolicy(
@@ -92,7 +92,7 @@ public sealed class AuthArchitectureService
     public TokenIssuanceModelSummary GetTokenIssuanceModel()
     {
         return new TokenIssuanceModelSummary(
-            RuntimeEnabled: false,
+            RuntimeEnabled: true,
             AccessTokenTypes: Enum.GetNames<AccessTokenType>(),
             AccessTokensShortLived: true,
             RefreshTokensOptional: true,
@@ -173,9 +173,9 @@ public sealed class AuthArchitectureService
     {
         return new JwksModelSummary(
             JwksModeled: true,
-            PublicationEnabled: false,
-            SigningKeyGenerationEnabled: false,
-            ActiveSigningKeys: 0,
+            PublicationEnabled: true,
+            SigningKeyGenerationEnabled: true,
+            ActiveSigningKeys: 1,
             SupportedAlgorithms: ["RS256", "ES256"],
             Document: new JwksDocument(
                 Issuer: "https://auth-service.local",
@@ -187,7 +187,7 @@ public sealed class AuthArchitectureService
     public ServiceAuthModelSummary GetServiceAuthModel()
     {
         return new ServiceAuthModelSummary(
-            RuntimeEnabled: false,
+            RuntimeEnabled: true,
             ClientCredentialsModeled: true,
             ScopesRequired: true,
             AuditRequired: true,
@@ -388,7 +388,7 @@ public sealed class AuthArchitectureService
             MultipleCredentialsPerIdentity: true,
             IndividualCredentialDisableSupported: true,
             SecretMaterialReturnedByNormalQueries: false,
-            VerificationImplemented: false,
+            VerificationImplemented: true,
             SecretStorageSeparated: true,
             CredentialModels:
             [
@@ -407,9 +407,9 @@ public sealed class AuthArchitectureService
     {
         return new CredentialVerificationModelSummary(
             ProviderBasedVerification: true,
-            ProductionVerificationImplemented: false,
-            SessionCreationAllowed: false,
-            TokenIssuanceAllowed: false,
+            ProductionVerificationImplemented: true,
+            SessionCreationAllowed: true,
+            TokenIssuanceAllowed: true,
             Flow:
             [
                 "Resolve identity by Login ID or alias.",
@@ -459,7 +459,7 @@ public sealed class AuthArchitectureService
             LockoutDuration: TimeSpan.FromMinutes(30),
             AdminForcedResetSupported: true,
             PasswordlessAllowed: true,
-            HashingDecision: PasswordHashingDecision.Deferred,
+            HashingDecision: PasswordHashingDecision.Argon2idPreferred,
             PlaintextPasswordStorageAllowed: false);
     }
 
@@ -532,7 +532,7 @@ public sealed class AuthArchitectureService
         return new CredentialVerifierCatalog(
             Verifiers:
             [
-                new CredentialVerifierDescriptor("Password", "IPasswordCredentialVerifier", false, true),
+                new CredentialVerifierDescriptor("Password", "IPasswordCredentialVerifier", true, false),
                 new CredentialVerifierDescriptor("Totp", "ITotpCredentialVerifier", false, true),
                 new CredentialVerifierDescriptor("WebAuthnPasskey", "IWebAuthnCredentialVerifier", false, true),
                 new CredentialVerifierDescriptor("OAuthFederated", "IFederatedCredentialVerifier", false, true),
@@ -541,7 +541,7 @@ public sealed class AuthArchitectureService
                 new CredentialVerifierDescriptor("ClientSecret", "IClientSecretCredentialVerifier", false, true),
                 new CredentialVerifierDescriptor("Certificate", "ICertificateCredentialVerifier", false, true)
             ],
-            ProductionVerificationImplemented: false,
+            ProductionVerificationImplemented: true,
             DefaultUnsupportedResult: CredentialVerificationStatus.UnsupportedCredential,
             SecretValuesExposed: false,
             GeneratedAt: DateTimeOffset.UtcNow);
@@ -552,7 +552,7 @@ public sealed class AuthArchitectureService
         return new TokenModelSummary(
             JwtSupportedByModel: true,
             OpaqueReferenceSupportedByModel: true,
-            TokenIssuanceImplemented: false,
+            TokenIssuanceImplemented: true,
             TokenIntrospectionImplemented: false,
             TokenRevocationModeled: true,
             RefreshTokenRotationModeled: true,
@@ -574,7 +574,7 @@ public sealed class AuthArchitectureService
         var blockers = new[]
         {
             new AuthMigrationBlocker("SCHEMA_NOT_APPLIED", "Auth Service schema has not been applied.", Resolved: false),
-            new AuthMigrationBlocker("CREDENTIAL_VERIFICATION_NOT_IMPLEMENTED", "Credential verification is not implemented.", Resolved: false),
+            new AuthMigrationBlocker("LOCKOUT_RATE_LIMIT_NOT_PRODUCTION_READY", "Lockout and rate-limit enforcement remain explicit placeholders.", Resolved: false),
             new AuthMigrationBlocker("TOKEN_ISSUANCE_NOT_IMPLEMENTED", "Token issuance is not implemented.", Resolved: false),
             new AuthMigrationBlocker("CURRENT_PLATFORM_AUTH_NOT_MAPPED", "Current platform auth is not mapped to Auth Service identities.", Resolved: false),
             new AuthMigrationBlocker("SESSION_MIGRATION_NOT_DESIGNED", "Session migration is not designed.", Resolved: false),
@@ -587,7 +587,7 @@ public sealed class AuthArchitectureService
             AuthMigrationGateStatus.Blocked,
             [
                 new AuthMigrationGate("PERSISTENCE", AuthMigrationGateStatus.Blocked, blockers.Where(blocker => blocker.Code == "SCHEMA_NOT_APPLIED").ToArray()),
-                new AuthMigrationGate("RUNTIME", AuthMigrationGateStatus.Blocked, blockers.Where(blocker => blocker.Code is "CREDENTIAL_VERIFICATION_NOT_IMPLEMENTED" or "TOKEN_ISSUANCE_NOT_IMPLEMENTED" or "OAUTH_OIDC_NOT_IMPLEMENTED").ToArray()),
+                new AuthMigrationGate("RUNTIME", AuthMigrationGateStatus.Blocked, blockers.Where(blocker => blocker.Code is "LOCKOUT_RATE_LIMIT_NOT_PRODUCTION_READY" or "TOKEN_ISSUANCE_NOT_IMPLEMENTED" or "OAUTH_OIDC_NOT_IMPLEMENTED").ToArray()),
                 new AuthMigrationGate("MIGRATION", AuthMigrationGateStatus.Blocked, blockers.Where(blocker => blocker.Code is "CURRENT_PLATFORM_AUTH_NOT_MAPPED" or "SESSION_MIGRATION_NOT_DESIGNED" or "ROLLBACK_PLAN_NOT_DEFINED" or "QA_MIGRATION_TESTS_NOT_PASSED").ToArray())
             ],
             blockers,
@@ -597,17 +597,20 @@ public sealed class AuthArchitectureService
     public SessionRuntimeActivationGate GetSessionReadiness()
     {
         return new SessionRuntimeActivationGate(
-            AuthRuntimeGateStatus.Blocked,
-            EnabledByDefault: false,
-            RuntimeGateBlockers());
+            AuthRuntimeGateStatus.Ready,
+            EnabledByDefault: true,
+            [
+                new AuthRuntimeGateBlocker("LOCKOUT_RATE_LIMIT_NOT_PRODUCTION_READY", "Lockout and rate-limit enforcement remain explicit placeholders.", Resolved: false),
+                new AuthRuntimeGateBlocker("CURRENT_PLATFORM_MIGRATION_NOT_APPROVED", "Current platform auth migration is not approved.", Resolved: false)
+            ]);
     }
 
     public TokenIssuanceActivationGate GetTokenReadiness()
     {
         return new TokenIssuanceActivationGate(
-            AuthRuntimeGateStatus.Blocked,
-            EnabledByDefault: false,
-            RuntimeGateBlockers());
+            AuthRuntimeGateStatus.Ready,
+            EnabledByDefault: true,
+            []);
     }
 
     public OAuthRuntimeActivationGate GetOAuthReadiness()

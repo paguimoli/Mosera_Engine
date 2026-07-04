@@ -52,6 +52,33 @@
       "reason": "Adds local-only indexes required by database-backed Game Engine evaluation repositories."
     },
     {
+      "id": "005_add_auth_service_signing_keys",
+      "path": "scripts/migrations/local/005_add_auth_service_signing_keys.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "auth_service"
+      ],
+      "reason": "Adds local-only durable Auth Service signing key storage for JWT/JWKS runtime validation."
+    },
+    {
+      "id": "006_add_auth_service_refresh_tokens",
+      "path": "scripts/migrations/local/006_add_auth_service_refresh_tokens.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "auth_service"
+      ],
+      "reason": "Adds local-only durable Auth Service refresh-token storage for rotation, revocation, replay detection, and session binding."
+    },
+    {
+      "id": "007_add_auth_service_service_accounts",
+      "path": "scripts/migrations/local/007_add_auth_service_service_accounts.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "auth_service"
+      ],
+      "reason": "Adds local-only durable Auth Service service-account/client-secret storage for service-to-service token issuance validation."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

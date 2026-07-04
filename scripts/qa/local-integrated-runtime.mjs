@@ -93,6 +93,37 @@ assert(
   "Local migrations must validate before runtime QA passes.",
   { durablePersistence: inventory.durablePersistence }
 );
+assert(
+  inventory.authProvider?.configuredProvider === "auth-service",
+  "Local runtime app must be configured for Auth Service provider mode.",
+  { authProvider: inventory.authProvider }
+);
+assert(
+  inventory.authProvider?.authServiceUrlConfigured,
+  "Local runtime app must have AUTH_SERVICE_URL configured.",
+  { authProvider: inventory.authProvider }
+);
+
+const authServiceCutoverResult = spawnSync("node", ["scripts/qa/auth-service-cutover.mjs"], {
+  encoding: "utf8",
+  env: process.env,
+});
+
+assert(authServiceCutoverResult.status === 0, "Auth Service cutover QA failed.", {
+  stdout: authServiceCutoverResult.stdout,
+  stderr: authServiceCutoverResult.stderr,
+  exitCode: authServiceCutoverResult.status,
+});
+
+let authServiceCutover;
+try {
+  authServiceCutover = JSON.parse(authServiceCutoverResult.stdout);
+} catch (error) {
+  fail("Auth Service cutover QA did not return JSON.", {
+    error: error instanceof Error ? error.message : String(error),
+    stdout: authServiceCutoverResult.stdout,
+  });
+}
 
 const durableSmokeResult = spawnSync("node", ["scripts/qa/game-engine-durable-runtime-smoke.mjs"], {
   encoding: "utf8",
@@ -126,6 +157,7 @@ console.log(
         gameEngineDurablePersistenceModeActive: inventory.durablePersistence.gameEngineDurablePersistenceModeActive,
         migrationsCurrent: inventory.durablePersistence.migrationsCurrent,
       },
+      authServiceCutover,
       gameEngineDurableSmoke: {
         status: durableSmoke.status,
         coverage: durableSmoke.coverage,

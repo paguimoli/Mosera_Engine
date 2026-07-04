@@ -381,6 +381,7 @@ const gameEngineStorageStatus = await fetchJson(
 );
 const storageStatus = gameEngineStorageStatus.body?.evaluationStorageStatus ?? null;
 const gameEngineDatabaseUrl = composeConfig?.services?.["game-engine"]?.environment?.DATABASE_URL ?? "";
+const appEnvironment = composeConfig?.services?.app?.environment ?? {};
 const migrationValidationResult = runOptional("node", ["scripts/migrations/validate-local-migrations.mjs"]);
 
 const expectedServices = [
@@ -441,6 +442,19 @@ const report = {
     migrationsCurrent: migrationValidationResult.ok,
     migrationValidationStatus: migrationValidationResult.status,
     migrationValidationError: migrationValidationResult.ok ? null : migrationValidationResult.stderr || migrationValidationResult.stdout,
+  },
+  authProvider: {
+    configuredProvider: appEnvironment.AUTH_PROVIDER ?? null,
+    authServiceUrlConfigured: Boolean(appEnvironment.AUTH_SERVICE_URL),
+    authServiceUrlHost: appEnvironment.AUTH_SERVICE_URL
+      ? (() => {
+          try {
+            return new URL(appEnvironment.AUTH_SERVICE_URL).hostname;
+          } catch {
+            return null;
+          }
+        })()
+      : null,
   },
   expectedVsActual: expectedServices.map((service) => ({
     service,

@@ -92,6 +92,14 @@ export type LoginSessionSuccessResponse = {
   mfaRequired?: false;
   sessionToken: SessionToken;
   expiresAt: string;
+  accessToken?: string | null;
+  tokenType?: "Bearer";
+  accessTokenExpiresAt?: string | null;
+  accessTokenKeyId?: string | null;
+  accessTokenJwtId?: string | null;
+  refreshToken?: string | null;
+  refreshTokenId?: string | null;
+  refreshTokenExpiresAt?: string | null;
 };
 
 export type LoginMfaRequiredResponse = {
