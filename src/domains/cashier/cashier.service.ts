@@ -1,9 +1,4 @@
-import { createCorrelationId } from "@/src/lib/observability/correlation";
-import { logger } from "@/src/lib/observability/logger";
 import { findAccountById } from "../accounts/account.repository";
-import { postLedgerEntry } from "../ledger/ledger.service";
-import type { LedgerTransactionType } from "../ledger/ledger.types";
-import { createOutboxEvent } from "../outbox/outbox.service";
 import {
   findPersistedWalletByAccountAndType,
   findWalletById,
@@ -11,9 +6,11 @@ import {
 import type { Wallet } from "../wallets/wallet.types";
 import {
   createCashierTransaction,
+  completeCashierTransactionAtomically,
   findCashierTransactionById,
   listCashierTransactions as listCashierTransactionRecords,
   listCashierTransactionsForAccount as listCashierTransactionRecordsForAccount,
+  CashierRepositoryError,
   updateCashierTransactionStatus,
 } from "./cashier.repository";
 import type {
@@ -252,106 +249,44 @@ export async function cancelCashierTransaction(
   });
 }
 
-function getCompletionLedgerConfig(transactionType: CashierTransactionType): {
-  transactionType: LedgerTransactionType;
-  direction: "CREDIT" | "DEBIT";
-} {
-  if (transactionType === "DEPOSIT") {
-    return {
-      transactionType: "DEPOSIT",
-      direction: "CREDIT",
-    };
-  }
-
-  return {
-    transactionType: "WITHDRAWAL",
-    direction: "DEBIT",
-  };
+function isCashierCompletionBusinessRuleMessage(message: string) {
+  return [
+    "Cashier transaction not found.",
+    "Cashier transaction must be APPROVED.",
+    "Cashier transaction wallet is required.",
+    "Cashier transaction wallet not found.",
+    "Cashier transaction wallet must be active.",
+    "Cashier transaction wallet must use INTERNAL balance authority.",
+    "Cashier transaction wallet must be CASH.",
+    "Cashier transaction wallet account mismatch.",
+    "Withdrawal amount exceeds CASH wallet balance.",
+    "Ledger amount must be positive.",
+    "Ledger transaction type is invalid.",
+    "Ledger direction is invalid.",
+    "Wallet not found.",
+    "Wallet is not active.",
+  ].some((expected) => message.includes(expected));
 }
 
 export async function completeCashierTransaction(
   input: CompleteCashierTransactionInput
 ): Promise<CashierTransaction> {
-  const transaction = await getExistingTransaction(input.transactionId);
-
-  assertStatus(transaction, "APPROVED");
-
-  if (!transaction.walletId) {
-    throw new CashierBusinessRuleError("Cashier transaction wallet is required.");
-  }
-
-  const wallet = await resolveCashWallet({
-    accountId: transaction.accountId,
-    walletId: transaction.walletId,
-  });
-
-  if (
-    transaction.transactionType === "WITHDRAWAL" &&
-    transaction.amount > Number(wallet.balance ?? 0)
-  ) {
-    throw new CashierBusinessRuleError(
-      "Withdrawal amount exceeds CASH wallet balance."
-    );
-  }
-
-  const ledgerConfig = getCompletionLedgerConfig(transaction.transactionType);
-  const ledgerEntry = await postLedgerEntry({
-    walletId: wallet.id,
-    transactionType: ledgerConfig.transactionType,
-    direction: ledgerConfig.direction,
-    amount: transaction.amount,
-    reference: {
-      referenceType: "cashier_transaction",
-      referenceId: transaction.id,
-    },
-    idempotencyKey: `cashier:${transaction.id}:completion`,
-    metadata: {
-      cashierTransactionId: transaction.id,
-      cashierTransactionType: transaction.transactionType,
-      actorUserId: input.actorUserId ?? null,
-    },
-  });
-
-  // Production hardening: cashier status update and ledger posting should move
-  // into a single Postgres RPC/database transaction before live cashier traffic.
-  const completedTransaction = await updateCashierTransactionStatus({
-    transactionId: transaction.id,
-    status: "COMPLETED",
-    ledgerEntryId: ledgerEntry.id,
-    metadata: mergeMetadata(transaction.metadata, input.metadata),
-    completedAt: new Date().toISOString(),
-  });
-
-  const correlationId = createCorrelationId();
-
   try {
-    await createOutboxEvent({
-      eventType: "cashier.transaction.completed",
-      aggregateType: "cashier_transaction",
-      aggregateId: completedTransaction.id,
-      correlationId,
-      payload: {
-        transactionId: completedTransaction.id,
-        accountId: completedTransaction.accountId,
-        walletId: completedTransaction.walletId,
-        transactionType: completedTransaction.transactionType,
-        amount: completedTransaction.amount,
-        currency: completedTransaction.currencyCode,
-        ledgerEntryId: completedTransaction.ledgerEntryId,
-      },
+    return await completeCashierTransactionAtomically({
+      transactionId: input.transactionId,
+      actorUserId: input.actorUserId ?? null,
+      metadata: input.metadata ?? {},
     });
   } catch (error) {
-    logger.warn({
-      message: "Cashier transaction completed without outbox event.",
-      correlationId,
-      metadata: {
-        transactionId: completedTransaction.id,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-    });
-  }
+    if (
+      error instanceof CashierRepositoryError &&
+      isCashierCompletionBusinessRuleMessage(error.message)
+    ) {
+      throw new CashierBusinessRuleError(error.message);
+    }
 
-  return completedTransaction;
+    throw error;
+  }
 }
 
 export async function listCashierTransactions(): Promise<CashierTransaction[]> {

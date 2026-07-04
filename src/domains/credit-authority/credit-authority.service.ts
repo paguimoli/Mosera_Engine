@@ -13,6 +13,11 @@ import type {
 } from "../authority-approval/authority-approval.types";
 import type { AuthenticatedUser } from "../auth/auth-context.types";
 import { getLedgerStabilizationStatus } from "../ledger-authority/ledger-authority.service";
+import {
+  checkFinancialAuthorityServiceReadiness,
+  evaluateFinancialAuthorityGuardrail,
+  readFinancialAuthorityCapabilityEvidenceFromEnv,
+} from "../financial-authority/financial-authority-guardrails";
 import { createOutboxEvent, listRecentOutboxEvents } from "../outbox/outbox.service";
 import { getPromotionDecision } from "../promotion-decision/promotion-decision.service";
 import { getSettlementStabilizationStatus } from "../settlement-stabilization/settlement-stabilization.service";
@@ -272,6 +277,16 @@ export async function getCreditAuthorityReadiness(): Promise<CreditAuthorityRead
   const route = await resolveCreditAuthorityRoute();
   const rollbackReadiness = await validateRollbackReadiness();
   const rollbackReadinessStatus = rollbackReadiness.credit.rollbackStatus;
+  const capabilityEvidence = readFinancialAuthorityCapabilityEvidenceFromEnv("CREDIT");
+  const readinessHealthy = await checkFinancialAuthorityServiceReadiness(
+    creditAuthority.serviceUrl
+  );
+  const productionGuardrail = evaluateFinancialAuthorityGuardrail({
+    config: creditAuthority,
+    serviceReachable: rollbackReadiness.credit.serviceHealth.available,
+    readinessHealthy,
+    ...capabilityEvidence,
+  });
   const thresholds = getThresholds();
   const readinessReasons: string[] = [];
   const remainingBlockers: string[] = [];
@@ -285,10 +300,12 @@ export async function getCreditAuthorityReadiness(): Promise<CreditAuthorityRead
     );
   }
 
-  if (creditAuthority.authority !== "MONOLITH") {
-    remainingBlockers.push("Credit authority is not MONOLITH.");
-  } else {
+  if (productionGuardrail.productionStatus === "MONOLITH_ALLOWED") {
     readinessReasons.push("Credit authority remains MONOLITH.");
+  } else if (productionGuardrail.productionReady) {
+    readinessReasons.push("Credit Wallet Service production mutation capability guardrail passed.");
+  } else {
+    remainingBlockers.push(...productionGuardrail.blockers);
   }
 
   if (creditAuthority.comparisonMode !== "ENABLED") {
@@ -336,6 +353,7 @@ export async function getCreditAuthorityReadiness(): Promise<CreditAuthorityRead
     comparisonMode: creditAuthority.comparisonMode,
     dryRunMode: route.dryRunMode,
     runtimeRoute: route,
+    productionGuardrail,
     metrics,
     thresholds,
     rollbackReadinessStatus,

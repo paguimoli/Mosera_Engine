@@ -63,13 +63,25 @@ select exists (
 `) === "t";
 }
 
+function functionExists(schema, functionName) {
+  return queryScalar(`
+select exists (
+  select 1
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = '${schema}'
+    and p.proname = '${functionName}'
+);
+`) === "t";
+}
+
 if (!guardrails.ok) {
   addCheck("guardrails_pass", false, { errors: guardrails.errors });
 } else {
   addCheck("guardrails_pass", true);
 }
 
-const requiredSchemas = ["platform_migrations", "game_engine", "auth_service"];
+const requiredSchemas = ["platform_migrations", "game_engine", "auth_service", "settlement_service"];
 for (const schema of requiredSchemas) {
   addCheck(`schema_exists:${schema}`, existsSchema(schema));
 }
@@ -91,6 +103,15 @@ const requiredTables = [
   "auth_service.sessions",
   "auth_service.tokens",
   "auth_service.audit_events",
+  "settlement_service.settlement_runs",
+  "settlement_service.settlement_records",
+  "settlement_service.settlement_ledger_effects",
+  "public.accounts",
+  "public.financial_wallets",
+  "public.financial_ledger_entries",
+  "public.cashier_transactions",
+  "public.outbox_events",
+  "public.financial_worker_event_handlers",
 ];
 
 for (const table of requiredTables) {
@@ -114,8 +135,30 @@ addCheck("evaluation_runs_status_index", indexExists("game_engine", "evaluation_
 addCheck("evaluation_batches_run_status_index", indexExists("game_engine", "evaluation_batches", "idx_evaluation_batches_run_status"));
 addCheck("evaluation_checkpoints_run_id_index", indexExists("game_engine", "evaluation_checkpoints", "idx_evaluation_checkpoints_run_id"));
 addCheck("identities_login_id_unique", uniqueIndexExists("auth_service", "identities", "login_id"));
+addCheck("settlement_runs_completed_drawing_unique", indexExists("settlement_service", "settlement_runs", "ux_settlement_runs_completed_drawing"));
+addCheck("settlement_records_completed_ticket_line_unique", indexExists("settlement_service", "settlement_records", "ux_settlement_records_completed_ticket_line"));
+addCheck("settlement_runs_drawing_id_index", indexExists("settlement_service", "settlement_runs", "idx_settlement_runs_drawing_id"));
+addCheck("settlement_runs_status_index", indexExists("settlement_service", "settlement_runs", "idx_settlement_runs_status"));
+addCheck("settlement_records_run_id_index", indexExists("settlement_service", "settlement_records", "idx_settlement_records_run_id"));
+addCheck("settlement_records_ticket_draw_index", indexExists("settlement_service", "settlement_records", "idx_settlement_records_ticket_draw"));
+addCheck("settlement_ledger_effects_idempotency_unique", uniqueIndexExists("settlement_service", "settlement_ledger_effects", "idempotency_key"));
+addCheck("settlement_ledger_effects_run_id_index", indexExists("settlement_service", "settlement_ledger_effects", "idx_settlement_ledger_effects_run_id"));
+addCheck("settlement_ledger_effects_record_id_index", indexExists("settlement_service", "settlement_ledger_effects", "idx_settlement_ledger_effects_record_id"));
+addCheck("settlement_ledger_effects_ticket_draw_index", indexExists("settlement_service", "settlement_ledger_effects", "idx_settlement_ledger_effects_ticket_draw"));
+addCheck("cashier_transactions_status_index", indexExists("public", "cashier_transactions", "cashier_transactions_status_idx"));
+addCheck("financial_ledger_entries_idempotency_unique", uniqueIndexExists("public", "financial_ledger_entries", "idempotency_key"));
+addCheck("outbox_events_aggregate_index", indexExists("public", "outbox_events", "outbox_events_aggregate_idx"));
+addCheck("financial_worker_event_handlers_idempotency_unique", uniqueIndexExists("public", "financial_worker_event_handlers", "idempotency_key"));
+addCheck("financial_worker_event_handlers_event_type_index", indexExists("public", "financial_worker_event_handlers", "financial_worker_event_handlers_event_type_idx"));
+addCheck("financial_worker_event_handlers_status_index", indexExists("public", "financial_worker_event_handlers", "financial_worker_event_handlers_status_idx"));
+addCheck("post_financial_ledger_entry_function", functionExists("public", "post_financial_ledger_entry"));
+addCheck("complete_cashier_transaction_atomically_function", functionExists("public", "complete_cashier_transaction_atomically"));
 addCheck("evaluation_records_update_trigger", triggerExists("game_engine", "evaluation_records", "trg_prevent_evaluation_record_update"));
 addCheck("evaluation_records_delete_trigger", triggerExists("game_engine", "evaluation_records", "trg_prevent_evaluation_record_delete"));
+addCheck("settlement_records_update_trigger", triggerExists("settlement_service", "settlement_records", "trg_prevent_settlement_record_update"));
+addCheck("settlement_records_delete_trigger", triggerExists("settlement_service", "settlement_records", "trg_prevent_settlement_record_delete"));
+addCheck("settlement_ledger_effects_update_trigger", triggerExists("settlement_service", "settlement_ledger_effects", "trg_prevent_settlement_ledger_effect_update"));
+addCheck("settlement_ledger_effects_delete_trigger", triggerExists("settlement_service", "settlement_ledger_effects", "trg_prevent_settlement_ledger_effect_delete"));
 addCheck("auth_append_only_triggers_deferred_documented", true, {
   reason: "Auth Service draft documents trigger enforcement as deferred pending production DBA review.",
 });

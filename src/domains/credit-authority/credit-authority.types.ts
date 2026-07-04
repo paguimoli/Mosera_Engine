@@ -6,6 +6,7 @@ import type {
 import type { AuthenticatedUser } from "../auth/auth-context.types";
 import type { AuthorityApprovalRecord } from "../authority-approval/authority-approval.types";
 import type { DomainReadinessStatus } from "../shadow-readiness/shadow-readiness.types";
+import type { FinancialAuthorityGuardrailStatus } from "../financial-authority/financial-authority-guardrails";
 
 export type CreditAuthorityCandidateStatus = "READY" | "WARNING" | "BLOCKED";
 
@@ -48,6 +49,7 @@ export type CreditAuthorityReadiness = {
   comparisonMode: ComparisonMode;
   dryRunMode: CreditAuthorityDryRunMode;
   runtimeRoute: CreditAuthorityRuntimeRoute;
+  productionGuardrail: FinancialAuthorityGuardrailStatus;
   metrics: CreditAuthorityMetrics | null;
   thresholds: CreditAuthorityThresholds;
   rollbackReadinessStatus: CreditAuthorityCandidateStatus;

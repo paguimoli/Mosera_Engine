@@ -18,6 +18,11 @@ import {
 } from "../shadow-analysis/shadow-analysis.service";
 import type { ClassifiedShadowEvidence } from "../shadow-analysis/shadow-analysis.types";
 import {
+  checkFinancialAuthorityServiceReadiness,
+  evaluateFinancialAuthorityGuardrail,
+  readFinancialAuthorityCapabilityEvidenceFromEnv,
+} from "../financial-authority/financial-authority-guardrails";
+import {
   getLatestLedgerShadowRun,
   getLedgerShadowFailures,
   getLedgerShadowMismatches,
@@ -284,6 +289,16 @@ export async function getLedgerAuthorityReadiness(): Promise<LedgerAuthorityRead
   const route = await resolveLedgerAuthorityRoute();
   const rollbackReadiness = await validateRollbackReadiness();
   const rollbackReadinessStatus = rollbackReadiness.ledger.rollbackStatus;
+  const capabilityEvidence = readFinancialAuthorityCapabilityEvidenceFromEnv("LEDGER");
+  const readinessHealthy = await checkFinancialAuthorityServiceReadiness(
+    ledgerAuthority.serviceUrl
+  );
+  const productionGuardrail = evaluateFinancialAuthorityGuardrail({
+    config: ledgerAuthority,
+    serviceReachable: rollbackReadiness.ledger.serviceHealth.available,
+    readinessHealthy,
+    ...capabilityEvidence,
+  });
   const thresholds = getThresholds();
   const readinessReasons: string[] = [];
   const remainingBlockers: string[] = [];
@@ -297,10 +312,12 @@ export async function getLedgerAuthorityReadiness(): Promise<LedgerAuthorityRead
     );
   }
 
-  if (ledgerAuthority.authority !== "MONOLITH") {
-    remainingBlockers.push("Ledger authority is not MONOLITH.");
-  } else {
+  if (productionGuardrail.productionStatus === "MONOLITH_ALLOWED") {
     readinessReasons.push("Ledger authority remains MONOLITH.");
+  } else if (productionGuardrail.productionReady) {
+    readinessReasons.push("Ledger Service production mutation capability guardrail passed.");
+  } else {
+    remainingBlockers.push(...productionGuardrail.blockers);
   }
 
   if (ledgerAuthority.comparisonMode !== "ENABLED") {
@@ -348,6 +365,7 @@ export async function getLedgerAuthorityReadiness(): Promise<LedgerAuthorityRead
     comparisonMode: ledgerAuthority.comparisonMode,
     dryRunMode: route.dryRunMode,
     runtimeRoute: route,
+    productionGuardrail,
     metrics,
     thresholds,
     rollbackReadinessStatus,

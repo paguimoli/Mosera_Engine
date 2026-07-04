@@ -1,4 +1,5 @@
 import { logger } from "@/src/lib/observability/logger";
+import { handleWorkloadMessage } from "@/src/domains/workers/financial-worker-handlers";
 import type { QueueWorkloadCategory } from "@/src/lib/queue/queue-topology";
 import { getQueueTopologyEntry } from "@/src/lib/queue/queue-topology";
 import { RabbitMqQueueConsumer } from "@/src/lib/queue/rabbitmq/rabbitmq.consumer";
@@ -76,16 +77,17 @@ async function main() {
     routing,
     workerName,
     handler: async (message) => {
+      const result = await handleWorkloadMessage({
+        category,
+        message,
+      });
+
       logger.info({
-        message: "RabbitMQ workload event payload consumed.",
+        message: "RabbitMQ workload event payload handled.",
         correlationId: message.correlationId ?? null,
         metadata: {
           workloadCategory: category,
-          eventType: message.type,
-          aggregateType: message.aggregateType ?? null,
-          aggregateId: message.aggregateId ?? null,
-          messageId: message.id ?? null,
-          payload: message.payload,
+          ...result,
         },
       });
     },

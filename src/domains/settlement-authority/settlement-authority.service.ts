@@ -2,6 +2,11 @@ import {
   getAuthorityStatus,
   validateRollbackReadiness,
 } from "../authority-control/authority-control.service";
+import {
+  checkFinancialAuthorityServiceReadiness,
+  evaluateFinancialAuthorityGuardrail,
+  readFinancialAuthorityCapabilityEvidenceFromEnv,
+} from "../financial-authority/financial-authority-guardrails";
 import { getSettlementShadowMismatches, getSettlementShadowSummary } from "../settlement-shadow/settlement-shadow-reporting.service";
 import { logger } from "@/src/lib/observability/logger";
 import type {
@@ -210,6 +215,16 @@ export async function getSettlementAuthorityReadiness(): Promise<SettlementAutho
   const route = await resolveSettlementAuthorityRoute();
   const rollbackReadiness = await validateRollbackReadiness();
   const rollbackReadinessStatus = rollbackReadiness.settlement.rollbackStatus;
+  const capabilityEvidence = readFinancialAuthorityCapabilityEvidenceFromEnv("SETTLEMENT");
+  const readinessHealthy = await checkFinancialAuthorityServiceReadiness(
+    settlementAuthority.serviceUrl
+  );
+  const productionGuardrail = evaluateFinancialAuthorityGuardrail({
+    config: settlementAuthority,
+    serviceReachable: rollbackReadiness.settlement.serviceHealth.available,
+    readinessHealthy,
+    ...capabilityEvidence,
+  });
   const thresholds = getThresholds();
   const readinessReasons: string[] = [];
   const remainingBlockers: string[] = [];
@@ -225,10 +240,12 @@ export async function getSettlementAuthorityReadiness(): Promise<SettlementAutho
     );
   }
 
-  if (settlementAuthority.authority !== "MONOLITH") {
-    remainingBlockers.push("Settlement authority is not MONOLITH.");
-  } else {
+  if (productionGuardrail.productionStatus === "MONOLITH_ALLOWED") {
     readinessReasons.push("Settlement authority remains MONOLITH.");
+  } else if (productionGuardrail.productionReady) {
+    readinessReasons.push("Settlement Service production mutation capability guardrail passed.");
+  } else {
+    remainingBlockers.push(...productionGuardrail.blockers);
   }
 
   if (settlementAuthority.comparisonMode !== "ENABLED") {
@@ -285,6 +302,7 @@ export async function getSettlementAuthorityReadiness(): Promise<SettlementAutho
     comparisonMode: settlementAuthority.comparisonMode,
     dryRunMode: route.dryRunMode,
     runtimeRoute: route,
+    productionGuardrail,
     metrics,
     thresholds,
     rollbackReadinessStatus,

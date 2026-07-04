@@ -117,8 +117,8 @@ function run(command, args) {
   return {
     ok: result.status === 0,
     status: result.status,
-    stdout: result.stdout.trim(),
-    stderr: result.stderr.trim(),
+    stdout: (result.stdout ?? "").trim(),
+    stderr: (result.stderr ?? result.error?.message ?? "").trim(),
   };
 }
 
@@ -243,6 +243,130 @@ function normalizeDependencies(body) {
     status: normalizeDependencyStatus(value),
     raw: value,
   }));
+}
+
+const authorityDomains = [
+  {
+    key: "settlement",
+    domain: "SETTLEMENT",
+    authorityEnv: "SETTLEMENT_AUTHORITY",
+    serviceName: "settlement-service",
+    serviceUrlEnv: "SETTLEMENT_SERVICE_URL",
+    markerPrefix: "SETTLEMENT_SERVICE",
+  },
+  {
+    key: "ledger",
+    domain: "LEDGER",
+    authorityEnv: "LEDGER_AUTHORITY",
+    serviceName: "ledger-service",
+    serviceUrlEnv: "LEDGER_SERVICE_URL",
+    markerPrefix: "LEDGER_SERVICE",
+  },
+  {
+    key: "credit",
+    domain: "CREDIT",
+    authorityEnv: "CREDIT_AUTHORITY",
+    serviceName: "credit-wallet-service",
+    serviceUrlEnv: "CREDIT_SERVICE_URL",
+    markerPrefix: "CREDIT_SERVICE",
+  },
+];
+
+function envEnabled(environment, name) {
+  return String(environment?.[name] ?? "").trim().toUpperCase() === "ENABLED";
+}
+
+function envPresent(environment, name) {
+  return String(environment?.[name] ?? "").trim().length > 0;
+}
+
+function getServiceEnvironment(serviceName) {
+  return composeConfig?.services?.[serviceName]?.environment ?? {};
+}
+
+function evaluateFinancialAuthorityGuardrails({ appEnvironment, serviceHealth, serviceReadiness }) {
+  const domains = {};
+  const blockers = [];
+  const warnings = [];
+
+  for (const domain of authorityDomains) {
+    const targetServiceEnvironment = getServiceEnvironment(domain.serviceName);
+    const authority =
+      String(appEnvironment?.[domain.authorityEnv] ?? "MONOLITH").trim().toUpperCase() === "SERVICE"
+        ? "SERVICE"
+        : "MONOLITH";
+    const capabilityEvidence = {
+      serviceReachable: serviceHealth.find((item) => item.name === domain.serviceName)?.status === "UP",
+      readinessHealthy: serviceReadiness.find((item) => item.name === domain.serviceName)?.status === "READY",
+      mutationCapabilityEnabled:
+        envEnabled(targetServiceEnvironment, `${domain.markerPrefix}_MUTATION_CAPABILITY`) ||
+        envEnabled(appEnvironment, `${domain.markerPrefix}_MUTATION_CAPABILITY`),
+      durablePersistenceConfigured:
+        envEnabled(targetServiceEnvironment, `${domain.markerPrefix}_DURABLE_PERSISTENCE`) ||
+        envEnabled(appEnvironment, `${domain.markerPrefix}_DURABLE_PERSISTENCE`),
+      idempotencySupportConfigured:
+        envEnabled(targetServiceEnvironment, `${domain.markerPrefix}_IDEMPOTENCY_SUPPORT`) ||
+        envEnabled(appEnvironment, `${domain.markerPrefix}_IDEMPOTENCY_SUPPORT`),
+      qaCapabilityMarkerPresent:
+        envPresent(targetServiceEnvironment, `${domain.markerPrefix}_QA_CAPABILITY_MARKER`) ||
+        envPresent(appEnvironment, `${domain.markerPrefix}_QA_CAPABILITY_MARKER`),
+    };
+    const domainBlockers = [];
+    const domainWarnings = [];
+
+    if (authority === "SERVICE") {
+      if (!capabilityEvidence.serviceReachable) {
+        domainBlockers.push(`${domain.domain} service is not reachable.`);
+      }
+      if (!capabilityEvidence.readinessHealthy) {
+        domainBlockers.push(`${domain.domain} service readiness endpoint is not healthy.`);
+      }
+      if (!capabilityEvidence.mutationCapabilityEnabled) {
+        domainBlockers.push(`${domain.domain} service mutation capability is not explicitly enabled.`);
+      }
+      if (!capabilityEvidence.durablePersistenceConfigured) {
+        domainBlockers.push(`${domain.domain} service durable persistence is not configured.`);
+      }
+      if (!capabilityEvidence.idempotencySupportConfigured) {
+        domainBlockers.push(`${domain.domain} service idempotency support is not configured.`);
+      }
+      if (!capabilityEvidence.qaCapabilityMarkerPresent) {
+        domainBlockers.push(`${domain.domain} service QA capability marker is missing.`);
+      }
+    } else {
+      domainWarnings.push(`${domain.domain} authority remains MONOLITH; service production mutation capability is not required.`);
+    }
+
+    const productionReady = authority === "SERVICE" && domainBlockers.length === 0;
+    domains[domain.key] = {
+      domain: domain.domain,
+      authority,
+      service: domain.serviceName,
+      serviceUrl: appEnvironment?.[domain.serviceUrlEnv] ?? null,
+      productionStatus:
+        authority === "MONOLITH"
+          ? "MONOLITH_ALLOWED"
+          : productionReady
+            ? "PRODUCTION_READY"
+            : "NOT_PRODUCTION_READY",
+      productionReady,
+      allowedToRun: authority === "MONOLITH" || productionReady,
+      failClosed: authority === "SERVICE" && !productionReady,
+      capabilityEvidence,
+      blockers: domainBlockers,
+      warnings: domainWarnings,
+    };
+    blockers.push(...domainBlockers);
+    warnings.push(...domainWarnings);
+  }
+
+  return {
+    status: blockers.length === 0 ? "PASS" : "FAIL",
+    productionReady: authorityDomains.every((domain) => domains[domain.key]?.productionReady),
+    domains,
+    blockers,
+    warnings,
+  };
 }
 
 function checkTcp(name, host, port) {
@@ -382,7 +506,13 @@ const gameEngineStorageStatus = await fetchJson(
 const storageStatus = gameEngineStorageStatus.body?.evaluationStorageStatus ?? null;
 const gameEngineDatabaseUrl = composeConfig?.services?.["game-engine"]?.environment?.DATABASE_URL ?? "";
 const appEnvironment = composeConfig?.services?.app?.environment ?? {};
+const appDatabaseUrl = appEnvironment.DATABASE_URL ?? "";
 const migrationValidationResult = runOptional("node", ["scripts/migrations/validate-local-migrations.mjs"]);
+const financialAuthorityGuardrails = evaluateFinancialAuthorityGuardrails({
+  appEnvironment,
+  serviceHealth,
+  serviceReadiness,
+});
 
 const expectedServices = [
   "app",
@@ -439,6 +569,17 @@ const report = {
     gameEngineStorageStatusReachable: gameEngineStorageStatus.ok,
     gameEngineDurablePersistenceModeActive: Boolean(storageStatus?.durableRepositoryWiringEnabled),
     gameEngineStorageStatus: storageStatus,
+    settlementDatabaseUrlConfigured: appDatabaseUrl.length > 0,
+    settlementDatabaseUrlHost: appDatabaseUrl.length > 0
+      ? (() => {
+          try {
+            return new URL(appDatabaseUrl).hostname;
+          } catch {
+            return null;
+          }
+        })()
+      : null,
+    settlementPersistenceSchemaCurrent: migrationValidationResult.ok,
     migrationsCurrent: migrationValidationResult.ok,
     migrationValidationStatus: migrationValidationResult.status,
     migrationValidationError: migrationValidationResult.ok ? null : migrationValidationResult.stderr || migrationValidationResult.stdout,
@@ -456,6 +597,7 @@ const report = {
         })()
       : null,
   },
+  financialAuthorityGuardrails,
   expectedVsActual: expectedServices.map((service) => ({
     service,
     registered: composeServices.includes(service),

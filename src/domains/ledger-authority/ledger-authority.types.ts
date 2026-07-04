@@ -6,6 +6,7 @@ import type {
 import type { AuthorityApprovalRecord } from "../authority-approval/authority-approval.types";
 import type { AuthenticatedUser } from "../auth/auth-context.types";
 import type { DomainReadinessStatus } from "../shadow-readiness/shadow-readiness.types";
+import type { FinancialAuthorityGuardrailStatus } from "../financial-authority/financial-authority-guardrails";
 
 export type LedgerAuthorityCandidateStatus = "READY" | "WARNING" | "BLOCKED";
 
@@ -48,6 +49,7 @@ export type LedgerAuthorityReadiness = {
   comparisonMode: ComparisonMode;
   dryRunMode: LedgerAuthorityDryRunMode;
   runtimeRoute: LedgerAuthorityRuntimeRoute;
+  productionGuardrail: FinancialAuthorityGuardrailStatus;
   metrics: LedgerAuthorityMetrics | null;
   thresholds: LedgerAuthorityThresholds;
   rollbackReadinessStatus: LedgerAuthorityCandidateStatus;

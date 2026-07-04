@@ -1,4 +1,5 @@
 import type { AuthorityValue, ComparisonMode } from "../authority-control/authority-control.types";
+import type { FinancialAuthorityGuardrailStatus } from "../financial-authority/financial-authority-guardrails";
 
 export type SettlementAuthorityCandidateStatus = "READY" | "WARNING" | "BLOCKED";
 
@@ -46,6 +47,7 @@ export type SettlementAuthorityReadiness = {
   comparisonMode: ComparisonMode;
   dryRunMode: SettlementAuthorityDryRunMode;
   runtimeRoute: SettlementAuthorityRuntimeRoute;
+  productionGuardrail: FinancialAuthorityGuardrailStatus;
   metrics: SettlementAuthorityMetrics | null;
   thresholds: SettlementAuthorityThresholds;
   rollbackReadinessStatus: SettlementAuthorityCandidateStatus;

@@ -49,11 +49,13 @@ const TOPOLOGY_BY_CATEGORY: Record<
     priorityClass: "HIGH",
     consumerOwner: "critical-financial-worker",
     examples: [
+      "cashier.transaction.completed",
       "ledger.entry.posted",
       "wallet.balance.changed",
       "credit.reservation.created",
       "credit.settlement.applied",
       "credit.balance.updated",
+      "settlement.ledger_effect.generated",
     ],
   },
   TICKET_LIFECYCLE: {
@@ -178,6 +180,7 @@ const TOPOLOGY_BY_CATEGORY: Record<
 
 const EXACT_EVENT_CATEGORY: Record<string, QueueWorkloadCategory> = {
   "cashier.transaction.completed": "CRITICAL_FINANCIAL",
+  "settlement.ledger_effect.generated": "CRITICAL_FINANCIAL",
   "credit.settlement.applied": "CRITICAL_FINANCIAL",
   "credit.balance.updated": "CRITICAL_FINANCIAL",
   "ticket.accepted": "TICKET_LIFECYCLE",

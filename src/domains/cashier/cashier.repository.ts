@@ -3,6 +3,7 @@ import type {
   CashierTransaction,
   CashierTransactionStatus,
   CashierTransactionType,
+  CompleteCashierTransactionInput,
   CreateCashierTransactionInput,
   UpdateCashierTransactionStatusInput,
 } from "./cashier.types";
@@ -221,6 +222,32 @@ export async function updateCashierTransactionStatus(
 
   if (error) {
     throw new CashierRepositoryError();
+  }
+
+  const transaction = mapCashierTransactionRow(
+    data as CashierTransactionRow | null
+  );
+
+  if (!transaction) {
+    throw new CashierRepositoryError();
+  }
+
+  return transaction;
+}
+
+export async function completeCashierTransactionAtomically(
+  input: CompleteCashierTransactionInput
+): Promise<CashierTransaction> {
+  const { data, error } = await supabaseServerAdmin
+    .rpc("complete_cashier_transaction_atomically", {
+      p_transaction_id: input.transactionId,
+      p_actor_user_id: input.actorUserId ?? null,
+      p_metadata: input.metadata ?? {},
+    })
+    .single();
+
+  if (error) {
+    throw new CashierRepositoryError(error.message);
   }
 
   const transaction = mapCashierTransactionRow(
