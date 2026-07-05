@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "provider": "grafana-cloud",
+  "deploymentEnvironment": "production",
+  "alerts": [
+    {
+      "name": "service_down",
+      "severity": "critical",
+      "signal": "metrics",
+      "expression": "up{deployment_environment=\"production\"} == 0",
+      "for": "2m",
+      "runbook": "docs/operations/production-observability-runbook.md#service-down"
+    },
+    {
+      "name": "readiness_failure",
+      "severity": "critical",
+      "signal": "metrics",
+      "expression": "service_readiness_status{deployment_environment=\"production\"} != 1",
+      "for": "2m",
+      "runbook": "docs/operations/production-observability-runbook.md#readiness-failure"
+    },
+    {
+      "name": "queue_or_dlq_growth",
+      "severity": "high",
+      "signal": "metrics",
+      "expression": "increase(rabbitmq_queue_messages_ready[5m]) > 100 or increase(rabbitmq_queue_messages_deadletter[5m]) > 0",
+      "for": "5m",
+      "runbook": "docs/operations/production-observability-runbook.md#queue-or-dlq-growth"
+    },
+    {
+      "name": "settlement_failure",
+      "severity": "critical",
+      "signal": "logs",
+      "expression": "count_over_time({deployment_environment=\"production\", service_name=~\"settlement.*\"} |= \"settlement\" |= \"failed\" [5m]) > 0",
+      "for": "1m",
+      "runbook": "docs/operations/production-observability-runbook.md#settlement-failure"
+    },
+    {
+      "name": "auth_failure_spike",
+      "severity": "high",
+      "signal": "logs",
+      "expression": "count_over_time({deployment_environment=\"production\", service_name=\"auth-service\"} |= \"login_failure\" [5m]) > 25",
+      "for": "5m",
+      "runbook": "docs/operations/production-observability-runbook.md#auth-failure-spike"
+    },
+    {
+      "name": "cashier_ledger_inconsistency",
+      "severity": "critical",
+      "signal": "logs",
+      "expression": "count_over_time({deployment_environment=\"production\"} |= \"cashier\" |= \"ledger\" |= \"inconsistency\" [5m]) > 0",
+      "for": "1m",
+      "runbook": "docs/operations/production-observability-runbook.md#cashier-ledger-inconsistency"
+    }
+  ]
+}

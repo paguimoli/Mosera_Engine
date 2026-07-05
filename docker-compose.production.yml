@@ -1,0 +1,600 @@
+name: lottery-app-production
+
+x-prod-app-image: &prod-app-image ${PRODUCTION_APP_IMAGE:-ghcr.io/lottery-app/lottery-app:${RELEASE_VERSION:-production-required}}
+x-prod-auth-image: &prod-auth-image ${PRODUCTION_AUTH_SERVICE_IMAGE:-ghcr.io/lottery-app/auth-service:${RELEASE_VERSION:-production-required}}
+x-prod-game-engine-image: &prod-game-engine-image ${PRODUCTION_GAME_ENGINE_IMAGE:-ghcr.io/lottery-app/game-engine:${RELEASE_VERSION:-production-required}}
+x-prod-ledger-image: &prod-ledger-image ${PRODUCTION_LEDGER_SERVICE_IMAGE:-ghcr.io/lottery-app/ledger-service:${RELEASE_VERSION:-production-required}}
+x-prod-credit-image: &prod-credit-image ${PRODUCTION_CREDIT_WALLET_SERVICE_IMAGE:-ghcr.io/lottery-app/credit-wallet-service:${RELEASE_VERSION:-production-required}}
+x-prod-settlement-image: &prod-settlement-image ${PRODUCTION_SETTLEMENT_SERVICE_IMAGE:-ghcr.io/lottery-app/settlement-service:${RELEASE_VERSION:-production-required}}
+x-prod-otel-collector-image: &prod-otel-collector-image ${PRODUCTION_OTEL_COLLECTOR_IMAGE:-otel/opentelemetry-collector-contrib:0.115.1}
+x-prod-validator-volume: &prod-validator-volume ./deploy/production/validate-production-config.sh:/opt/lottery/validate-production-config.sh:ro
+
+x-prod-hardened-base: &prod-hardened-base
+  read_only: true
+  privileged: false
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 256
+
+x-prod-node-runtime-hardening: &prod-node-runtime-hardening
+  <<: *prod-hardened-base
+  user: "1000:1000"
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+    - /app/.qa:size=32m,mode=1777
+    - /app/.next/cache:size=64m,mode=1777
+
+x-prod-dotnet-runtime-hardening: &prod-dotnet-runtime-hardening
+  <<: *prod-hardened-base
+  user: "1654:1654"
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+
+x-prod-app-resources: &prod-app-resources
+  cpus: "1.00"
+  mem_limit: 1024m
+  mem_reservation: 512m
+
+x-prod-service-resources: &prod-service-resources
+  cpus: "0.75"
+  mem_limit: 768m
+  mem_reservation: 384m
+
+x-prod-worker-resources: &prod-worker-resources
+  cpus: "0.50"
+  mem_limit: 512m
+  mem_reservation: 256m
+
+x-prod-service-environment: &prod-service-environment
+  NODE_ENV: production
+  HOME: /tmp
+  DEPLOYMENT_ENVIRONMENT: production
+  RELEASE_VERSION: ${RELEASE_VERSION:-production-required}
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_METRICS_EXPORTER: otlp
+  OTEL_LOGS_EXPORTER: otlp
+  OTEL_RESOURCE_ATTRIBUTES: deployment.environment=production,service.version=${RELEASE_VERSION:-production-required}
+  DATABASE_URL: ${DATABASE_URL:-__PRODUCTION_REQUIRED_DATABASE_URL__}
+  MIGRATIONS_DATABASE_URL: ${MIGRATIONS_DATABASE_URL:-__PRODUCTION_REQUIRED_MIGRATIONS_DATABASE_URL__}
+  DATABASE_SSL_MODE: ${DATABASE_SSL_MODE:-require}
+  REDIS_URL: ${REDIS_URL:-__PRODUCTION_REQUIRED_REDIS_URL__}
+  REDIS_TLS: ${REDIS_TLS:-true}
+  RABBITMQ_URL: ${RABBITMQ_URL:-__PRODUCTION_REQUIRED_RABBITMQ_URL__}
+  RABBITMQ_MANAGEMENT_URL: ${RABBITMQ_MANAGEMENT_URL:-}
+  RABBITMQ_MANAGEMENT_TOKEN_REF: ${RABBITMQ_MANAGEMENT_TOKEN_REF:-}
+  RABBITMQ_EXCHANGE_NAME: ${RABBITMQ_EXCHANGE_NAME:-lottery.events}
+  MANAGED_POSTGRES_REQUIRED: "true"
+  MANAGED_REDIS_REQUIRED: "true"
+  MANAGED_RABBITMQ_REQUIRED: "true"
+  MANAGED_DEPENDENCY_READINESS_REQUIRED: "true"
+  PRODUCTION_MIGRATION_BACKUP_CHECKPOINT: ${PRODUCTION_MIGRATION_BACKUP_CHECKPOINT:-__PRODUCTION_REQUIRED_PRODUCTION_MIGRATION_BACKUP_CHECKPOINT__}
+  PRODUCTION_MIGRATION_STAGING_REHEARSAL_EVIDENCE: ${PRODUCTION_MIGRATION_STAGING_REHEARSAL_EVIDENCE:-__PRODUCTION_REQUIRED_PRODUCTION_MIGRATION_STAGING_REHEARSAL_EVIDENCE__}
+  PRODUCTION_MIGRATION_APPROVAL_TOKEN: ${PRODUCTION_MIGRATION_APPROVAL_TOKEN:-__PRODUCTION_REQUIRED_PRODUCTION_MIGRATION_APPROVAL_TOKEN__}
+  PRODUCTION_MIGRATION_APPROVED: ${PRODUCTION_MIGRATION_APPROVED:-false}
+  PRODUCTION_MIGRATION_DRIFT_CHECK: ${PRODUCTION_MIGRATION_DRIFT_CHECK:-required}
+  PRODUCTION_MIGRATION_DRIFT_RESULT: ${PRODUCTION_MIGRATION_DRIFT_RESULT:-required}
+  SUPABASE_URL: ${SUPABASE_URL:-__PRODUCTION_REQUIRED_SUPABASE_URL__}
+  SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-__PRODUCTION_REQUIRED_SUPABASE_SERVICE_ROLE_KEY__}
+  SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-__PRODUCTION_REQUIRED_SUPABASE_ANON_KEY__}
+  APP_BASE_URL: ${APP_BASE_URL:-__PRODUCTION_REQUIRED_APP_BASE_URL__}
+  PUBLIC_APP_URL: ${PUBLIC_APP_URL:-__PRODUCTION_REQUIRED_PUBLIC_APP_URL__}
+  PRODUCTION_HOSTNAME: ${PRODUCTION_HOSTNAME:-__PRODUCTION_REQUIRED_PRODUCTION_HOSTNAME__}
+  SECURITY_ENFORCE_PRODUCTION_SECRETS: "true"
+  SECURITY_AUDIT_LEVEL: ${SECURITY_AUDIT_LEVEL:-high}
+  AUTH_PROVIDER: auth-service
+  AUTH_SERVICE_URL: http://auth-service:8080
+  AUTH_SIGNING_KEY_REF: ${AUTH_SIGNING_KEY_REF:-__PRODUCTION_REQUIRED_AUTH_SIGNING_KEY_REF__}
+  AUTH_REFRESH_TOKEN_SECRET_REF: ${AUTH_REFRESH_TOKEN_SECRET_REF:-__PRODUCTION_REQUIRED_AUTH_REFRESH_TOKEN_SECRET_REF__}
+  AUTH_SESSION_SECRET_REF: ${AUTH_SESSION_SECRET_REF:-__PRODUCTION_REQUIRED_AUTH_SESSION_SECRET_REF__}
+  AUTH_SERVICE_TOKEN_SIGNING_KEY_REF: ${AUTH_SERVICE_TOKEN_SIGNING_KEY_REF:-__PRODUCTION_REQUIRED_AUTH_SERVICE_TOKEN_SIGNING_KEY_REF__}
+  SETTLEMENT_AUTHORITY: ${SETTLEMENT_AUTHORITY:-MONOLITH}
+  LEDGER_AUTHORITY: ${LEDGER_AUTHORITY:-MONOLITH}
+  CREDIT_AUTHORITY: ${CREDIT_AUTHORITY:-MONOLITH}
+  ALLOW_MONOLITH_AUTHORITY_IN_PRODUCTION: ${ALLOW_MONOLITH_AUTHORITY_IN_PRODUCTION:-false}
+  SETTLEMENT_COMPARISON_MODE: ${SETTLEMENT_COMPARISON_MODE:-ENABLED}
+  LEDGER_COMPARISON_MODE: ${LEDGER_COMPARISON_MODE:-ENABLED}
+  CREDIT_COMPARISON_MODE: ${CREDIT_COMPARISON_MODE:-ENABLED}
+  SETTLEMENT_AUTHORITY_DRY_RUN_MODE: ${SETTLEMENT_AUTHORITY_DRY_RUN_MODE:-DISABLED}
+  SETTLEMENT_SERVICE_URL: http://settlement-service:8080
+  LEDGER_SERVICE_URL: http://ledger-service:8080
+  CREDIT_SERVICE_URL: http://credit-wallet-service:8080
+
+x-prod-dotnet-environment: &prod-dotnet-environment
+  ASPNETCORE_ENVIRONMENT: Production
+  DOTNET_RUNNING_IN_CONTAINER: "true"
+  HOME: /tmp
+  DEPLOYMENT_ENVIRONMENT: production
+  RELEASE_VERSION: ${RELEASE_VERSION:-production-required}
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_METRICS_EXPORTER: otlp
+  OTEL_LOGS_EXPORTER: otlp
+  OTEL_RESOURCE_ATTRIBUTES: deployment.environment=production,service.version=${RELEASE_VERSION:-production-required}
+  DATABASE_URL: ${DATABASE_URL:-__PRODUCTION_REQUIRED_DATABASE_URL__}
+  MIGRATIONS_DATABASE_URL: ${MIGRATIONS_DATABASE_URL:-__PRODUCTION_REQUIRED_MIGRATIONS_DATABASE_URL__}
+  DATABASE_SSL_MODE: ${DATABASE_SSL_MODE:-require}
+  REDIS_URL: ${REDIS_URL:-__PRODUCTION_REQUIRED_REDIS_URL__}
+  REDIS_TLS: ${REDIS_TLS:-true}
+  RABBITMQ_URL: ${RABBITMQ_URL:-__PRODUCTION_REQUIRED_RABBITMQ_URL__}
+  RABBITMQ_MANAGEMENT_URL: ${RABBITMQ_MANAGEMENT_URL:-}
+  RABBITMQ_MANAGEMENT_TOKEN_REF: ${RABBITMQ_MANAGEMENT_TOKEN_REF:-}
+  RABBITMQ_EXCHANGE_NAME: ${RABBITMQ_EXCHANGE_NAME:-lottery.events}
+  MANAGED_POSTGRES_REQUIRED: "true"
+  MANAGED_REDIS_REQUIRED: "true"
+  MANAGED_RABBITMQ_REQUIRED: "true"
+  MANAGED_DEPENDENCY_READINESS_REQUIRED: "true"
+  PRODUCTION_MIGRATION_BACKUP_CHECKPOINT: ${PRODUCTION_MIGRATION_BACKUP_CHECKPOINT:-__PRODUCTION_REQUIRED_PRODUCTION_MIGRATION_BACKUP_CHECKPOINT__}
+  PRODUCTION_MIGRATION_STAGING_REHEARSAL_EVIDENCE: ${PRODUCTION_MIGRATION_STAGING_REHEARSAL_EVIDENCE:-__PRODUCTION_REQUIRED_PRODUCTION_MIGRATION_STAGING_REHEARSAL_EVIDENCE__}
+  PRODUCTION_MIGRATION_APPROVAL_TOKEN: ${PRODUCTION_MIGRATION_APPROVAL_TOKEN:-__PRODUCTION_REQUIRED_PRODUCTION_MIGRATION_APPROVAL_TOKEN__}
+  PRODUCTION_MIGRATION_APPROVED: ${PRODUCTION_MIGRATION_APPROVED:-false}
+  PRODUCTION_MIGRATION_DRIFT_CHECK: ${PRODUCTION_MIGRATION_DRIFT_CHECK:-required}
+  PRODUCTION_MIGRATION_DRIFT_RESULT: ${PRODUCTION_MIGRATION_DRIFT_RESULT:-required}
+  SUPABASE_URL: ${SUPABASE_URL:-__PRODUCTION_REQUIRED_SUPABASE_URL__}
+  SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-__PRODUCTION_REQUIRED_SUPABASE_SERVICE_ROLE_KEY__}
+  APP_BASE_URL: ${APP_BASE_URL:-__PRODUCTION_REQUIRED_APP_BASE_URL__}
+  PUBLIC_APP_URL: ${PUBLIC_APP_URL:-__PRODUCTION_REQUIRED_PUBLIC_APP_URL__}
+  PRODUCTION_HOSTNAME: ${PRODUCTION_HOSTNAME:-__PRODUCTION_REQUIRED_PRODUCTION_HOSTNAME__}
+  SECURITY_ENFORCE_PRODUCTION_SECRETS: "true"
+  AUTH_PROVIDER: auth-service
+  AUTH_SERVICE_URL: http://auth-service:8080
+  AUTH_SIGNING_KEY_REF: ${AUTH_SIGNING_KEY_REF:-__PRODUCTION_REQUIRED_AUTH_SIGNING_KEY_REF__}
+  AUTH_REFRESH_TOKEN_SECRET_REF: ${AUTH_REFRESH_TOKEN_SECRET_REF:-__PRODUCTION_REQUIRED_AUTH_REFRESH_TOKEN_SECRET_REF__}
+  AUTH_SESSION_SECRET_REF: ${AUTH_SESSION_SECRET_REF:-__PRODUCTION_REQUIRED_AUTH_SESSION_SECRET_REF__}
+  AUTH_SERVICE_TOKEN_SIGNING_KEY_REF: ${AUTH_SERVICE_TOKEN_SIGNING_KEY_REF:-__PRODUCTION_REQUIRED_AUTH_SERVICE_TOKEN_SIGNING_KEY_REF__}
+  SETTLEMENT_AUTHORITY: ${SETTLEMENT_AUTHORITY:-MONOLITH}
+  LEDGER_AUTHORITY: ${LEDGER_AUTHORITY:-MONOLITH}
+  CREDIT_AUTHORITY: ${CREDIT_AUTHORITY:-MONOLITH}
+  ALLOW_MONOLITH_AUTHORITY_IN_PRODUCTION: ${ALLOW_MONOLITH_AUTHORITY_IN_PRODUCTION:-false}
+
+x-prod-worker-service: &prod-worker-service
+  <<:
+    - *prod-node-runtime-hardening
+    - *prod-worker-resources
+  image: *prod-app-image
+  restart: unless-stopped
+  networks:
+    - production-internal
+  volumes:
+    - *prod-validator-volume
+  environment:
+    <<: *prod-service-environment
+    WORKER_HEARTBEAT_INTERVAL_MS: ${WORKER_HEARTBEAT_INTERVAL_MS:-30000}
+    OUTBOX_DISPATCH_BATCH_SIZE: ${OUTBOX_DISPATCH_BATCH_SIZE:-50}
+    OUTBOX_DISPATCH_IDLE_INTERVAL_MS: ${OUTBOX_DISPATCH_IDLE_INTERVAL_MS:-5000}
+    OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS: ${OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS:-250}
+
+x-prod-dotnet-healthcheck: &prod-dotnet-healthcheck
+  test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health/ready >/dev/null || exit 1"]
+  interval: 10s
+  timeout: 5s
+  retries: 12
+  start_period: 30s
+
+x-prod-app-healthcheck: &prod-app-healthcheck
+  test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/health >/dev/null || exit 1"]
+  interval: 10s
+  timeout: 5s
+  retries: 12
+  start_period: 30s
+
+services:
+  otel-collector:
+    <<: *prod-service-resources
+    image: *prod-otel-collector-image
+    restart: unless-stopped
+    read_only: true
+    privileged: false
+    user: "10001:10001"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    command:
+      - --config=/etc/otelcol-contrib/config.yaml
+    environment:
+      DEPLOYMENT_ENVIRONMENT: production
+      RELEASE_VERSION: ${RELEASE_VERSION:-production-required}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-__PRODUCTION_REQUIRED_OTEL_EXPORTER_OTLP_ENDPOINT__}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-__PRODUCTION_REQUIRED_OTEL_EXPORTER_OTLP_HEADERS__}
+    volumes:
+      - ./deploy/otel/collector.production.yaml:/etc/otelcol-contrib/config.yaml:ro
+    expose:
+      - "4317"
+      - "4318"
+    networks:
+      - production-internal
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    read_only: true
+    privileged: false
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    cpus: "0.50"
+    mem_limit: 256m
+    mem_reservation: 128m
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /run:size=16m,mode=755
+    environment:
+      PRODUCTION_HOSTNAME: ${PRODUCTION_HOSTNAME:-__PRODUCTION_REQUIRED_PRODUCTION_HOSTNAME__}
+      CADDY_CLOUDFLARE_MODE: ${CADDY_CLOUDFLARE_MODE:-origin}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - *prod-validator-volume
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    command:
+      - sh
+      - -c
+      - |
+        sh /opt/lottery/validate-production-config.sh caddy
+        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+    depends_on:
+      app:
+        condition: service_started
+    networks:
+      - production-edge
+      - production-internal
+
+  app:
+    <<:
+      - *prod-node-runtime-hardening
+      - *prod-app-resources
+    image: *prod-app-image
+    restart: unless-stopped
+    expose:
+      - "3000"
+    volumes:
+      - *prod-validator-volume
+    environment:
+      <<: *prod-service-environment
+      SERVICE_NAME: app
+      OTEL_SERVICE_NAME: app
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-__PRODUCTION_REQUIRED_NEXT_PUBLIC_SUPABASE_URL__}
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:-__PRODUCTION_REQUIRED_NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY__}
+    command:
+      - sh
+      - -c
+      - |
+        sh /opt/lottery/validate-production-config.sh app
+        exec npm run start
+    depends_on:
+      auth-service:
+        condition: service_started
+      otel-collector:
+        condition: service_started
+    healthcheck: *prod-app-healthcheck
+    networks:
+      - production-internal
+
+  auth-service:
+    <<:
+      - *prod-dotnet-runtime-hardening
+      - *prod-service-resources
+    image: *prod-auth-image
+    restart: unless-stopped
+    expose:
+      - "8080"
+    volumes:
+      - *prod-validator-volume
+    environment:
+      <<: *prod-dotnet-environment
+      SERVICE_NAME: auth-service
+      OTEL_SERVICE_NAME: auth-service
+      AUTH_PRODUCTION_AUTHENTICATION_ENABLED: "true"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        sh /opt/lottery/validate-production-config.sh auth-service
+        exec dotnet AuthService.Api.dll
+    healthcheck: *prod-dotnet-healthcheck
+    networks:
+      - production-internal
+
+  game-engine:
+    <<:
+      - *prod-dotnet-runtime-hardening
+      - *prod-service-resources
+    image: *prod-game-engine-image
+    restart: unless-stopped
+    expose:
+      - "8080"
+    volumes:
+      - *prod-validator-volume
+    environment:
+      <<: *prod-dotnet-environment
+      SERVICE_NAME: game-engine
+      OTEL_SERVICE_NAME: game-engine
+      GAME_ENGINE_SCHEMA: ${GAME_ENGINE_SCHEMA:-game_engine}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        sh /opt/lottery/validate-production-config.sh game-engine
+        exec dotnet GameEngine.Api.dll
+    healthcheck: *prod-dotnet-healthcheck
+    networks:
+      - production-internal
+
+  ledger-service:
+    <<:
+      - *prod-dotnet-runtime-hardening
+      - *prod-service-resources
+    image: *prod-ledger-image
+    restart: unless-stopped
+    expose:
+      - "8080"
+    volumes:
+      - *prod-validator-volume
+    environment:
+      <<: *prod-dotnet-environment
+      SERVICE_NAME: ledger-service
+      OTEL_SERVICE_NAME: ledger-service
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        sh /opt/lottery/validate-production-config.sh ledger-service
+        exec dotnet LedgerService.dll
+    healthcheck: *prod-dotnet-healthcheck
+    networks:
+      - production-internal
+
+  credit-wallet-service:
+    <<:
+      - *prod-dotnet-runtime-hardening
+      - *prod-service-resources
+    image: *prod-credit-image
+    restart: unless-stopped
+    expose:
+      - "8080"
+    volumes:
+      - *prod-validator-volume
+    environment:
+      <<: *prod-dotnet-environment
+      SERVICE_NAME: credit-wallet-service
+      OTEL_SERVICE_NAME: credit-wallet-service
+      LEDGER_SERVICE_URL: http://ledger-service:8080
+      CREDIT_SERVICE_URL: http://credit-wallet-service:8080
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        sh /opt/lottery/validate-production-config.sh credit-wallet-service
+        exec dotnet CreditWalletService.dll
+    healthcheck: *prod-dotnet-healthcheck
+    networks:
+      - production-internal
+
+  settlement-service:
+    <<:
+      - *prod-dotnet-runtime-hardening
+      - *prod-service-resources
+    image: *prod-settlement-image
+    restart: unless-stopped
+    expose:
+      - "8080"
+    volumes:
+      - *prod-validator-volume
+    environment:
+      <<: *prod-dotnet-environment
+      SERVICE_NAME: settlement-service
+      OTEL_SERVICE_NAME: settlement-service
+      LEDGER_SERVICE_URL: http://ledger-service:8080
+      CREDIT_SERVICE_URL: http://credit-wallet-service:8080
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        sh /opt/lottery/validate-production-config.sh settlement-service
+        exec dotnet SettlementService.dll
+    healthcheck: *prod-dotnet-healthcheck
+    networks:
+      - production-internal
+
+  outbox-dispatcher:
+    <<: *prod-worker-service
+    environment:
+      <<: *prod-service-environment
+      SERVICE_NAME: outbox-dispatcher
+      OTEL_SERVICE_NAME: outbox-dispatcher
+      WORKER_HEARTBEAT_INTERVAL_MS: ${WORKER_HEARTBEAT_INTERVAL_MS:-30000}
+      OUTBOX_DISPATCH_BATCH_SIZE: ${OUTBOX_DISPATCH_BATCH_SIZE:-50}
+      OUTBOX_DISPATCH_IDLE_INTERVAL_MS: ${OUTBOX_DISPATCH_IDLE_INTERVAL_MS:-5000}
+      OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS: ${OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS:-250}
+    command:
+      - sh
+      - -c
+      - |
+        sh /opt/lottery/validate-production-config.sh worker
+        exec npm run worker:outbox-dispatcher
+
+  worker-critical-financial:
+    <<: *prod-worker-service
+    environment:
+      <<: *prod-service-environment
+      SERVICE_NAME: worker-critical-financial
+      OTEL_SERVICE_NAME: worker-critical-financial
+      WORKER_HEARTBEAT_INTERVAL_MS: ${WORKER_HEARTBEAT_INTERVAL_MS:-30000}
+      OUTBOX_DISPATCH_BATCH_SIZE: ${OUTBOX_DISPATCH_BATCH_SIZE:-50}
+      OUTBOX_DISPATCH_IDLE_INTERVAL_MS: ${OUTBOX_DISPATCH_IDLE_INTERVAL_MS:-5000}
+      OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS: ${OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS:-250}
+    command:
+      - sh
+      - -c
+      - |
+        sh /opt/lottery/validate-production-config.sh worker
+        exec npm run worker:critical-financial
+
+  worker-ticket-lifecycle:
+    <<: *prod-worker-service
+    environment:
+      <<: *prod-service-environment
+      SERVICE_NAME: worker-ticket-lifecycle
+      OTEL_SERVICE_NAME: worker-ticket-lifecycle
+      WORKER_HEARTBEAT_INTERVAL_MS: ${WORKER_HEARTBEAT_INTERVAL_MS:-30000}
+      OUTBOX_DISPATCH_BATCH_SIZE: ${OUTBOX_DISPATCH_BATCH_SIZE:-50}
+      OUTBOX_DISPATCH_IDLE_INTERVAL_MS: ${OUTBOX_DISPATCH_IDLE_INTERVAL_MS:-5000}
+      OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS: ${OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS:-250}
+    command:
+      - sh
+      - -c
+      - |
+        sh /opt/lottery/validate-production-config.sh worker
+        exec npm run worker:ticket-lifecycle
+
+  worker-settlement:
+    <<: *prod-worker-service
+    environment:
+      <<: *prod-service-environment
+      SERVICE_NAME: worker-settlement
+      OTEL_SERVICE_NAME: worker-settlement
+      WORKER_HEARTBEAT_INTERVAL_MS: ${WORKER_HEARTBEAT_INTERVAL_MS:-30000}
+      OUTBOX_DISPATCH_BATCH_SIZE: ${OUTBOX_DISPATCH_BATCH_SIZE:-50}
+      OUTBOX_DISPATCH_IDLE_INTERVAL_MS: ${OUTBOX_DISPATCH_IDLE_INTERVAL_MS:-5000}
+      OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS: ${OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS:-250}
+    command:
+      - sh
+      - -c
+      - |
+        sh /opt/lottery/validate-production-config.sh worker
+        exec npm run worker:settlement
+
+  worker-accounting:
+    <<: *prod-worker-service
+    environment:
+      <<: *prod-service-environment
+      SERVICE_NAME: worker-accounting
+      OTEL_SERVICE_NAME: worker-accounting
+      WORKER_HEARTBEAT_INTERVAL_MS: ${WORKER_HEARTBEAT_INTERVAL_MS:-30000}
+      OUTBOX_DISPATCH_BATCH_SIZE: ${OUTBOX_DISPATCH_BATCH_SIZE:-50}
+      OUTBOX_DISPATCH_IDLE_INTERVAL_MS: ${OUTBOX_DISPATCH_IDLE_INTERVAL_MS:-5000}
+      OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS: ${OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS:-250}
+    command:
+      - sh
+      - -c
+      - |
+        sh /opt/lottery/validate-production-config.sh worker
+        exec npm run worker:accounting
+
+  worker-commission:
+    <<: *prod-worker-service
+    environment:
+      <<: *prod-service-environment
+      SERVICE_NAME: worker-commission
+      OTEL_SERVICE_NAME: worker-commission
+      WORKER_HEARTBEAT_INTERVAL_MS: ${WORKER_HEARTBEAT_INTERVAL_MS:-30000}
+      OUTBOX_DISPATCH_BATCH_SIZE: ${OUTBOX_DISPATCH_BATCH_SIZE:-50}
+      OUTBOX_DISPATCH_IDLE_INTERVAL_MS: ${OUTBOX_DISPATCH_IDLE_INTERVAL_MS:-5000}
+      OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS: ${OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS:-250}
+    command:
+      - sh
+      - -c
+      - |
+        sh /opt/lottery/validate-production-config.sh worker
+        exec npm run worker:commission
+
+  worker-reconciliation:
+    <<: *prod-worker-service
+    environment:
+      <<: *prod-service-environment
+      SERVICE_NAME: worker-reconciliation
+      OTEL_SERVICE_NAME: worker-reconciliation
+      WORKER_HEARTBEAT_INTERVAL_MS: ${WORKER_HEARTBEAT_INTERVAL_MS:-30000}
+      OUTBOX_DISPATCH_BATCH_SIZE: ${OUTBOX_DISPATCH_BATCH_SIZE:-50}
+      OUTBOX_DISPATCH_IDLE_INTERVAL_MS: ${OUTBOX_DISPATCH_IDLE_INTERVAL_MS:-5000}
+      OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS: ${OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS:-250}
+    command:
+      - sh
+      - -c
+      - |
+        sh /opt/lottery/validate-production-config.sh worker
+        exec npm run worker:reconciliation
+
+  worker-operational-access:
+    <<: *prod-worker-service
+    environment:
+      <<: *prod-service-environment
+      SERVICE_NAME: worker-operational-access
+      OTEL_SERVICE_NAME: worker-operational-access
+      WORKER_HEARTBEAT_INTERVAL_MS: ${WORKER_HEARTBEAT_INTERVAL_MS:-30000}
+      OUTBOX_DISPATCH_BATCH_SIZE: ${OUTBOX_DISPATCH_BATCH_SIZE:-50}
+      OUTBOX_DISPATCH_IDLE_INTERVAL_MS: ${OUTBOX_DISPATCH_IDLE_INTERVAL_MS:-5000}
+      OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS: ${OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS:-250}
+    command:
+      - sh
+      - -c
+      - |
+        sh /opt/lottery/validate-production-config.sh worker
+        exec npm run worker:operational-access
+
+  worker-reporting:
+    <<: *prod-worker-service
+    environment:
+      <<: *prod-service-environment
+      SERVICE_NAME: worker-reporting
+      OTEL_SERVICE_NAME: worker-reporting
+      WORKER_HEARTBEAT_INTERVAL_MS: ${WORKER_HEARTBEAT_INTERVAL_MS:-30000}
+      OUTBOX_DISPATCH_BATCH_SIZE: ${OUTBOX_DISPATCH_BATCH_SIZE:-50}
+      OUTBOX_DISPATCH_IDLE_INTERVAL_MS: ${OUTBOX_DISPATCH_IDLE_INTERVAL_MS:-5000}
+      OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS: ${OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS:-250}
+    command:
+      - sh
+      - -c
+      - |
+        sh /opt/lottery/validate-production-config.sh worker
+        exec npm run worker:reporting
+
+  migration-runner:
+    <<:
+      - *prod-node-runtime-hardening
+      - *prod-worker-resources
+    image: *prod-app-image
+    profiles:
+      - manual
+    restart: "no"
+    environment:
+      <<: *prod-service-environment
+      SERVICE_NAME: migration-runner
+      OTEL_SERVICE_NAME: migration-runner
+      ALLOW_DISPOSABLE_DB_MIGRATIONS: "false"
+    volumes:
+      - *prod-validator-volume
+    command:
+      - sh
+      - -c
+      - |
+        sh /opt/lottery/validate-production-config.sh migration-runner
+        exec npm run migrations:production:dry-run
+    networks:
+      - production-internal
+
+networks:
+  production-edge:
+    name: lottery-production-edge
+  production-internal:
+    name: lottery-production-internal
+    internal: true
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,250 @@
+name: CI/CD Release Pipeline
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - production
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
+concurrency:
+  group: release-pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: ${{ github.repository_owner }}
+  IMAGE_REVISION: ${{ github.sha }}
+
+jobs:
+  validate:
+    name: Validate Application and Runtime
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: lottery
+          POSTGRES_PASSWORD: lottery_dev_password
+          POSTGRES_DB: lottery_local
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U lottery -d lottery_local"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Restore Auth Service
+        run: dotnet restore services/auth-service/AuthService.sln
+
+      - name: Restore Game Engine
+        run: dotnet restore services/game-engine/GameEngine.sln
+
+      - name: Restore extracted financial services
+        run: |
+          dotnet restore services/ledger-service/LedgerService.csproj
+          dotnet restore services/credit-wallet-service/CreditWalletService.csproj
+          dotnet restore services/settlement-service/SettlementService.csproj
+
+      - name: npm lint
+        run: npm run lint
+
+      - name: npm build
+        run: npm run build
+
+      - name: Dependency audit
+        run: npm run security:audit
+
+      - name: Auth Service build/test
+        run: |
+          dotnet build services/auth-service/AuthService.sln --configuration Release --no-restore
+          dotnet test services/auth-service/AuthService.sln --configuration Release --no-build
+
+      - name: Game Engine build/test
+        run: |
+          dotnet build services/game-engine/GameEngine.sln --configuration Release --no-restore
+          dotnet test services/game-engine/GameEngine.sln --configuration Release --no-build
+
+      - name: Ledger Service build/test
+        run: |
+          dotnet build services/ledger-service/LedgerService.csproj --configuration Release --no-restore
+          dotnet test services/ledger-service/LedgerService.csproj --configuration Release --no-build
+
+      - name: Credit Wallet Service build/test
+        run: |
+          dotnet build services/credit-wallet-service/CreditWalletService.csproj --configuration Release --no-restore
+          dotnet test services/credit-wallet-service/CreditWalletService.csproj --configuration Release --no-build
+
+      - name: Settlement Service build/test
+        run: |
+          dotnet build services/settlement-service/SettlementService.csproj --configuration Release --no-restore
+          dotnet test services/settlement-service/SettlementService.csproj --configuration Release --no-build
+
+      - name: Local migration validation
+        env:
+          DATABASE_URL: postgresql://lottery:lottery_dev_password@localhost:55432/lottery_local
+          ALLOW_DISPOSABLE_DB_MIGRATIONS: "true"
+        run: |
+          npm run migrations:local:run
+          npm run migrations:local:validate
+
+      - name: Compose validation
+        run: |
+          docker compose config
+          docker compose -f docker-compose.production.yml config
+
+      - name: Production runtime QA
+        run: |
+          npm run qa:production-config
+          npm run qa:production-compose
+          npm run qa:managed-services-wiring
+          npm run qa:cicd-release-pipeline
+          npm run qa:production-migration-governance
+          npm run qa:observability-baseline
+          npm run qa:production-runtime
+          npm run qa:queue-operations
+          npm run qa:container-network-hardening
+
+      - name: Source container security scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-source-results.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Upload Trivy source scan
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-source-results.sarif
+
+      - name: Generate source SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          artifact-name: lottery-app-source-sbom.spdx.json
+
+  build-images:
+    name: Build and Publish ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs: validate
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: app
+            image: lottery-app
+            context: .
+            dockerfile: Dockerfile
+          - service: auth-service
+            image: auth-service
+            context: services/auth-service
+            dockerfile: services/auth-service/Dockerfile
+          - service: game-engine
+            image: game-engine
+            context: services/game-engine
+            dockerfile: services/game-engine/Dockerfile
+          - service: ledger-service
+            image: ledger-service
+            context: services/ledger-service
+            dockerfile: services/ledger-service/Dockerfile
+          - service: credit-wallet-service
+            image: credit-wallet-service
+            context: services/credit-wallet-service
+            dockerfile: services/credit-wallet-service/Dockerfile
+          - service: settlement-service
+            image: settlement-service
+            context: services/settlement-service
+            dockerfile: services/settlement-service/Dockerfile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request' && (github.ref_protected || startsWith(github.ref, 'refs/tags/v'))
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}
+          tags: |
+            type=raw,value=sha-${{ github.sha }}
+            type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.service.name=${{ matrix.service }}
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name != 'pull_request' && (github.ref_protected || startsWith(github.ref, 'refs/tags/v')) }}
+          load: ${{ !(github.event_name != 'pull_request' && (github.ref_protected || startsWith(github.ref, 'refs/tags/v'))) }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            NEXT_PUBLIC_SUPABASE_URL=https://ci-build.lotteryplatform.invalid
+            NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=ci-build-publishable-key
+
+      - name: Container image scan
+        if: github.event_name == 'pull_request' || !(github.ref_protected || startsWith(github.ref, 'refs/tags/v'))
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:sha-${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Generate image SBOM
+        if: github.event_name == 'pull_request' || !(github.ref_protected || startsWith(github.ref, 'refs/tags/v'))
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:sha-${{ github.sha }}
+          format: spdx-json
+          artifact-name: ${{ matrix.image }}-image-sbom.spdx.json

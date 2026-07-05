@@ -97,7 +97,71 @@ DLQ messages must never be manually deleted to make dashboards green. Operators 
 - whether the source record still exists
 - whether retry is safe and idempotent
 
-Manual replay is not implemented in this phase.
+Manual direct RabbitMQ replay is not implemented in this phase. Replay planning
+is available only through guarded evidence tooling.
+
+## DLQ Triage
+
+Use inspect mode first. It does not publish, delete, acknowledge, or mutate
+messages:
+
+```bash
+npm run ops:dlq -- --mode=inspect --input=<dlq-export.json>
+```
+
+The input must be an approved DLQ export or a synthetic QA fixture. Triage must
+record:
+
+- DLQ name
+- message id
+- routing key
+- event type
+- aggregate type and id
+- correlation id
+- idempotency key evidence
+- reason the original handler failed
+
+Malformed messages, unsupported routing keys, and messages without idempotency
+evidence are not replay candidates.
+
+## Replay Approval
+
+Replay planning is guarded and requires all of:
+
+- `DLQ_REPLAY_APPROVED=true`
+- `DLQ_REPLAY_IDEMPOTENCY_CONFIRMED=true`
+- `DLQ_REPLAY_APPROVAL_TOKEN=<change-or-incident-id>`
+- `DLQ_REPLAY_OPERATOR=<operator-id>`
+
+Run approved replay planning with:
+
+```bash
+DLQ_REPLAY_APPROVED=true \
+DLQ_REPLAY_IDEMPOTENCY_CONFIRMED=true \
+DLQ_REPLAY_APPROVAL_TOKEN=<change-or-incident-id> \
+DLQ_REPLAY_OPERATOR=<operator-id> \
+npm run ops:dlq -- --mode=replay --input=<dlq-export.json>
+```
+
+The tool produces a replay plan and evidence artifact. It does not directly
+publish messages to RabbitMQ in this phase.
+
+## Replay Evidence
+
+Store the generated evidence artifact with the incident or change record. The
+artifact includes source digest, operator, approval token digest, eligible
+messages, blocked malformed messages, and replay plan.
+
+## Rollback / Failure Handling
+
+If replay planning exposes inconsistent state, missing source records,
+unsupported routing keys, or missing idempotency evidence:
+
+1. Stop replay planning.
+2. Keep the message in DLQ.
+3. Capture the evidence artifact.
+4. Open a corrective incident.
+5. Use domain-specific recovery tooling rather than manual queue edits.
 
 ## What Must Never Be Done Manually
 

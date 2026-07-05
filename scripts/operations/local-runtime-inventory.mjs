@@ -429,6 +429,10 @@ const composeConfigResult = runOptional("docker", [
   "--format",
   "json",
 ]);
+const productionComposeDetected = existsSync("docker-compose.production.yml");
+const productionComposeConfigResult = productionComposeDetected
+  ? runOptional("docker", ["compose", "-f", "docker-compose.production.yml", "config", "--format", "json"])
+  : { ok: false, status: null, stdout: "", stderr: "docker-compose.production.yml not found" };
 const composeServices = composeServicesResult.ok
   ? composeServicesResult.stdout.split("\n").filter(Boolean).sort()
   : [];
@@ -437,6 +441,12 @@ try {
   composeConfig = composeConfigResult.ok ? JSON.parse(composeConfigResult.stdout) : null;
 } catch {
   composeConfig = null;
+}
+let productionComposeConfig = null;
+try {
+  productionComposeConfig = productionComposeConfigResult.ok ? JSON.parse(productionComposeConfigResult.stdout) : null;
+} catch {
+  productionComposeConfig = null;
 }
 const psResult = run("docker", ["compose", "ps", "--format", "json"]);
 const dockerPsResult = run("docker", [
@@ -540,6 +550,14 @@ const financialAuthorityGuardrails = evaluateFinancialAuthorityGuardrails({
   serviceHealth,
   serviceReadiness,
 });
+const productionServices = productionComposeConfig?.services ?? {};
+const productionServiceNames = Object.keys(productionServices).sort();
+const productionInfrastructureServices = ["local-postgres", "postgres", "redis", "rabbitmq", "devtools"];
+const productionInternalPortsPubliclyExposed = Object.entries(productionServices)
+  .filter(([name]) => name !== "caddy")
+  .filter(([, service]) => Array.isArray(service.ports) && service.ports.length > 0)
+  .map(([name, service]) => ({ service: name, ports: service.ports }));
+const productionAppEnvironment = productionServices.app?.environment ?? {};
 
 const expectedServices = [
   "app",
@@ -635,6 +653,37 @@ const report = {
       : null,
   },
   financialAuthorityGuardrails,
+  productionRuntime: {
+    productionComposeDetected,
+    productionComposeConfigAvailable: productionComposeConfigResult.ok,
+    productionProfileDetected:
+      productionComposeDetected &&
+      productionComposeConfig?.name === "lottery-app-production" &&
+      productionServiceNames.includes("caddy"),
+    productionServices: productionServiceNames,
+    managedPostgresExpected:
+      productionComposeDetected &&
+      !productionServiceNames.some((service) => ["local-postgres", "postgres"].includes(service)),
+    migrationDatabaseUrlExpected: Boolean(productionAppEnvironment.MIGRATIONS_DATABASE_URL),
+    managedRedisExpected:
+      productionComposeDetected &&
+      !productionServiceNames.includes("redis"),
+    managedRabbitMqExpected:
+      productionComposeDetected &&
+      !productionServiceNames.includes("rabbitmq"),
+    reverseProxyConfigured: productionServiceNames.includes("caddy"),
+    caddyFileConfigured: existsSync("deploy/caddy/Caddyfile"),
+    productionConfigValidatorConfigured: existsSync("deploy/production/validate-production-config.sh"),
+    productionEnvTemplatePresent: existsSync(".env.production.example"),
+    managedDependencyReadinessRequired:
+      productionAppEnvironment.MANAGED_DEPENDENCY_READINESS_REQUIRED === "true",
+    productionOnlyInfrastructureContainersAbsent:
+      productionInfrastructureServices.every((service) => !productionServiceNames.includes(service)),
+    internalServicePortsPubliclyExposed: productionInternalPortsPubliclyExposed,
+    configError: productionComposeConfigResult.ok
+      ? null
+      : productionComposeConfigResult.stderr || productionComposeConfigResult.stdout,
+  },
   expectedVsActual: expectedServices.map((service) => ({
     service,
     registered: composeServices.includes(service),
