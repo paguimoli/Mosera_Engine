@@ -143,6 +143,121 @@ public sealed record CreditWalletDto(
     HierarchyModel HierarchyModel,
     string CorrelationId);
 
+public sealed record CreditWalletSummaryDto(
+    Guid PlayerId,
+    Guid CreditWalletId,
+    MoneyDto CreditLimit,
+    MoneyDto Balance,
+    MoneyDto PendingExposure,
+    MoneyDto AvailableCredit,
+    CreditWalletStatus Status,
+    HierarchyModel HierarchyModel,
+    string CorrelationId);
+
+public sealed record CreditExposureReservationDto(
+    Guid ReservationId,
+    string TicketId,
+    MoneyDto Amount,
+    MoneyDto RemainingExposure,
+    string Status,
+    string? CorrelationId,
+    DateTimeOffset CreatedAt);
+
+public sealed record CreditReservationDto(
+    Guid ReservationId,
+    Guid PlayerId,
+    string TicketId,
+    MoneyDto Amount,
+    MoneyDto ReservedAmount,
+    MoneyDto ReleasedAmount,
+    MoneyDto SettledAmount,
+    MoneyDto RemainingExposure,
+    string Status,
+    string IdempotencyKey,
+    string? CorrelationId,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? UpdatedAt,
+    DateTimeOffset? ReleasedAt,
+    DateTimeOffset? SettledAt,
+    DateTimeOffset? CancelledAt);
+
+public sealed record CreditSettlementApplicationDto(
+    Guid SettlementApplicationId,
+    Guid ReservationId,
+    Guid PlayerId,
+    string TicketId,
+    string SettlementId,
+    MoneyDto ReleaseAmount,
+    MoneyDto BalanceImpact,
+    MoneyDto BalanceBefore,
+    MoneyDto BalanceAfter,
+    string OperationType,
+    string IdempotencyKey,
+    string? CorrelationId,
+    DateTimeOffset CreatedAt);
+
+public sealed record CreditExposureDto(
+    Guid PlayerId,
+    MoneyDto PendingExposure,
+    IReadOnlyList<CreditExposureReservationDto> Reservations,
+    string CorrelationId);
+
+public sealed record CreditWalletTransactionDto(
+    string Id,
+    string TransactionType,
+    string TicketId,
+    MoneyDto Amount,
+    string Status,
+    string? ReferenceId,
+    string? CorrelationId,
+    DateTimeOffset CreatedAt);
+
+public sealed record CreditWalletTransactionsDto(
+    Guid PlayerId,
+    IReadOnlyList<CreditWalletTransactionDto> Transactions,
+    PaginationDto Pagination,
+    string CorrelationId);
+
+public sealed record CreditReconciliationReservationDto(
+    Guid ReservationId,
+    string TicketId,
+    MoneyDto ReservedAmount,
+    MoneyDto ReleasedAmount,
+    MoneyDto SettledAmount,
+    MoneyDto RemainingExposure,
+    string Status,
+    DateTimeOffset CreatedAt);
+
+public sealed record CreditReconciliationSettlementApplicationDto(
+    Guid SettlementApplicationId,
+    Guid ReservationId,
+    string TicketId,
+    string SettlementId,
+    MoneyDto ReleaseAmount,
+    MoneyDto BalanceImpact,
+    MoneyDto BalanceBefore,
+    MoneyDto BalanceAfter,
+    string OperationType,
+    DateTimeOffset CreatedAt);
+
+public sealed record CreditReconciliationDiscrepancyDto(
+    string Code,
+    string Severity,
+    string Message,
+    IReadOnlyDictionary<string, object?> Details);
+
+public sealed record CreditWalletReconciliationDto(
+    Guid PlayerId,
+    Guid CreditWalletId,
+    MoneyDto Balance,
+    MoneyDto PendingExposure,
+    MoneyDto AvailableCredit,
+    IReadOnlyList<CreditReconciliationReservationDto> Reservations,
+    IReadOnlyList<CreditReconciliationSettlementApplicationDto> SettlementApplications,
+    IReadOnlyList<CreditReconciliationDiscrepancyDto> DetectedDiscrepancies,
+    string CorrelationId,
+    DateTimeOffset GeneratedAtUtc);
+
 public sealed record PaginationDto(int Limit, string? NextCursor);
 
 public sealed record CreditWalletHealthResponse(
@@ -151,7 +266,18 @@ public sealed record CreditWalletHealthResponse(
     string Version,
     DateTimeOffset Timestamp,
     IReadOnlyDictionary<string, string> Dependencies,
+    CreditWalletCapabilityDto Capabilities,
     string CorrelationId);
+
+public sealed record CreditWalletCapabilityDto(
+    bool DurablePersistenceConfigured,
+    bool ReadCapabilityEnabled,
+    bool MutationCapabilityEnabled,
+    string MutationCapabilityScope,
+    bool IdempotencySupportConfigured,
+    string IdempotencySupportScope,
+    string? QaCapabilityMarker,
+    bool QaCapabilityMarkerPresent);
 
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum CreditShadowOperationType

@@ -3,6 +3,7 @@ namespace CreditWalletService.Configuration;
 public sealed record ServiceConfiguration(
     string ServiceName,
     string Environment,
+    DatabaseConfiguration Database,
     RabbitMqConfiguration RabbitMQ,
     RedisConfiguration Redis,
     SupabaseConfiguration Supabase)
@@ -16,6 +17,7 @@ public sealed record ServiceConfiguration(
         return new ServiceConfiguration(
             serviceName,
             environmentName,
+            new DatabaseConfiguration(GetEnvironmentValue("DATABASE_URL", string.Empty)),
             new RabbitMqConfiguration(
                 GetEnvironmentValue("RABBITMQ_URL", string.Empty),
                 GetEnvironmentValue("RABBITMQ_EXCHANGE_NAME", "lottery.events")),
@@ -34,6 +36,8 @@ public sealed record ServiceConfiguration(
 }
 
 public sealed record RabbitMqConfiguration(string Url, string ExchangeName);
+
+public sealed record DatabaseConfiguration(string Url);
 
 public sealed record RedisConfiguration(string Url);
 

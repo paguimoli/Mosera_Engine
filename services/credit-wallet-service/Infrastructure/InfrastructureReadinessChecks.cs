@@ -1,6 +1,7 @@
 using System.Net.Sockets;
 using System.Text;
 using CreditWalletService.Configuration;
+using Npgsql;
 
 namespace CreditWalletService.Infrastructure;
 
@@ -31,6 +32,32 @@ public sealed class InfrastructureReadinessChecks
             configuration.RabbitMQ.Url,
             defaultPort: 5672,
             cancellationToken);
+    }
+
+    public async Task<DependencyHealthResult> CheckDatabaseAsync(
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(configuration.Database.Url))
+        {
+            return new DependencyHealthResult("database", false, "DATABASE_URL is not configured.");
+        }
+
+        try
+        {
+            await using var connection = new NpgsqlConnection(
+                PostgresConnectionString.Normalize(configuration.Database.Url));
+            await connection.OpenAsync(cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "select 1";
+            await command.ExecuteScalarAsync(cancellationToken);
+
+            return new DependencyHealthResult("database", true);
+        }
+        catch (Exception error) when (error is NpgsqlException or TimeoutException or OperationCanceledException or InvalidOperationException)
+        {
+            logger.LogWarning(error, "Database readiness check failed.");
+            return new DependencyHealthResult("database", false, error.Message);
+        }
     }
 
     public async Task<DependencyHealthResult> CheckRedisAsync(

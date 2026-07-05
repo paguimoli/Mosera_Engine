@@ -6,4 +6,5 @@ public sealed record SettlementHealthResponse(
     string Version,
     DateTimeOffset Timestamp,
     IReadOnlyDictionary<string, string> Dependencies,
+    SettlementPersistenceCapabilityDto Capabilities,
     string CorrelationId);

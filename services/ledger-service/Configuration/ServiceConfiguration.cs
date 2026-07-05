@@ -5,7 +5,8 @@ public sealed record ServiceConfiguration(
     string Environment,
     RabbitMqConfiguration RabbitMQ,
     RedisConfiguration Redis,
-    SupabaseConfiguration Supabase)
+    SupabaseConfiguration Supabase,
+    DatabaseConfiguration Database)
 {
     public static ServiceConfiguration FromEnvironment(IHostEnvironment environment)
     {
@@ -22,7 +23,8 @@ public sealed record ServiceConfiguration(
             new RedisConfiguration(GetEnvironmentValue("REDIS_URL", string.Empty)),
             new SupabaseConfiguration(
                 GetEnvironmentValue("SUPABASE_URL", string.Empty),
-                GetEnvironmentValue("SUPABASE_SERVICE_ROLE_KEY", string.Empty)));
+                GetEnvironmentValue("SUPABASE_SERVICE_ROLE_KEY", string.Empty)),
+            new DatabaseConfiguration(GetEnvironmentValue("DATABASE_URL", string.Empty)));
     }
 
     private static string GetEnvironmentValue(string name, string fallback)
@@ -38,3 +40,5 @@ public sealed record RabbitMqConfiguration(string Url, string ExchangeName);
 public sealed record RedisConfiguration(string Url);
 
 public sealed record SupabaseConfiguration(string Url, string ServiceRoleKey);
+
+public sealed record DatabaseConfiguration(string Url);

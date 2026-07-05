@@ -93,14 +93,15 @@ public static class CreditWalletEndpoints
             return NotImplemented(context, service);
         });
 
-        group.MapPost("/{playerId:guid}/reserve", (
+        group.MapPost("/{playerId:guid}/reserve", async (
             HttpContext context,
             Guid playerId,
             ReserveExposureRequest request,
             CreditWalletContractService service,
+            DurableCreditWalletRepository repository,
             ILoggerFactory loggerFactory) =>
         {
-            LogCommand(loggerFactory, "Credit reservation placeholder command received.", playerId);
+            LogCommand(loggerFactory, "Credit reservation command received.", playerId);
 
             if (IsMissingIdempotencyKey(context))
             {
@@ -115,17 +116,31 @@ public static class CreditWalletEndpoints
                     "amount"));
             }
 
-            return NotImplemented(context, service);
+            if (!repository.DurablePersistenceConfigured)
+            {
+                return NotImplemented(context, service);
+            }
+
+            return await ExecuteMutationAsync(
+                context,
+                loggerFactory,
+                () => repository.ReserveAsync(
+                    playerId,
+                    request,
+                    GetIdempotencyKey(context),
+                    context.GetCorrelationId(),
+                    context.RequestAborted));
         });
 
-        group.MapPost("/{playerId:guid}/release", (
+        group.MapPost("/{playerId:guid}/release", async (
             HttpContext context,
             Guid playerId,
             ReleaseExposureRequest request,
             CreditWalletContractService service,
+            DurableCreditWalletRepository repository,
             ILoggerFactory loggerFactory) =>
         {
-            LogCommand(loggerFactory, "Credit release placeholder command received.", playerId);
+            LogCommand(loggerFactory, "Credit release command received.", playerId);
 
             if (IsMissingIdempotencyKey(context))
             {
@@ -140,17 +155,31 @@ public static class CreditWalletEndpoints
                     "releaseAmount"));
             }
 
-            return NotImplemented(context, service);
+            if (!repository.DurablePersistenceConfigured)
+            {
+                return NotImplemented(context, service);
+            }
+
+            return await ExecuteMutationAsync(
+                context,
+                loggerFactory,
+                () => repository.ReleaseAsync(
+                    playerId,
+                    request,
+                    GetIdempotencyKey(context),
+                    context.GetCorrelationId(),
+                    context.RequestAborted));
         });
 
-        group.MapPost("/{playerId:guid}/settle", (
+        group.MapPost("/{playerId:guid}/settle", async (
             HttpContext context,
             Guid playerId,
             SettleCreditRequest request,
             CreditWalletContractService service,
+            DurableCreditWalletRepository repository,
             ILoggerFactory loggerFactory) =>
         {
-            LogCommand(loggerFactory, "Credit settlement placeholder command received.", playerId);
+            LogCommand(loggerFactory, "Credit settlement command received.", playerId);
 
             if (IsMissingIdempotencyKey(context))
             {
@@ -173,7 +202,28 @@ public static class CreditWalletEndpoints
                     "balanceImpact"));
             }
 
-            return NotImplemented(context, service);
+            if (request.ReleaseAmount.Currency != request.BalanceImpact.Currency)
+            {
+                return Results.BadRequest(service.CreateValidationError(
+                    context.GetCorrelationId(),
+                    "Release amount and balance impact currencies must match.",
+                    "currency"));
+            }
+
+            if (!repository.DurablePersistenceConfigured)
+            {
+                return NotImplemented(context, service);
+            }
+
+            return await ExecuteMutationAsync(
+                context,
+                loggerFactory,
+                () => repository.SettleAsync(
+                    playerId,
+                    request,
+                    GetIdempotencyKey(context),
+                    context.GetCorrelationId(),
+                    context.RequestAborted));
         });
 
         group.MapPost("/{playerId:guid}/adjust", (
@@ -209,29 +259,60 @@ public static class CreditWalletEndpoints
             return NotImplemented(context, service);
         });
 
-        group.MapGet("/{playerId:guid}", (
+        group.MapGet("/{playerId:guid}", async (
             HttpContext context,
             Guid playerId,
             CreditWalletContractService service,
+            DurableCreditWalletRepository repository,
             ILoggerFactory loggerFactory) =>
         {
             LogQuery(loggerFactory, "Credit wallet placeholder query received.", playerId);
-            return NotImplemented(context, service);
+
+            if (!repository.DurablePersistenceConfigured)
+            {
+                return NotImplemented(context, service);
+            }
+
+            return await ExecuteReadAsync(
+                context,
+                service,
+                loggerFactory,
+                async cancellationToken =>
+                {
+                    var summary = await repository.GetSummaryAsync(
+                        playerId,
+                        context.GetCorrelationId(),
+                        cancellationToken);
+
+                    return summary is null
+                        ? NotFound(context, playerId)
+                        : Results.Ok(new CreditWalletDto(
+                            summary.PlayerId,
+                            summary.CreditWalletId,
+                            summary.CreditLimit,
+                            summary.Balance,
+                            summary.PendingExposure,
+                            summary.AvailableCredit,
+                            summary.Status,
+                            summary.HierarchyModel,
+                            summary.CorrelationId));
+                });
         });
 
-        group.MapGet("/{playerId:guid}/transactions", (
+        group.MapGet("/{playerId:guid}/transactions", async (
             HttpContext context,
             Guid playerId,
-            DateTimeOffset? from,
-            DateTimeOffset? to,
-            string? transactionType,
-            int? limit,
-            string? cursor,
-            string? sort,
             CreditWalletContractService service,
+            DurableCreditWalletRepository repository,
             ILoggerFactory loggerFactory) =>
         {
             LogQuery(loggerFactory, "Credit wallet transactions placeholder query received.", playerId);
+            var query = context.Request.Query;
+            var limit = int.TryParse(query["limit"].FirstOrDefault(), out var parsedLimit)
+                ? parsedLimit
+                : null as int?;
+            var cursor = query["cursor"].FirstOrDefault();
+            var sort = query["sort"].FirstOrDefault();
 
             if (limit is < 1 or > 250)
             {
@@ -249,39 +330,76 @@ public static class CreditWalletEndpoints
                     "sort"));
             }
 
-            _ = from;
-            _ = to;
-            _ = transactionType;
-            _ = cursor;
+            if (!repository.DurablePersistenceConfigured)
+            {
+                return NotImplemented(context, service);
+            }
 
-            return NotImplemented(context, service);
+            return await ExecuteReadAsync(
+                context,
+                service,
+                loggerFactory,
+                async cancellationToken =>
+                {
+                    var resolvedLimit = limit ?? 100;
+                    var offset = ParseCursor(cursor);
+                    var ascending = sort == "createdAt.asc";
+                    var transactions = await repository.ListTransactionsAsync(
+                        playerId,
+                        resolvedLimit,
+                        offset,
+                        ascending,
+                        context.GetCorrelationId(),
+                        cancellationToken);
+
+                    return transactions is null ? NotFound(context, playerId) : Results.Ok(transactions);
+                });
         });
 
-        group.MapGet("/{playerId:guid}/exposure", (
+        group.MapGet("/{playerId:guid}/exposure", async (
             HttpContext context,
             Guid playerId,
             Guid? marketId,
             Guid? drawId,
             bool? includeReservations,
             CreditWalletContractService service,
+            DurableCreditWalletRepository repository,
             ILoggerFactory loggerFactory) =>
         {
             LogQuery(loggerFactory, "Credit wallet exposure placeholder query received.", playerId);
 
             _ = marketId;
             _ = drawId;
-            _ = includeReservations;
 
-            return NotImplemented(context, service);
+            if (!repository.DurablePersistenceConfigured)
+            {
+                return NotImplemented(context, service);
+            }
+
+            return await ExecuteReadAsync(
+                context,
+                service,
+                loggerFactory,
+                async cancellationToken =>
+                {
+                    var exposure = await repository.GetExposureAsync(
+                        playerId,
+                        includeReservations ?? true,
+                        context.GetCorrelationId(),
+                        cancellationToken);
+
+                    return exposure is null ? NotFound(context, playerId) : Results.Ok(exposure);
+                });
         });
 
-        group.MapGet("/{playerId:guid}/summary", (
+        group.MapGet("/{playerId:guid}/summary", async (
             HttpContext context,
             Guid playerId,
             Guid? periodId,
             DateTimeOffset? from,
             DateTimeOffset? to,
             CreditWalletContractService service,
+            DurableCreditWalletRepository repository,
             ILoggerFactory loggerFactory) =>
         {
             LogQuery(loggerFactory, "Credit wallet summary placeholder query received.", playerId);
@@ -290,7 +408,53 @@ public static class CreditWalletEndpoints
             _ = from;
             _ = to;
 
-            return NotImplemented(context, service);
+            if (!repository.DurablePersistenceConfigured)
+            {
+                return NotImplemented(context, service);
+            }
+
+            return await ExecuteReadAsync(
+                context,
+                service,
+                loggerFactory,
+                async cancellationToken =>
+                {
+                    var summary = await repository.GetSummaryAsync(
+                        playerId,
+                        context.GetCorrelationId(),
+                        cancellationToken);
+
+                    return summary is null ? NotFound(context, playerId) : Results.Ok(summary);
+                });
+        });
+
+        group.MapGet("/{playerId:guid}/reconciliation", async (
+            HttpContext context,
+            Guid playerId,
+            CreditWalletContractService service,
+            DurableCreditWalletRepository repository,
+            ILoggerFactory loggerFactory) =>
+        {
+            LogQuery(loggerFactory, "Credit wallet reconciliation query received.", playerId);
+
+            if (!repository.DurablePersistenceConfigured)
+            {
+                return NotImplemented(context, service);
+            }
+
+            return await ExecuteReadAsync(
+                context,
+                service,
+                loggerFactory,
+                async cancellationToken =>
+                {
+                    var reconciliation = await repository.GetReconciliationAsync(
+                        playerId,
+                        context.GetCorrelationId(),
+                        cancellationToken);
+
+                    return reconciliation is null ? NotFound(context, playerId) : Results.Ok(reconciliation);
+                });
         });
 
         var shadowGroup = app.MapGroup("/v1/credit/shadow");
@@ -442,6 +606,132 @@ public static class CreditWalletEndpoints
         var value = context.Request.Headers[CreditWalletHeaders.IdempotencyKey].FirstOrDefault();
 
         return string.IsNullOrWhiteSpace(value);
+    }
+
+    private static string GetIdempotencyKey(HttpContext context)
+    {
+        return context.Request.Headers[CreditWalletHeaders.IdempotencyKey].FirstOrDefault()?.Trim()
+            ?? throw new InvalidOperationException("Idempotency-Key header is required.");
+    }
+
+    private static async Task<IResult> ExecuteMutationAsync<TResponse>(
+        HttpContext context,
+        ILoggerFactory loggerFactory,
+        Func<Task<TResponse>> mutation)
+    {
+        try
+        {
+            return Results.Ok(await mutation());
+        }
+        catch (DurableCreditWalletDomainException error)
+        {
+            return Results.BadRequest(new ErrorResponse(
+                new ErrorDto(error.Code, error.Message),
+                context.GetCorrelationId()));
+        }
+        catch (Npgsql.PostgresException error)
+        {
+            var mapped = MapPostgresCreditError(error.MessageText);
+            return Results.BadRequest(new ErrorResponse(
+                new ErrorDto(mapped.Code, mapped.Message),
+                context.GetCorrelationId()));
+        }
+        catch (Exception error) when (error is DurableCreditWalletRepositoryException or Npgsql.NpgsqlException or InvalidOperationException or TimeoutException)
+        {
+            loggerFactory
+                .CreateLogger("CreditWalletCommandEndpoints")
+                .LogWarning(error, "Credit wallet durable mutation failed.");
+
+            return Results.Json(
+                new ErrorResponse(
+                    new ErrorDto(
+                        CreditWalletErrorCodes.InternalError,
+                        "Credit wallet durable mutation is unavailable."),
+                    context.GetCorrelationId()),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+    }
+
+    private static (string Code, string Message) MapPostgresCreditError(string message)
+    {
+        if (message.Contains("Insufficient available credit", StringComparison.OrdinalIgnoreCase))
+        {
+            return (CreditWalletErrorCodes.InsufficientAvailable, message);
+        }
+
+        if (message.Contains("not found", StringComparison.OrdinalIgnoreCase))
+        {
+            return (CreditWalletErrorCodes.ReservationNotFound, message);
+        }
+
+        if (message.Contains("settlement", StringComparison.OrdinalIgnoreCase))
+        {
+            return (CreditWalletErrorCodes.InvalidSettlement, message);
+        }
+
+        if (message.Contains("release", StringComparison.OrdinalIgnoreCase))
+        {
+            return (CreditWalletErrorCodes.InvalidRelease, message);
+        }
+
+        return (CreditWalletErrorCodes.ValidationFailed, message);
+    }
+
+    private static async Task<IResult> ExecuteReadAsync(
+        HttpContext context,
+        CreditWalletContractService service,
+        ILoggerFactory loggerFactory,
+        Func<CancellationToken, Task<IResult>> read)
+    {
+        try
+        {
+            return await read(context.RequestAborted);
+        }
+        catch (DurableCreditWalletRepositoryException error)
+        {
+            return DurableReadUnavailable(context, service, error.Message);
+        }
+        catch (Exception error) when (error is Npgsql.NpgsqlException or InvalidOperationException or TimeoutException)
+        {
+            loggerFactory
+                .CreateLogger("CreditWalletQueryEndpoints")
+                .LogWarning(error, "Credit wallet durable read failed.");
+
+            return DurableReadUnavailable(context, service, "Credit wallet durable persistence is unavailable.");
+        }
+    }
+
+    private static IResult DurableReadUnavailable(
+        HttpContext context,
+        CreditWalletContractService service,
+        string reason)
+    {
+        _ = service;
+        return Results.Json(
+            new ErrorResponse(
+                new ErrorDto(
+                    CreditWalletErrorCodes.InternalError,
+                    reason),
+                context.GetCorrelationId()),
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+
+    private static IResult NotFound(HttpContext context, Guid playerId)
+    {
+        return Results.NotFound(new ErrorResponse(
+            new ErrorDto(
+                CreditWalletErrorCodes.ReservationNotFound,
+                "Credit wallet was not found for the requested player.",
+                new Dictionary<string, object?>
+                {
+                    ["playerId"] = playerId
+                }),
+            context.GetCorrelationId()));
+    }
+
+    private static int ParseCursor(string? cursor)
+    {
+        return int.TryParse(cursor, out var offset) && offset > 0 ? offset : 0;
     }
 
     private static IResult NotImplemented(

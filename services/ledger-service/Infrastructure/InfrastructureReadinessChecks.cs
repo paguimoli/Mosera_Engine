@@ -1,6 +1,7 @@
 using System.Net.Sockets;
 using System.Text;
 using LedgerService.Configuration;
+using Npgsql;
 
 namespace LedgerService.Infrastructure;
 
@@ -65,6 +66,32 @@ public sealed class InfrastructureReadinessChecks
         }
     }
 
+    public async Task<DependencyHealthResult> CheckDatabaseAsync(
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(configuration.Database.Url))
+        {
+            return new DependencyHealthResult("database", false, "DATABASE_URL is not configured.");
+        }
+
+        try
+        {
+            await using var connection = new NpgsqlConnection(
+                PostgresConnectionString.Normalize(configuration.Database.Url));
+            await connection.OpenAsync(cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "select 1";
+            await command.ExecuteScalarAsync(cancellationToken);
+
+            return new DependencyHealthResult("database", true);
+        }
+        catch (Exception error) when (error is NpgsqlException or TimeoutException or OperationCanceledException)
+        {
+            logger.LogWarning(error, "Database readiness check failed.");
+            return new DependencyHealthResult("database", false, error.Message);
+        }
+    }
+
     private async Task<DependencyHealthResult> CheckTcpEndpointAsync(
         string name,
         string url,
@@ -89,5 +116,30 @@ public sealed class InfrastructureReadinessChecks
     private static int GetPort(Uri uri, int defaultPort)
     {
         return uri.IsDefaultPort ? defaultPort : uri.Port;
+    }
+}
+
+public static class PostgresConnectionString
+{
+    public static string Normalize(string connectionString)
+    {
+        if (connectionString.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase) ||
+            connectionString.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase))
+        {
+            var uri = new Uri(connectionString);
+            var userInfo = uri.UserInfo.Split(':', 2);
+            var builder = new NpgsqlConnectionStringBuilder
+            {
+                Host = uri.Host,
+                Port = uri.Port > 0 ? uri.Port : 5432,
+                Database = uri.AbsolutePath.TrimStart('/'),
+                Username = Uri.UnescapeDataString(userInfo.ElementAtOrDefault(0) ?? string.Empty),
+                Password = Uri.UnescapeDataString(userInfo.ElementAtOrDefault(1) ?? string.Empty)
+            };
+
+            return builder.ConnectionString;
+        }
+
+        return connectionString;
     }
 }

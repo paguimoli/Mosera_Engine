@@ -65,6 +65,32 @@ public sealed class InfrastructureReadinessChecks
         }
     }
 
+    public async Task<DependencyHealthResult> CheckDatabaseAsync(
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(configuration.Database.Url))
+        {
+            return new DependencyHealthResult("database", false, "DATABASE_URL is not configured.");
+        }
+
+        try
+        {
+            await using var connection = new Npgsql.NpgsqlConnection(
+                PostgresConnectionString.Normalize(configuration.Database.Url));
+            await connection.OpenAsync(cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "select 1";
+            await command.ExecuteScalarAsync(cancellationToken);
+
+            return new DependencyHealthResult("database", true);
+        }
+        catch (Exception error) when (error is Npgsql.NpgsqlException or InvalidOperationException or OperationCanceledException)
+        {
+            logger.LogWarning(error, "Database readiness check failed.");
+            return new DependencyHealthResult("database", false, error.Message);
+        }
+    }
+
     private async Task<DependencyHealthResult> CheckTcpEndpointAsync(
         string name,
         string url,

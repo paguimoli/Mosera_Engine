@@ -1,4 +1,11 @@
 import { supabaseServerAdmin } from "@/src/lib/supabase/server-admin-client";
+import { readAuthorityConfigurations } from "../authority-control/authority-control.repository";
+import {
+  applyCreditSettlementViaCreditWalletService,
+  getPlayerCreditSummaryViaCreditWalletService,
+  releaseCreditExposureViaCreditWalletService,
+  reserveCreditExposureViaCreditWalletService,
+} from "./credit-wallet-service-client";
 import type {
   ApplyCreditSettlementInput,
   CancelCreditReservationInput,
@@ -62,6 +69,20 @@ export class CreditReservationRepositoryError extends Error {
     super(message);
     this.name = "CreditReservationRepositoryError";
   }
+}
+
+function isCreditServiceAuthorityEnabled() {
+  return readAuthorityConfigurations().credit.authority === "SERVICE";
+}
+
+function serviceMetadataWithPlayerId(
+  metadata: Record<string, unknown> | undefined,
+  playerId: string
+) {
+  return {
+    ...(metadata ?? {}),
+    playerId,
+  };
 }
 
 function mapCreditReservationRow(
@@ -141,6 +162,10 @@ function assertCreditSettlementApplication(
 export async function reserveCreditExposure(
   input: ReserveCreditExposureInput
 ): Promise<CreditReservation> {
+  if (isCreditServiceAuthorityEnabled()) {
+    return reserveCreditExposureViaCreditWalletService(input);
+  }
+
   const { data, error } = await supabaseServerAdmin.rpc(
     "reserve_credit_exposure",
     {
@@ -164,6 +189,20 @@ export async function reserveCreditExposure(
 export async function releaseCreditExposure(
   input: ReleaseCreditExposureInput
 ): Promise<CreditReservation> {
+  if (isCreditServiceAuthorityEnabled()) {
+    const playerId =
+      typeof input.metadata?.playerId === "string"
+        ? input.metadata.playerId
+        : (await findCreditReservationById(input.reservationId))?.playerId;
+
+    return releaseCreditExposureViaCreditWalletService({
+      ...input,
+      metadata: playerId
+        ? serviceMetadataWithPlayerId(input.metadata, playerId)
+        : input.metadata,
+    });
+  }
+
   const { data, error } = await supabaseServerAdmin.rpc(
     "release_credit_exposure",
     {
@@ -187,6 +226,12 @@ export async function releaseCreditExposure(
 export async function cancelCreditReservation(
   input: CancelCreditReservationInput
 ): Promise<CreditReservation> {
+  if (isCreditServiceAuthorityEnabled()) {
+    throw new CreditReservationRepositoryError(
+      "Credit Wallet Service authority does not support reservation cancellation."
+    );
+  }
+
   const { data, error } = await supabaseServerAdmin.rpc(
     "cancel_credit_reservation",
     {
@@ -206,6 +251,20 @@ export async function cancelCreditReservation(
 export async function applyCreditSettlement(
   input: ApplyCreditSettlementInput
 ): Promise<CreditSettlementApplicationResult> {
+  if (isCreditServiceAuthorityEnabled()) {
+    const playerId =
+      typeof input.metadata?.playerId === "string"
+        ? input.metadata.playerId
+        : (await findCreditReservationById(input.reservationId))?.playerId;
+
+    return applyCreditSettlementViaCreditWalletService({
+      ...input,
+      metadata: playerId
+        ? serviceMetadataWithPlayerId(input.metadata, playerId)
+        : input.metadata,
+    });
+  }
+
   const { data, error } = await supabaseServerAdmin.rpc(
     "apply_credit_settlement",
     {
@@ -233,6 +292,10 @@ export async function applyCreditSettlement(
 export async function getPlayerCreditSummary(
   playerId: string
 ): Promise<CreditSummary> {
+  if (isCreditServiceAuthorityEnabled()) {
+    return getPlayerCreditSummaryViaCreditWalletService(playerId);
+  }
+
   const { data, error } = await supabaseServerAdmin.rpc(
     "get_player_credit_summary",
     {

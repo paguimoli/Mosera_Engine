@@ -1,16 +1,16 @@
 # Credit Wallet Service
 
-This service exposes the Credit Wallet contract surface and the Phase 13.6 shadow-mode execution endpoints. It does not own production credit operations.
+This service exposes the Credit Wallet contract surface, durable read-only wallet views, and the Phase 13.6 shadow-mode execution endpoints. It does not own production credit operations.
 
 ## Purpose
 
-The future Credit Wallet Service will own credit limits, available credit, pending exposure, exposure reservation, exposure release, settlement application, credit adjustments, and credit wallet query interfaces. In this phase it can independently validate credit reservation, release, and settlement-credit calculations in shadow mode.
+The future Credit Wallet Service will own credit limits, available credit, pending exposure, exposure reservation, exposure release, settlement application, credit adjustments, and credit wallet query interfaces. In this phase it can read durable local credit wallet state and independently validate credit reservation, release, and settlement-credit calculations in shadow mode.
 
 Production credit behavior remains in the existing platform until contracts, reconciliation, feature flags, rollback, and operational monitoring are proven.
 
 ## Non-production status
 
-This service does not implement production credit mutations, allocation logic, event publishing, event consuming, or production routing. Shadow mode never updates production balances, reservations, exposure, available credit, or outbox events.
+This service does not implement full production credit authority, allocation logic, event consuming, or production routing. Durable reserve/release/settle/reconciliation endpoints are enabled only as a scoped capability while `CREDIT_AUTHORITY` remains `MONOLITH`. Durable read endpoints do not modify rows. Shadow mode never updates production balances, reservations, exposure, available credit, or outbox events.
 
 ## Supported endpoints
 
@@ -33,7 +33,7 @@ This service does not implement production credit mutations, allocation logic, e
 - `POST /v1/credit/shadow/release`
 - `POST /v1/credit/shadow/settlement`
 
-Credit command and query endpoints currently return safe placeholder `CREDIT_NOT_IMPLEMENTED` responses after basic contract validation.
+Credit reserve/release command endpoints use durable Postgres RPCs when `DATABASE_URL` is configured. Duplicate reserve/release idempotency keys return the original durable reservation state. Other credit command endpoints currently return safe placeholder `CREDIT_NOT_IMPLEMENTED` responses after basic contract validation. Query endpoints read durable Postgres state when `DATABASE_URL` is configured; otherwise they keep the safe placeholder behavior.
 
 Shadow endpoints validate and compare credit calculations against an optional monolith result. They may persist shadow evidence only.
 
@@ -66,7 +66,7 @@ Balance-impacting command endpoints require `Idempotency-Key`:
 - Settlement.
 - Adjustment.
 
-This phase validates header presence only. Durable idempotency storage is not implemented in this service skeleton.
+Reserve and release use durable idempotency storage. Other command endpoints validate header presence only and remain placeholders.
 
 ## Launch model
 
@@ -84,6 +84,7 @@ Supported models:
 - `RABBITMQ_URL`
 - `RABBITMQ_EXCHANGE_NAME`
 - `REDIS_URL`
+- `DATABASE_URL`
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 
@@ -95,6 +96,7 @@ Inside Docker Compose:
 ## Readiness checks
 
 `GET /health/ready` validates RabbitMQ TCP connectivity and Redis PING connectivity. The Credit Wallet-specific health endpoint reports database and Ledger Service as `not_configured` because this skeleton does not connect to production credit storage or Ledger Service yet.
+When `DATABASE_URL` is configured, `GET /health/ready` also validates Postgres connectivity. The Credit Wallet-specific health endpoint reports durable read capability and scoped reserve/release/settle/reconciliation mutation/idempotency capability. This is not full production authority.
 
 ## Shadow persistence
 

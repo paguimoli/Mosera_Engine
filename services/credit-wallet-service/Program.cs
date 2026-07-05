@@ -21,6 +21,7 @@ builder.Services.AddSingleton<InfrastructureReadinessChecks>();
 builder.Services.AddSingleton<CreditWalletContractService>();
 builder.Services.AddSingleton<CreditShadowCalculator>();
 builder.Services.AddSingleton<CreditShadowPersistence>();
+builder.Services.AddSingleton<DurableCreditWalletRepository>();
 
 var app = builder.Build();
 

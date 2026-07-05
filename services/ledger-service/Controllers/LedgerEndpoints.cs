@@ -13,17 +13,19 @@ public static class LedgerEndpoints
         group.MapPost("/entries", (
             HttpContext context,
             CreateLedgerEntryRequest request,
+            DurableLedgerService durableLedgerService,
             LedgerContractService ledgerContractService,
             ILoggerFactory loggerFactory) =>
         {
             var correlationId = context.GetCorrelationId();
+            var idempotencyKey = GetIdempotencyKey(context);
             var logger = loggerFactory.CreateLogger("LedgerCommandEndpoints");
             logger.LogInformation(
-                "Ledger entry placeholder command received. TransactionType: {TransactionType}. Direction: {Direction}.",
+                "Ledger entry command received. TransactionType: {TransactionType}. Direction: {Direction}.",
                 request.TransactionType,
                 request.Direction);
 
-            if (IsMissingIdempotencyKey(context))
+            if (string.IsNullOrWhiteSpace(idempotencyKey))
             {
                 return Results.BadRequest(ledgerContractService.CreateMissingIdempotencyKeyError(correlationId));
             }
@@ -36,28 +38,49 @@ public static class LedgerEndpoints
                     "money"));
             }
 
-            return Results.Json(
-                ledgerContractService.CreateNotImplementedError(correlationId),
-                statusCode: StatusCodes.Status501NotImplemented);
+            if (!durableLedgerService.MutationCapabilityEnabled)
+            {
+                return Results.Json(
+                    new ErrorResponse(
+                        new ErrorDto(
+                            LedgerErrorCodes.InternalError,
+                            "Ledger durable persistence is not configured."),
+                        correlationId),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            try
+            {
+                var ledgerEntry = durableLedgerService.PostEntryAsync(
+                    request,
+                    idempotencyKey,
+                    context.RequestAborted).GetAwaiter().GetResult();
+
+                return Results.Ok(new LedgerEntryResponse(ledgerEntry, correlationId));
+            }
+            catch (Exception error) when (DurableLedgerService.IsBusinessRuleError(error))
+            {
+                logger.LogWarning(error, "Ledger entry command failed validation.");
+                return Results.BadRequest(ledgerContractService.CreateValidationError(
+                    correlationId,
+                    error.Message,
+                    "ledgerEntry"));
+            }
         });
 
         group.MapPost("/entries/{ledgerEntryId:guid}/reverse", (
             HttpContext context,
             Guid ledgerEntryId,
             ReverseLedgerEntryRequest request,
+            DurableLedgerService durableLedgerService,
             LedgerContractService ledgerContractService,
             ILoggerFactory loggerFactory) =>
         {
             var correlationId = context.GetCorrelationId();
             var logger = loggerFactory.CreateLogger("LedgerCommandEndpoints");
             logger.LogInformation(
-                "Ledger reversal placeholder command received. LedgerEntryId: {LedgerEntryId}.",
+                "Ledger reversal command received. LedgerEntryId: {LedgerEntryId}.",
                 ledgerEntryId);
-
-            if (IsMissingIdempotencyKey(context))
-            {
-                return Results.BadRequest(ledgerContractService.CreateMissingIdempotencyKeyError(correlationId));
-            }
 
             if (string.IsNullOrWhiteSpace(request.Reason))
             {
@@ -67,25 +90,77 @@ public static class LedgerEndpoints
                     "reason"));
             }
 
-            return Results.Json(
-                ledgerContractService.CreateNotImplementedError(correlationId),
-                statusCode: StatusCodes.Status501NotImplemented);
+            if (!durableLedgerService.MutationCapabilityEnabled)
+            {
+                return Results.Json(
+                    new ErrorResponse(
+                        new ErrorDto(
+                            LedgerErrorCodes.InternalError,
+                            "Ledger durable persistence is not configured."),
+                        correlationId),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            try
+            {
+                var ledgerEntry = durableLedgerService.ReverseEntryAsync(
+                    ledgerEntryId,
+                    request,
+                    context.RequestAborted).GetAwaiter().GetResult();
+
+                return ledgerEntry is null
+                    ? Results.NotFound(new ErrorResponse(
+                        new ErrorDto(
+                            LedgerErrorCodes.EntryNotFound,
+                            "Ledger entry was not found."),
+                        correlationId))
+                    : Results.Ok(new LedgerEntryResponse(ledgerEntry, correlationId));
+            }
+            catch (Exception error) when (DurableLedgerService.IsBusinessRuleError(error))
+            {
+                logger.LogWarning(error, "Ledger reversal command failed validation.");
+                return Results.BadRequest(ledgerContractService.CreateValidationError(
+                    correlationId,
+                    error.Message,
+                    "ledgerEntry"));
+            }
         });
 
         group.MapGet("/entries/{ledgerEntryId:guid}", (
             HttpContext context,
             Guid ledgerEntryId,
+            DurableLedgerService durableLedgerService,
             LedgerContractService ledgerContractService,
             ILoggerFactory loggerFactory) =>
         {
+            var correlationId = context.GetCorrelationId();
             var logger = loggerFactory.CreateLogger("LedgerQueryEndpoints");
             logger.LogInformation(
-                "Ledger entry placeholder query received. LedgerEntryId: {LedgerEntryId}.",
+                "Ledger entry query received. LedgerEntryId: {LedgerEntryId}.",
                 ledgerEntryId);
 
-            return Results.Json(
-                ledgerContractService.CreateNotImplementedError(context.GetCorrelationId()),
-                statusCode: StatusCodes.Status501NotImplemented);
+            if (!durableLedgerService.DurablePersistenceConfigured)
+            {
+                return Results.Json(
+                    new ErrorResponse(
+                        new ErrorDto(
+                            LedgerErrorCodes.InternalError,
+                            "Ledger durable persistence is not configured."),
+                        correlationId),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            var ledgerEntry = durableLedgerService.FindEntryAsync(
+                ledgerEntryId,
+                context.RequestAborted).GetAwaiter().GetResult();
+
+            return ledgerEntry is null
+                ? Results.NotFound(new ErrorResponse(
+                    new ErrorDto(
+                        LedgerErrorCodes.EntryNotFound,
+                        "Ledger entry was not found."),
+                    correlationId))
+                : Results.Ok(new LedgerEntryResponse(ledgerEntry, correlationId));
         });
 
         group.MapGet("/accounts/{accountId:guid}/entries", (
@@ -101,18 +176,22 @@ public static class LedgerEndpoints
             int? limit,
             string? cursor,
             string? sort,
+            DurableLedgerService durableLedgerService,
             LedgerContractService ledgerContractService,
             ILoggerFactory loggerFactory) =>
         {
+            var correlationId = context.GetCorrelationId();
             var logger = loggerFactory.CreateLogger("LedgerQueryEndpoints");
             logger.LogInformation(
-                "Ledger account entries placeholder query received. AccountId: {AccountId}.",
+                "Ledger account entries query received. AccountId: {AccountId}.",
                 accountId);
 
-            if (limit is < 1 or > 250)
+            var resolvedLimit = limit ?? 100;
+
+            if (resolvedLimit is < 1 or > 250)
             {
                 return Results.BadRequest(ledgerContractService.CreateValidationError(
-                    context.GetCorrelationId(),
+                    correlationId,
                     "Limit must be between 1 and 250.",
                     "limit"));
             }
@@ -120,7 +199,7 @@ public static class LedgerEndpoints
             if (sort is not null && sort is not "createdAt.asc" and not "createdAt.desc")
             {
                 return Results.BadRequest(ledgerContractService.CreateValidationError(
-                    context.GetCorrelationId(),
+                    correlationId,
                     "Sort must be createdAt.asc or createdAt.desc.",
                     "sort"));
             }
@@ -132,11 +211,29 @@ public static class LedgerEndpoints
             _ = referenceId;
             _ = createdFrom;
             _ = createdTo;
-            _ = cursor;
 
-            return Results.Json(
-                ledgerContractService.CreateNotImplementedError(context.GetCorrelationId()),
-                statusCode: StatusCodes.Status501NotImplemented);
+            if (!durableLedgerService.DurablePersistenceConfigured)
+            {
+                return Results.Json(
+                    new ErrorResponse(
+                        new ErrorDto(
+                            LedgerErrorCodes.InternalError,
+                            "Ledger durable persistence is not configured."),
+                        correlationId),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            var page = durableLedgerService.ListAccountEntriesAsync(
+                accountId,
+                resolvedLimit,
+                cursor,
+                sort,
+                context.RequestAborted).GetAwaiter().GetResult();
+
+            return Results.Ok(new LedgerEntriesResponse(
+                page.Entries,
+                new PaginationDto(resolvedLimit, page.NextCursor),
+                correlationId));
         });
 
         group.MapPost("/shadow/execute", async (
@@ -229,10 +326,13 @@ public static class LedgerEndpoints
         });
     }
 
+    private static string? GetIdempotencyKey(HttpContext context)
+    {
+        return context.Request.Headers[LedgerHeaders.IdempotencyKey].FirstOrDefault()?.Trim();
+    }
+
     private static bool IsMissingIdempotencyKey(HttpContext context)
     {
-        var value = context.Request.Headers[LedgerHeaders.IdempotencyKey].FirstOrDefault();
-
-        return string.IsNullOrWhiteSpace(value);
+        return string.IsNullOrWhiteSpace(GetIdempotencyKey(context));
     }
 }

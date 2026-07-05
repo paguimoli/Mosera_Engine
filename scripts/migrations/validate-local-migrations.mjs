@@ -112,6 +112,9 @@ const requiredTables = [
   "public.cashier_transactions",
   "public.outbox_events",
   "public.financial_worker_event_handlers",
+  "public.credit_reservations",
+  "public.credit_reservation_releases",
+  "public.credit_settlement_applications",
 ];
 
 for (const table of requiredTables) {
@@ -151,8 +154,16 @@ addCheck("outbox_events_aggregate_index", indexExists("public", "outbox_events",
 addCheck("financial_worker_event_handlers_idempotency_unique", uniqueIndexExists("public", "financial_worker_event_handlers", "idempotency_key"));
 addCheck("financial_worker_event_handlers_event_type_index", indexExists("public", "financial_worker_event_handlers", "financial_worker_event_handlers_event_type_idx"));
 addCheck("financial_worker_event_handlers_status_index", indexExists("public", "financial_worker_event_handlers", "financial_worker_event_handlers_status_idx"));
+addCheck("credit_reservations_idempotency_unique", uniqueIndexExists("public", "credit_reservations", "idempotency_key"));
+addCheck("credit_reservations_player_id_index", indexExists("public", "credit_reservations", "credit_reservations_player_id_idx"));
+addCheck("credit_reservation_releases_idempotency_unique", uniqueIndexExists("public", "credit_reservation_releases", "idempotency_key"));
+addCheck("credit_settlement_applications_idempotency_unique", uniqueIndexExists("public", "credit_settlement_applications", "idempotency_key"));
 addCheck("post_financial_ledger_entry_function", functionExists("public", "post_financial_ledger_entry"));
 addCheck("complete_cashier_transaction_atomically_function", functionExists("public", "complete_cashier_transaction_atomically"));
+addCheck("get_player_credit_summary_function", functionExists("public", "get_player_credit_summary"));
+addCheck("reserve_credit_exposure_function", functionExists("public", "reserve_credit_exposure"));
+addCheck("release_credit_exposure_function", functionExists("public", "release_credit_exposure"));
+addCheck("apply_credit_settlement_function", functionExists("public", "apply_credit_settlement"));
 addCheck("evaluation_records_update_trigger", triggerExists("game_engine", "evaluation_records", "trg_prevent_evaluation_record_update"));
 addCheck("evaluation_records_delete_trigger", triggerExists("game_engine", "evaluation_records", "trg_prevent_evaluation_record_delete"));
 addCheck("settlement_records_update_trigger", triggerExists("settlement_service", "settlement_records", "trg_prevent_settlement_record_update"));

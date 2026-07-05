@@ -104,6 +104,11 @@ assert(
   { durablePersistence: inventory.durablePersistence }
 );
 assert(
+  inventory.durablePersistence?.creditWalletDatabaseUrlConfigured,
+  "Credit Wallet Service must have DATABASE_URL configured in local runtime.",
+  { durablePersistence: inventory.durablePersistence }
+);
+assert(
   inventory.authProvider?.configuredProvider === "auth-service",
   "Local runtime app must be configured for Auth Service provider mode.",
   { authProvider: inventory.authProvider }
@@ -202,6 +207,156 @@ try {
   });
 }
 
+const settlementServiceDurableBaselineResult = spawnSync(
+  "node",
+  ["scripts/run-ts-script.mjs", "scripts/qa/settlement-service-durable-baseline.ts"],
+  {
+    encoding: "utf8",
+    env: process.env,
+  }
+);
+
+assert(settlementServiceDurableBaselineResult.status === 0, "Settlement Service durable baseline QA failed.", {
+  stdout: settlementServiceDurableBaselineResult.stdout,
+  stderr: settlementServiceDurableBaselineResult.stderr,
+  exitCode: settlementServiceDurableBaselineResult.status,
+});
+
+let settlementServiceDurableBaseline;
+try {
+  settlementServiceDurableBaseline = JSON.parse(settlementServiceDurableBaselineResult.stdout);
+} catch (error) {
+  fail("Settlement Service durable baseline QA did not return JSON.", {
+    error: error instanceof Error ? error.message : String(error),
+    stdout: settlementServiceDurableBaselineResult.stdout,
+  });
+}
+
+const settlementServiceExecutionDryRunResult = spawnSync(
+  "node",
+  ["scripts/run-ts-script.mjs", "scripts/qa/settlement-service-execution-dry-run.ts"],
+  {
+    encoding: "utf8",
+    env: process.env,
+  }
+);
+
+assert(settlementServiceExecutionDryRunResult.status === 0, "Settlement Service execution dry-run QA failed.", {
+  stdout: settlementServiceExecutionDryRunResult.stdout,
+  stderr: settlementServiceExecutionDryRunResult.stderr,
+  exitCode: settlementServiceExecutionDryRunResult.status,
+});
+
+let settlementServiceExecutionDryRun;
+try {
+  settlementServiceExecutionDryRun = JSON.parse(settlementServiceExecutionDryRunResult.stdout);
+} catch (error) {
+  fail("Settlement Service execution dry-run QA did not return JSON.", {
+    error: error instanceof Error ? error.message : String(error),
+    stdout: settlementServiceExecutionDryRunResult.stdout,
+  });
+}
+
+const settlementServiceIntegrationDryRunResult = spawnSync(
+  "node",
+  ["scripts/run-ts-script.mjs", "scripts/qa/settlement-service-integration-dry-run.ts"],
+  {
+    encoding: "utf8",
+    env: process.env,
+  }
+);
+
+assert(settlementServiceIntegrationDryRunResult.status === 0, "Settlement Service integration dry-run QA failed.", {
+  stdout: settlementServiceIntegrationDryRunResult.stdout,
+  stderr: settlementServiceIntegrationDryRunResult.stderr,
+  exitCode: settlementServiceIntegrationDryRunResult.status,
+});
+
+let settlementServiceIntegrationDryRun;
+try {
+  settlementServiceIntegrationDryRun = JSON.parse(settlementServiceIntegrationDryRunResult.stdout);
+} catch (error) {
+  fail("Settlement Service integration dry-run QA did not return JSON.", {
+    error: error instanceof Error ? error.message : String(error),
+    stdout: settlementServiceIntegrationDryRunResult.stdout,
+  });
+}
+
+const settlementServiceRecoveryResumeResult = spawnSync(
+  "node",
+  ["scripts/run-ts-script.mjs", "scripts/qa/settlement-service-recovery-resume.ts"],
+  {
+    encoding: "utf8",
+    env: process.env,
+  }
+);
+
+assert(settlementServiceRecoveryResumeResult.status === 0, "Settlement Service recovery/resume QA failed.", {
+  stdout: settlementServiceRecoveryResumeResult.stdout,
+  stderr: settlementServiceRecoveryResumeResult.stderr,
+  exitCode: settlementServiceRecoveryResumeResult.status,
+});
+
+let settlementServiceRecoveryResume;
+try {
+  settlementServiceRecoveryResume = JSON.parse(settlementServiceRecoveryResumeResult.stdout);
+} catch (error) {
+  fail("Settlement Service recovery/resume QA did not return JSON.", {
+    error: error instanceof Error ? error.message : String(error),
+    stdout: settlementServiceRecoveryResumeResult.stdout,
+  });
+}
+
+const settlementServiceResettlementDryRunResult = spawnSync(
+  "node",
+  ["scripts/run-ts-script.mjs", "scripts/qa/settlement-service-resettlement-dry-run.ts"],
+  {
+    encoding: "utf8",
+    env: process.env,
+  }
+);
+
+assert(settlementServiceResettlementDryRunResult.status === 0, "Settlement Service resettlement dry-run QA failed.", {
+  stdout: settlementServiceResettlementDryRunResult.stdout,
+  stderr: settlementServiceResettlementDryRunResult.stderr,
+  exitCode: settlementServiceResettlementDryRunResult.status,
+});
+
+let settlementServiceResettlementDryRun;
+try {
+  settlementServiceResettlementDryRun = JSON.parse(settlementServiceResettlementDryRunResult.stdout);
+} catch (error) {
+  fail("Settlement Service resettlement dry-run QA did not return JSON.", {
+    error: error instanceof Error ? error.message : String(error),
+    stdout: settlementServiceResettlementDryRunResult.stdout,
+  });
+}
+
+const settlementAuthoritySwitchResult = spawnSync(
+  "node",
+  ["scripts/run-ts-script.mjs", "scripts/qa/settlement-authority-switch.ts"],
+  {
+    encoding: "utf8",
+    env: process.env,
+  }
+);
+
+assert(settlementAuthoritySwitchResult.status === 0, "Settlement authority switch QA failed.", {
+  stdout: settlementAuthoritySwitchResult.stdout,
+  stderr: settlementAuthoritySwitchResult.stderr,
+  exitCode: settlementAuthoritySwitchResult.status,
+});
+
+let settlementAuthoritySwitch;
+try {
+  settlementAuthoritySwitch = JSON.parse(settlementAuthoritySwitchResult.stdout);
+} catch (error) {
+  fail("Settlement authority switch QA did not return JSON.", {
+    error: error instanceof Error ? error.message : String(error),
+    stdout: settlementAuthoritySwitchResult.stdout,
+  });
+}
+
 const cashierAtomicCompletionResult = spawnSync(
   "node",
   ["scripts/run-ts-script.mjs", "scripts/qa/cashier-atomic-completion.ts"],
@@ -252,6 +407,206 @@ try {
   });
 }
 
+const ledgerServiceDurablePostingResult = spawnSync(
+  "node",
+  ["scripts/run-ts-script.mjs", "scripts/qa/ledger-service-durable-posting.ts"],
+  {
+    encoding: "utf8",
+    env: process.env,
+  }
+);
+
+assert(ledgerServiceDurablePostingResult.status === 0, "Ledger Service durable posting QA failed.", {
+  stdout: ledgerServiceDurablePostingResult.stdout,
+  stderr: ledgerServiceDurablePostingResult.stderr,
+  exitCode: ledgerServiceDurablePostingResult.status,
+});
+
+let ledgerServiceDurablePosting;
+try {
+  ledgerServiceDurablePosting = JSON.parse(ledgerServiceDurablePostingResult.stdout);
+} catch (error) {
+  fail("Ledger Service durable posting QA did not return JSON.", {
+    error: error instanceof Error ? error.message : String(error),
+    stdout: ledgerServiceDurablePostingResult.stdout,
+  });
+}
+
+const ledgerServiceAuthorityDryRunResult = spawnSync(
+  "node",
+  ["scripts/run-ts-script.mjs", "scripts/qa/ledger-service-authority-dry-run.ts"],
+  {
+    encoding: "utf8",
+    env: process.env,
+  }
+);
+
+assert(ledgerServiceAuthorityDryRunResult.status === 0, "Ledger Service authority dry-run QA failed.", {
+  stdout: ledgerServiceAuthorityDryRunResult.stdout,
+  stderr: ledgerServiceAuthorityDryRunResult.stderr,
+  exitCode: ledgerServiceAuthorityDryRunResult.status,
+});
+
+let ledgerServiceAuthorityDryRun;
+try {
+  ledgerServiceAuthorityDryRun = JSON.parse(ledgerServiceAuthorityDryRunResult.stdout);
+} catch (error) {
+  fail("Ledger Service authority dry-run QA did not return JSON.", {
+    error: error instanceof Error ? error.message : String(error),
+    stdout: ledgerServiceAuthorityDryRunResult.stdout,
+  });
+}
+
+const ledgerAuthoritySwitchResult = spawnSync(
+  "node",
+  ["scripts/run-ts-script.mjs", "scripts/qa/ledger-authority-switch.ts"],
+  {
+    encoding: "utf8",
+    env: process.env,
+  }
+);
+
+assert(ledgerAuthoritySwitchResult.status === 0, "Ledger authority switch QA failed.", {
+  stdout: ledgerAuthoritySwitchResult.stdout,
+  stderr: ledgerAuthoritySwitchResult.stderr,
+  exitCode: ledgerAuthoritySwitchResult.status,
+});
+
+let ledgerAuthoritySwitch;
+try {
+  ledgerAuthoritySwitch = JSON.parse(ledgerAuthoritySwitchResult.stdout);
+} catch (error) {
+  fail("Ledger authority switch QA did not return JSON.", {
+    error: error instanceof Error ? error.message : String(error),
+    stdout: ledgerAuthoritySwitchResult.stdout,
+  });
+}
+
+const creditWalletDurableBaselineResult = spawnSync(
+  "node",
+  ["scripts/run-ts-script.mjs", "scripts/qa/credit-wallet-durable-baseline.ts"],
+  {
+    encoding: "utf8",
+    env: process.env,
+  }
+);
+
+assert(creditWalletDurableBaselineResult.status === 0, "Credit Wallet durable baseline QA failed.", {
+  stdout: creditWalletDurableBaselineResult.stdout,
+  stderr: creditWalletDurableBaselineResult.stderr,
+  exitCode: creditWalletDurableBaselineResult.status,
+});
+
+let creditWalletDurableBaseline;
+try {
+  creditWalletDurableBaseline = JSON.parse(creditWalletDurableBaselineResult.stdout);
+} catch (error) {
+  fail("Credit Wallet durable baseline QA did not return JSON.", {
+    error: error instanceof Error ? error.message : String(error),
+    stdout: creditWalletDurableBaselineResult.stdout,
+  });
+}
+
+const creditWalletReserveReleaseResult = spawnSync(
+  "node",
+  ["scripts/run-ts-script.mjs", "scripts/qa/credit-wallet-reserve-release.ts"],
+  {
+    encoding: "utf8",
+    env: process.env,
+  }
+);
+
+assert(creditWalletReserveReleaseResult.status === 0, "Credit Wallet reserve/release QA failed.", {
+  stdout: creditWalletReserveReleaseResult.stdout,
+  stderr: creditWalletReserveReleaseResult.stderr,
+  exitCode: creditWalletReserveReleaseResult.status,
+});
+
+let creditWalletReserveRelease;
+try {
+  creditWalletReserveRelease = JSON.parse(creditWalletReserveReleaseResult.stdout);
+} catch (error) {
+  fail("Credit Wallet reserve/release QA did not return JSON.", {
+    error: error instanceof Error ? error.message : String(error),
+    stdout: creditWalletReserveReleaseResult.stdout,
+  });
+}
+
+const creditWalletSettlementApplyResult = spawnSync(
+  "node",
+  ["scripts/run-ts-script.mjs", "scripts/qa/credit-wallet-settlement-apply.ts"],
+  {
+    encoding: "utf8",
+    env: process.env,
+  }
+);
+
+assert(creditWalletSettlementApplyResult.status === 0, "Credit Wallet settlement apply QA failed.", {
+  stdout: creditWalletSettlementApplyResult.stdout,
+  stderr: creditWalletSettlementApplyResult.stderr,
+  exitCode: creditWalletSettlementApplyResult.status,
+});
+
+let creditWalletSettlementApply;
+try {
+  creditWalletSettlementApply = JSON.parse(creditWalletSettlementApplyResult.stdout);
+} catch (error) {
+  fail("Credit Wallet settlement apply QA did not return JSON.", {
+    error: error instanceof Error ? error.message : String(error),
+    stdout: creditWalletSettlementApplyResult.stdout,
+  });
+}
+
+const creditWalletAuthorityDryRunResult = spawnSync(
+  "node",
+  ["scripts/run-ts-script.mjs", "scripts/qa/credit-wallet-authority-dry-run.ts"],
+  {
+    encoding: "utf8",
+    env: process.env,
+  }
+);
+
+assert(creditWalletAuthorityDryRunResult.status === 0, "Credit Wallet authority dry-run QA failed.", {
+  stdout: creditWalletAuthorityDryRunResult.stdout,
+  stderr: creditWalletAuthorityDryRunResult.stderr,
+  exitCode: creditWalletAuthorityDryRunResult.status,
+});
+
+let creditWalletAuthorityDryRun;
+try {
+  creditWalletAuthorityDryRun = JSON.parse(creditWalletAuthorityDryRunResult.stdout);
+} catch (error) {
+  fail("Credit Wallet authority dry-run QA did not return JSON.", {
+    error: error instanceof Error ? error.message : String(error),
+    stdout: creditWalletAuthorityDryRunResult.stdout,
+  });
+}
+
+const creditAuthoritySwitchResult = spawnSync(
+  "node",
+  ["scripts/run-ts-script.mjs", "scripts/qa/credit-authority-switch.ts"],
+  {
+    encoding: "utf8",
+    env: process.env,
+  }
+);
+
+assert(creditAuthoritySwitchResult.status === 0, "Credit authority switch QA failed.", {
+  stdout: creditAuthoritySwitchResult.stdout,
+  stderr: creditAuthoritySwitchResult.stderr,
+  exitCode: creditAuthoritySwitchResult.status,
+});
+
+let creditAuthoritySwitch;
+try {
+  creditAuthoritySwitch = JSON.parse(creditAuthoritySwitchResult.stdout);
+} catch (error) {
+  fail("Credit authority switch QA did not return JSON.", {
+    error: error instanceof Error ? error.message : String(error),
+    stdout: creditAuthoritySwitchResult.stdout,
+  });
+}
+
 const durableSmokeResult = spawnSync("node", ["scripts/qa/game-engine-durable-runtime-smoke.mjs"], {
   encoding: "utf8",
   env: process.env,
@@ -284,6 +639,7 @@ console.log(
         gameEngineDurablePersistenceModeActive: inventory.durablePersistence.gameEngineDurablePersistenceModeActive,
         settlementDatabaseUrlConfigured: inventory.durablePersistence.settlementDatabaseUrlConfigured,
         settlementPersistenceSchemaCurrent: inventory.durablePersistence.settlementPersistenceSchemaCurrent,
+        creditWalletDatabaseUrlConfigured: inventory.durablePersistence.creditWalletDatabaseUrlConfigured,
         migrationsCurrent: inventory.durablePersistence.migrationsCurrent,
       },
       authServiceCutover,
@@ -296,6 +652,30 @@ console.log(
         status: settlementFinancialPosting.status,
         checks: settlementFinancialPosting.checks,
       },
+      settlementServiceDurableBaseline: {
+        status: settlementServiceDurableBaseline.status,
+        checks: settlementServiceDurableBaseline.checks,
+      },
+      settlementServiceExecutionDryRun: {
+        status: settlementServiceExecutionDryRun.status,
+        checks: settlementServiceExecutionDryRun.checks,
+      },
+      settlementServiceIntegrationDryRun: {
+        status: settlementServiceIntegrationDryRun.status,
+        checks: settlementServiceIntegrationDryRun.checks,
+      },
+      settlementServiceRecoveryResume: {
+        status: settlementServiceRecoveryResume.status,
+        checks: settlementServiceRecoveryResume.checks,
+      },
+      settlementServiceResettlementDryRun: {
+        status: settlementServiceResettlementDryRun.status,
+        checks: settlementServiceResettlementDryRun.checks,
+      },
+      settlementAuthoritySwitch: {
+        status: settlementAuthoritySwitch.status,
+        checks: settlementAuthoritySwitch.checks,
+      },
       cashierAtomicCompletion: {
         status: cashierAtomicCompletion.status,
         checks: cashierAtomicCompletion.checks,
@@ -303,6 +683,38 @@ console.log(
       financialWorkerHandlers: {
         status: financialWorkerHandlers.status,
         checks: financialWorkerHandlers.checks,
+      },
+      ledgerServiceDurablePosting: {
+        status: ledgerServiceDurablePosting.status,
+        checks: ledgerServiceDurablePosting.checks,
+      },
+      ledgerServiceAuthorityDryRun: {
+        status: ledgerServiceAuthorityDryRun.status,
+        checks: ledgerServiceAuthorityDryRun.checks,
+      },
+      ledgerAuthoritySwitch: {
+        status: ledgerAuthoritySwitch.status,
+        checks: ledgerAuthoritySwitch.checks,
+      },
+      creditWalletDurableBaseline: {
+        status: creditWalletDurableBaseline.status,
+        checks: creditWalletDurableBaseline.checks,
+      },
+      creditWalletReserveRelease: {
+        status: creditWalletReserveRelease.status,
+        checks: creditWalletReserveRelease.checks,
+      },
+      creditWalletSettlementApply: {
+        status: creditWalletSettlementApply.status,
+        checks: creditWalletSettlementApply.checks,
+      },
+      creditWalletAuthorityDryRun: {
+        status: creditWalletAuthorityDryRun.status,
+        checks: creditWalletAuthorityDryRun.checks,
+      },
+      creditAuthoritySwitch: {
+        status: creditAuthoritySwitch.status,
+        checks: creditAuthoritySwitch.checks,
       },
       gameEngineDurableSmoke: {
         status: durableSmoke.status,

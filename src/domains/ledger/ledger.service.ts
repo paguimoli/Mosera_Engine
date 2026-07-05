@@ -11,6 +11,11 @@ import {
   listLedgerEntriesForAccount as listPersistedLedgerEntriesForAccount,
   listLedgerEntriesForWallet as listPersistedLedgerEntriesForWallet,
 } from "./ledger.repository";
+import {
+  LedgerServiceAuthorityError,
+  LedgerServiceClientError,
+  postLedgerEntryViaLedgerService,
+} from "./ledger-service-client";
 import type {
   AccountFinancialSummary,
   CreateLedgerEntryInput,
@@ -20,6 +25,7 @@ import type {
 } from "./ledger.types";
 import { runLedgerShadowComparison } from "./ledger-shadow-client";
 import { validateCreateLedgerEntryInput } from "./ledger.validation";
+import { readAuthorityConfigurations } from "../authority-control/authority-control.repository";
 
 export class LedgerValidationError extends Error {
   readonly errors: string[];
@@ -116,6 +122,10 @@ function isFinancialPostingBusinessRuleError(error: LedgerRepositoryError) {
   ].some((message) => error.message.includes(message));
 }
 
+function isLedgerServiceAuthorityEnabled() {
+  return readAuthorityConfigurations().ledger.authority === "SERVICE";
+}
+
 export async function postLedgerEntry(
   input: CreateLedgerEntryInput
 ): Promise<LedgerEntry> {
@@ -123,6 +133,25 @@ export async function postLedgerEntry(
 
   if (!validation.valid) {
     throw new LedgerValidationError(validation.errors);
+  }
+
+  if (isLedgerServiceAuthorityEnabled()) {
+    try {
+      const ledgerEntry = await postLedgerEntryViaLedgerService(input);
+
+      await runLedgerShadowComparison({ input, ledgerEntry });
+
+      return ledgerEntry;
+    } catch (error) {
+      if (
+        error instanceof LedgerServiceAuthorityError ||
+        error instanceof LedgerServiceClientError
+      ) {
+        throw new LedgerBusinessRuleError(error.message);
+      }
+
+      throw error;
+    }
   }
 
   try {

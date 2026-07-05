@@ -3,6 +3,8 @@ namespace SettlementService.Configuration;
 public sealed record ServiceConfiguration(
     string ServiceName,
     string Environment,
+    DatabaseConfiguration Database,
+    ServiceIntegrationConfiguration Integrations,
     RabbitMqConfiguration RabbitMQ,
     RedisConfiguration Redis,
     SupabaseConfiguration Supabase)
@@ -16,6 +18,10 @@ public sealed record ServiceConfiguration(
         return new ServiceConfiguration(
             serviceName,
             environmentName,
+            new DatabaseConfiguration(GetEnvironmentValue("DATABASE_URL", string.Empty)),
+            new ServiceIntegrationConfiguration(
+                GetEnvironmentValue("LEDGER_SERVICE_URL", string.Empty),
+                GetEnvironmentValue("CREDIT_SERVICE_URL", string.Empty)),
             new RabbitMqConfiguration(
                 GetEnvironmentValue("RABBITMQ_URL", string.Empty),
                 GetEnvironmentValue("RABBITMQ_EXCHANGE_NAME", "lottery.events")),
@@ -34,6 +40,10 @@ public sealed record ServiceConfiguration(
 }
 
 public sealed record RabbitMqConfiguration(string Url, string ExchangeName);
+
+public sealed record DatabaseConfiguration(string Url);
+
+public sealed record ServiceIntegrationConfiguration(string LedgerServiceUrl, string CreditServiceUrl);
 
 public sealed record RedisConfiguration(string Url);
 

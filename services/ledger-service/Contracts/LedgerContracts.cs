@@ -97,7 +97,15 @@ public sealed record LedgerHealthResponse(
     string Version,
     DateTimeOffset Timestamp,
     IReadOnlyDictionary<string, string> Dependencies,
+    LedgerCapabilityMarkers Capabilities,
     string CorrelationId);
+
+public sealed record LedgerCapabilityMarkers(
+    bool MutationCapabilityEnabled,
+    bool DurablePersistenceConfigured,
+    bool IdempotencySupportConfigured,
+    bool ServiceAuthorityEnabled,
+    string? QaCapabilityMarker);
 
 public sealed record LedgerShadowExecuteRequest(
     string? CorrelationId,

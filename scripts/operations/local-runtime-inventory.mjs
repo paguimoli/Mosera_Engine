@@ -284,6 +284,24 @@ function getServiceEnvironment(serviceName) {
   return composeConfig?.services?.[serviceName]?.environment ?? {};
 }
 
+function normalizeCapabilities(body) {
+  const capabilities = body?.capabilities ?? {};
+  const mutationScope = String(capabilities.mutationCapabilityScope ?? "full").trim();
+  const idempotencyScope = String(capabilities.idempotencySupportScope ?? "full").trim();
+
+  return {
+    mutationCapabilityEnabled:
+      capabilities.mutationCapabilityEnabled === true &&
+      (mutationScope === "" || mutationScope === "full" || mutationScope === "productionAuthority"),
+    durablePersistenceConfigured: capabilities.durablePersistenceConfigured === true,
+    idempotencySupportConfigured:
+      capabilities.idempotencySupportConfigured === true &&
+      (idempotencyScope === "" || idempotencyScope === "full" || idempotencyScope === "productionAuthority"),
+    qaCapabilityMarkerPresent: String(capabilities.qaCapabilityMarker ?? "").trim().length > 0,
+    raw: capabilities,
+  };
+}
+
 function evaluateFinancialAuthorityGuardrails({ appEnvironment, serviceHealth, serviceReadiness }) {
   const domains = {};
   const blockers = [];
@@ -295,19 +313,25 @@ function evaluateFinancialAuthorityGuardrails({ appEnvironment, serviceHealth, s
       String(appEnvironment?.[domain.authorityEnv] ?? "MONOLITH").trim().toUpperCase() === "SERVICE"
         ? "SERVICE"
         : "MONOLITH";
+    const readiness = serviceReadiness.find((item) => item.name === domain.serviceName);
+    const serviceCapabilities = readiness?.capabilities ?? {};
     const capabilityEvidence = {
       serviceReachable: serviceHealth.find((item) => item.name === domain.serviceName)?.status === "UP",
-      readinessHealthy: serviceReadiness.find((item) => item.name === domain.serviceName)?.status === "READY",
+      readinessHealthy: readiness?.status === "READY",
       mutationCapabilityEnabled:
+        serviceCapabilities.mutationCapabilityEnabled === true ||
         envEnabled(targetServiceEnvironment, `${domain.markerPrefix}_MUTATION_CAPABILITY`) ||
         envEnabled(appEnvironment, `${domain.markerPrefix}_MUTATION_CAPABILITY`),
       durablePersistenceConfigured:
+        serviceCapabilities.durablePersistenceConfigured === true ||
         envEnabled(targetServiceEnvironment, `${domain.markerPrefix}_DURABLE_PERSISTENCE`) ||
         envEnabled(appEnvironment, `${domain.markerPrefix}_DURABLE_PERSISTENCE`),
       idempotencySupportConfigured:
+        serviceCapabilities.idempotencySupportConfigured === true ||
         envEnabled(targetServiceEnvironment, `${domain.markerPrefix}_IDEMPOTENCY_SUPPORT`) ||
         envEnabled(appEnvironment, `${domain.markerPrefix}_IDEMPOTENCY_SUPPORT`),
       qaCapabilityMarkerPresent:
+        serviceCapabilities.qaCapabilityMarkerPresent === true ||
         envPresent(targetServiceEnvironment, `${domain.markerPrefix}_QA_CAPABILITY_MARKER`) ||
         envPresent(appEnvironment, `${domain.markerPrefix}_QA_CAPABILITY_MARKER`),
     };
@@ -445,6 +469,7 @@ for (const endpoint of endpoints) {
   if (endpoint.readyPath) {
     const readiness = await fetchJson(endpoint.name, withServicePath(endpoint, endpoint.readyPath));
     const dependencies = normalizeDependencies(readiness.body);
+    const capabilities = normalizeCapabilities(readiness.body);
     serviceReadiness.push({
       name: endpoint.name,
       url: readiness.url,
@@ -456,6 +481,7 @@ for (const endpoint of endpoints) {
       registered: composeServices.includes(endpoint.name),
       running: runningServiceNames.has(endpoint.name),
       dependencies,
+      capabilities,
       error: readiness.error,
     });
 
@@ -505,6 +531,7 @@ const gameEngineStorageStatus = await fetchJson(
 );
 const storageStatus = gameEngineStorageStatus.body?.evaluationStorageStatus ?? null;
 const gameEngineDatabaseUrl = composeConfig?.services?.["game-engine"]?.environment?.DATABASE_URL ?? "";
+const creditWalletDatabaseUrl = composeConfig?.services?.["credit-wallet-service"]?.environment?.DATABASE_URL ?? "";
 const appEnvironment = composeConfig?.services?.app?.environment ?? {};
 const appDatabaseUrl = appEnvironment.DATABASE_URL ?? "";
 const migrationValidationResult = runOptional("node", ["scripts/migrations/validate-local-migrations.mjs"]);
@@ -568,6 +595,16 @@ const report = {
       : null,
     gameEngineStorageStatusReachable: gameEngineStorageStatus.ok,
     gameEngineDurablePersistenceModeActive: Boolean(storageStatus?.durableRepositoryWiringEnabled),
+    creditWalletDatabaseUrlConfigured: creditWalletDatabaseUrl.length > 0,
+    creditWalletDatabaseUrlHost: creditWalletDatabaseUrl.length > 0
+      ? (() => {
+          try {
+            return new URL(creditWalletDatabaseUrl).hostname;
+          } catch {
+            return null;
+          }
+        })()
+      : null,
     gameEngineStorageStatus: storageStatus,
     settlementDatabaseUrlConfigured: appDatabaseUrl.length > 0,
     settlementDatabaseUrlHost: appDatabaseUrl.length > 0

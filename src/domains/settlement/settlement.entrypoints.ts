@@ -6,7 +6,7 @@ export {
   createSettlementReversalRecords as reverseSettlementRecordsForResettlement,
 } from "./resettlement.service";
 export { applyCreditSettlementForRecords as applySettlementResults } from "./settlement-credit.service";
-export { executeSettlementRun as executeSettlement } from "./settlement-executor.service";
+export { executeSettlementWithAuthority as executeSettlement } from "./settlement-service-client";
 export { resumeSettlementRun as resumeSettlement } from "./settlement-recovery.service";
 
 export type {

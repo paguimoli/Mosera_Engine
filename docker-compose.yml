@@ -168,11 +168,16 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       SUPABASE_URL: ${SUPABASE_URL:-${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:54321}}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-dummy-service-role-key}
+      DATABASE_URL: ${LOCAL_DATABASE_URL:-postgresql://lottery:lottery_dev_password@local-postgres:5432/lottery_local}
     depends_on:
       rabbitmq:
         condition: service_healthy
       redis:
         condition: service_healthy
+      local-postgres:
+        condition: service_healthy
+      migration-runner:
+        condition: service_completed_successfully
     healthcheck: *dotnet-healthcheck
 
   credit-wallet-service:
@@ -187,9 +192,16 @@ services:
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://lottery:lottery_dev_password@rabbitmq:5672}
       RABBITMQ_EXCHANGE_NAME: ${RABBITMQ_EXCHANGE_NAME:-lottery.events}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      DATABASE_URL: ${LOCAL_DATABASE_URL:-postgresql://lottery:lottery_dev_password@local-postgres:5432/lottery_local}
+      LEDGER_SERVICE_URL: ${LEDGER_SERVICE_URL:-http://ledger-service:8080}
+      CREDIT_SERVICE_URL: ${CREDIT_SERVICE_URL:-http://credit-wallet-service:8080}
       SUPABASE_URL: ${SUPABASE_URL:-${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:54321}}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-dummy-service-role-key}
     depends_on:
+      local-postgres:
+        condition: service_healthy
+      migration-runner:
+        condition: service_completed_successfully
       rabbitmq:
         condition: service_healthy
       redis:
@@ -208,6 +220,9 @@ services:
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://lottery:lottery_dev_password@rabbitmq:5672}
       RABBITMQ_EXCHANGE_NAME: ${RABBITMQ_EXCHANGE_NAME:-lottery.events}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      DATABASE_URL: ${LOCAL_DATABASE_URL:-postgresql://lottery:lottery_dev_password@local-postgres:5432/lottery_local}
+      LEDGER_SERVICE_URL: ${LEDGER_SERVICE_URL:-http://ledger-service:8080}
+      CREDIT_SERVICE_URL: ${CREDIT_SERVICE_URL:-http://credit-wallet-service:8080}
       SUPABASE_URL: ${SUPABASE_URL:-${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:54321}}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-dummy-service-role-key}
     depends_on:
@@ -215,6 +230,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      local-postgres:
+        condition: service_healthy
+      migration-runner:
+        condition: service_completed_successfully
     healthcheck: *dotnet-healthcheck
 
   game-engine:

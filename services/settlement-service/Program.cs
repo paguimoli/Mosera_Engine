@@ -19,6 +19,9 @@ builder.Services.AddSingleton(serviceConfiguration);
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton<InfrastructureReadinessChecks>();
 builder.Services.AddSingleton<SettlementShadowPersistence>();
+builder.Services.AddSingleton<DurableSettlementRepository>();
+builder.Services.AddSingleton<SettlementLedgerServiceClient>();
+builder.Services.AddSingleton<SettlementCreditWalletServiceClient>();
 builder.Services.AddSingleton<ShadowSettlementCalculator>();
 
 var app = builder.Build();
@@ -27,5 +30,6 @@ app.UseMiddleware<CorrelationIdMiddleware>();
 
 app.MapHealthEndpoints();
 app.MapSettlementShadowEndpoints();
+app.MapSettlementPersistenceEndpoints();
 
 app.Run();
