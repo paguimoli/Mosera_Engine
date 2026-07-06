@@ -250,6 +250,15 @@
       "reason": "Adds append-only outcome custody and operational control evidence without enabling production Outcome Authority."
     },
     {
+      "id": "027_add_platform_management_foundation",
+      "path": "scripts/migrations/local/027_add_platform_management_foundation.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "platform"
+      ],
+      "reason": "Adds append-only local Platform Management Foundation hierarchy storage for organizations, tenants, brands, and markets."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

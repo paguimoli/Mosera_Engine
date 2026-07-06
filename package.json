@@ -136,6 +136,7 @@
     "qa:statistical-validation": "node scripts/qa/statistical-validation.mjs",
     "qa:outcome-operational-controls": "node scripts/qa/outcome-operational-controls.mjs",
     "qa:outcome-authority-activation-guardrails": "node scripts/qa/outcome-authority-activation-guardrails.mjs",
+    "qa:platform-foundation": "node scripts/qa/platform-foundation.mjs",
     "qa:local-migrations": "node scripts/qa/local-migrations.mjs",
     "qa:devtools": "bash -lc \"npm -v && dotnet --info && test -d docs/architecture && test -d services && npm run qa:shadow-import && npm run ops:migration-inventory && npm run ops:local-runtime-inventory && npm run ops:persistence-readiness-report\"",
     "qa:all:devtools": "npm run qa:all",

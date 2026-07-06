@@ -103,7 +103,7 @@ if (!guardrails.ok) {
   addCheck("guardrails_pass", true);
 }
 
-const requiredSchemas = ["platform_migrations", "game_engine", "auth_service", "settlement_service"];
+const requiredSchemas = ["platform_migrations", "game_engine", "auth_service", "settlement_service", "platform"];
 for (const schema of requiredSchemas) {
   addCheck(`schema_exists:${schema}`, existsSchema(schema));
 }
@@ -146,6 +146,10 @@ const requiredTables = [
   "settlement_service.settlement_runs",
   "settlement_service.settlement_records",
   "settlement_service.settlement_ledger_effects",
+  "platform.organizations",
+  "platform.tenants",
+  "platform.brands",
+  "platform.markets",
   "public.accounts",
   "public.financial_wallets",
   "public.financial_ledger_entries",
@@ -349,6 +353,42 @@ addCheck("outcome_operational_controls_delete_trigger", triggerExists("game_engi
 addCheck("outcome_custody_events_validate_trigger", triggerExists("game_engine", "outcome_custody_events", "trg_validate_outcome_custody_event"));
 addCheck("outcome_custody_events_update_trigger", triggerExists("game_engine", "outcome_custody_events", "trg_prevent_outcome_custody_event_update"));
 addCheck("outcome_custody_events_delete_trigger", triggerExists("game_engine", "outcome_custody_events", "trg_prevent_outcome_custody_event_delete"));
+addCheck("platform_organizations_code_version_unique", indexExists("platform", "organizations", "ux_platform_organizations_code_version"));
+addCheck("platform_organizations_content_hash_unique", indexExists("platform", "organizations", "ux_platform_organizations_content_hash"));
+addCheck("platform_organizations_code_index", indexExists("platform", "organizations", "idx_platform_organizations_code"));
+addCheck("platform_organizations_status_index", indexExists("platform", "organizations", "idx_platform_organizations_status"));
+addCheck("platform_organizations_hash_index", indexExists("platform", "organizations", "idx_platform_organizations_hash"));
+addCheck("platform_tenants_parent_code_version_unique", indexExists("platform", "tenants", "ux_platform_tenants_parent_code_version"));
+addCheck("platform_tenants_content_hash_unique", indexExists("platform", "tenants", "ux_platform_tenants_content_hash"));
+addCheck("platform_tenants_parent_code_index", indexExists("platform", "tenants", "idx_platform_tenants_parent_code"));
+addCheck("platform_tenants_status_index", indexExists("platform", "tenants", "idx_platform_tenants_status"));
+addCheck("platform_tenants_hash_index", indexExists("platform", "tenants", "idx_platform_tenants_hash"));
+addCheck("platform_tenants_cashier_enabled_column", columnExists("platform", "tenants", "cashier_enabled"));
+addCheck("platform_brands_parent_code_version_unique", indexExists("platform", "brands", "ux_platform_brands_parent_code_version"));
+addCheck("platform_brands_content_hash_unique", indexExists("platform", "brands", "ux_platform_brands_content_hash"));
+addCheck("platform_brands_parent_code_index", indexExists("platform", "brands", "idx_platform_brands_parent_code"));
+addCheck("platform_brands_status_index", indexExists("platform", "brands", "idx_platform_brands_status"));
+addCheck("platform_brands_hash_index", indexExists("platform", "brands", "idx_platform_brands_hash"));
+addCheck("platform_markets_parent_code_version_unique", indexExists("platform", "markets", "ux_platform_markets_parent_code_version"));
+addCheck("platform_markets_content_hash_unique", indexExists("platform", "markets", "ux_platform_markets_content_hash"));
+addCheck("platform_markets_parent_code_index", indexExists("platform", "markets", "idx_platform_markets_parent_code"));
+addCheck("platform_markets_status_index", indexExists("platform", "markets", "idx_platform_markets_status"));
+addCheck("platform_markets_hash_index", indexExists("platform", "markets", "idx_platform_markets_hash"));
+addCheck("platform_markets_country_jurisdiction_index", indexExists("platform", "markets", "idx_platform_markets_country_jurisdiction"));
+addCheck("platform_markets_jurisdiction_optional", columnIsNullable("platform", "markets", "jurisdiction"));
+addCheck("platform_markets_country_optional", columnIsNullable("platform", "markets", "country"));
+addCheck("platform_organizations_validate_trigger", triggerExists("platform", "organizations", "trg_validate_platform_organization"));
+addCheck("platform_organizations_update_trigger", triggerExists("platform", "organizations", "trg_prevent_platform_organization_update"));
+addCheck("platform_organizations_delete_trigger", triggerExists("platform", "organizations", "trg_prevent_platform_organization_delete"));
+addCheck("platform_tenants_validate_trigger", triggerExists("platform", "tenants", "trg_validate_platform_tenant"));
+addCheck("platform_tenants_update_trigger", triggerExists("platform", "tenants", "trg_prevent_platform_tenant_update"));
+addCheck("platform_tenants_delete_trigger", triggerExists("platform", "tenants", "trg_prevent_platform_tenant_delete"));
+addCheck("platform_brands_validate_trigger", triggerExists("platform", "brands", "trg_validate_platform_brand"));
+addCheck("platform_brands_update_trigger", triggerExists("platform", "brands", "trg_prevent_platform_brand_update"));
+addCheck("platform_brands_delete_trigger", triggerExists("platform", "brands", "trg_prevent_platform_brand_delete"));
+addCheck("platform_markets_validate_trigger", triggerExists("platform", "markets", "trg_validate_platform_market"));
+addCheck("platform_markets_update_trigger", triggerExists("platform", "markets", "trg_prevent_platform_market_update"));
+addCheck("platform_markets_delete_trigger", triggerExists("platform", "markets", "trg_prevent_platform_market_delete"));
 addCheck("settlement_records_update_trigger", triggerExists("settlement_service", "settlement_records", "trg_prevent_settlement_record_update"));
 addCheck("settlement_records_delete_trigger", triggerExists("settlement_service", "settlement_records", "trg_prevent_settlement_record_delete"));
 addCheck("settlement_ledger_effects_update_trigger", triggerExists("settlement_service", "settlement_ledger_effects", "trg_prevent_settlement_ledger_effect_update"));
