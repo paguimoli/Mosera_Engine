@@ -151,6 +151,105 @@
       "reason": "Replaces the local-only Credit Wallet settlement application RPC with fully qualified references so idempotent replay is deterministic."
     },
     {
+      "id": "016_add_game_manifest_authority_certificates",
+      "path": "scripts/migrations/local/016_add_game_manifest_authority_certificates.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only local Game Manifest v1 and authority certificate chain storage for Outcome Authority governance contracts."
+    },
+    {
+      "id": "017_add_outcome_strategy_definitions",
+      "path": "scripts/migrations/local/017_add_outcome_strategy_definitions.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only local Outcome DSL v1 strategy definition storage with primitive validation and forbidden math/paytable/RTP guards."
+    },
+    {
+      "id": "018_add_math_rtp_governance_contracts",
+      "path": "scripts/migrations/local/018_add_math_rtp_governance_contracts.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only local Math Model v1 and Paytable v1 governance storage with RTP, payout, and forbidden RNG/outcome guards."
+    },
+    {
+      "id": "019_make_math_jurisdiction_certification_optional",
+      "path": "scripts/migrations/local/019_make_math_jurisdiction_certification_optional.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Corrects Math/Paytable governance so jurisdiction and certification are optional policy overlays, not required dependencies."
+    },
+    {
+      "id": "020_add_rng_provider_evidence_contracts",
+      "path": "scripts/migrations/local/020_add_rng_provider_evidence_contracts.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only local production RNG provider contract and health/evidence storage without enabling outcome generation."
+    },
+    {
+      "id": "021_add_outcome_dry_run_pipeline",
+      "path": "scripts/migrations/local/021_add_outcome_dry_run_pipeline.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only local dry-run Outcome Authority event and certificate storage while production outcome authority remains disabled."
+    },
+    {
+      "id": "022_add_math_evaluation_dry_run",
+      "path": "scripts/migrations/local/022_add_math_evaluation_dry_run.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only local dry-run Math Authority evaluation event and certificate storage without financial settlement or ledger posting."
+    },
+    {
+      "id": "023_add_certification_pack_v1",
+      "path": "scripts/migrations/local/023_add_certification_pack_v1.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only local Certification Pack v1 authority-chain export storage without enabling production signing or authority activation."
+    },
+    {
+      "id": "024_add_certificate_signing_framework",
+      "path": "scripts/migrations/local/024_add_certificate_signing_framework.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only signing provider and certificate signature evidence storage without enabling production signing keys."
+    },
+    {
+      "id": "025_add_statistical_validation_simulation_evidence",
+      "path": "scripts/migrations/local/025_add_statistical_validation_simulation_evidence.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only statistical validation and simulation evidence storage without enabling production Outcome Authority."
+    },
+    {
+      "id": "026_add_outcome_operational_controls",
+      "path": "scripts/migrations/local/026_add_outcome_operational_controls.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only outcome custody and operational control evidence without enabling production Outcome Authority."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

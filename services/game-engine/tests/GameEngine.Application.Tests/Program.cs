@@ -1211,4 +1211,143 @@ if (executionDiagnostics.ExecutionCount == 0 ||
     throw new InvalidOperationException("Module execution diagnostics are invalid.");
 }
 
+var outcomePipeline = new OutcomeDryRunPipeline();
+var outcomeStrategy = new OutcomeStrategyDefinitionV1(
+    Guid.NewGuid(),
+    "outcome-strategy:dry-run",
+    "1.0.0",
+    [
+        new OutcomeDslPrimitive(
+            "numbers",
+            OutcomePrimitiveType.UniqueNumberSet,
+            [],
+            1,
+            20,
+            5,
+            [],
+            [],
+            [],
+            new Dictionary<string, object?>()),
+        new OutcomeDslPrimitive(
+            "bonus",
+            OutcomePrimitiveType.WeightedSelection,
+            ["numbers"],
+            null,
+            null,
+            null,
+            [],
+            [],
+            [new WeightedOutcomeOption("RED", 1m), new WeightedOutcomeOption("BLUE", 2m)],
+            new Dictionary<string, object?>()),
+        new OutcomeDslPrimitive(
+            "composite",
+            OutcomePrimitiveType.CompositeOutcomeGraph,
+            ["numbers", "bonus"],
+            null,
+            null,
+            null,
+            [],
+            [],
+            [],
+            new Dictionary<string, object?>())
+    ],
+    new Dictionary<string, object?> { ["drawId"] = "uuid" },
+    new Dictionary<string, object?> { ["resultType"] = "dry-run" },
+    new Dictionary<string, object?>(),
+    [],
+    OutcomeStrategyLifecycleState.GovernanceApproved,
+    "sha256:dry-run-strategy",
+    null,
+    null);
+
+var dryRunProvider = new RngProviderDefinitionV1(
+    Guid.NewGuid(),
+    "rng-provider:deterministic-test",
+    "1.0.0",
+    RngProviderType.TestDeterministic,
+    ProductionEligible: false,
+    RngProviderCertificationState.InternalVerified,
+    ["deterministic-test-v1"],
+    new Dictionary<string, object?> { ["seedPolicy"] = "idempotency-derived" },
+    ["deterministic-health-check"],
+    RngProviderFailureMode.FailClosed,
+    "sha256:dry-run-provider",
+    null);
+
+var dryRunEvidence = new RngProviderEvidence(
+    Guid.NewGuid(),
+    dryRunProvider.ProviderId,
+    dryRunProvider.ProviderVersion,
+    "entropy-source:deterministic-test",
+    RngHealthTestResult.Passed,
+    RngHealthTestResult.NotApplicable,
+    RngHealthTestResult.Passed,
+    DateTimeOffset.UtcNow,
+    "sha256:dry-run-evidence",
+    null);
+
+var outcomeRequest = new OutcomeAuthorityRequest(
+    Guid.NewGuid(),
+    Guid.NewGuid(),
+    "game-manifest:dry-run:1.0.0",
+    outcomeStrategy.StrategyId,
+    outcomeStrategy.StrategyVersion,
+    dryRunProvider.ProviderId,
+    dryRunProvider.ProviderVersion,
+    dryRunEvidence.CanonicalEvidenceHash,
+    "outcome-dry-run-idempotency",
+    OutcomeAuthorityMode.DryRun);
+
+var firstOutcome = outcomePipeline.Execute(outcomeRequest, outcomeStrategy, dryRunProvider, dryRunEvidence);
+var duplicateOutcome = outcomePipeline.Execute(outcomeRequest, outcomeStrategy, dryRunProvider, dryRunEvidence);
+if (firstOutcome.OutcomeId != duplicateOutcome.OutcomeId ||
+    firstOutcome.Certificate.CertificateId != duplicateOutcome.Certificate.CertificateId ||
+    firstOutcome.CanonicalOutcomeHash != duplicateOutcome.CanonicalOutcomeHash)
+{
+    throw new InvalidOperationException("Outcome dry-run pipeline must return deterministic idempotent responses.");
+}
+
+if (firstOutcome.Certificate.CustodyState != OutcomeCustodyState.Generated ||
+    firstOutcome.Certificate.EvidenceHashReference != dryRunEvidence.CanonicalEvidenceHash)
+{
+    throw new InvalidOperationException("Outcome dry-run pipeline must create a generated outcome certificate with evidence reference.");
+}
+
+var productionDisabledRequest = outcomeRequest with
+{
+    IdempotencyKey = "outcome-production-disabled",
+    Mode = OutcomeAuthorityMode.ProductionDisabled
+};
+AssertThrows(
+    () => outcomePipeline.Execute(productionDisabledRequest, outcomeStrategy, dryRunProvider, dryRunEvidence),
+    "ProductionDisabled outcome mode must be rejected.");
+
+var productionEligibleProvider = dryRunProvider with
+{
+    ProviderType = RngProviderType.OsCsprng,
+    ProductionEligible = true
+};
+AssertThrows(
+    () => outcomePipeline.Execute(outcomeRequest with { IdempotencyKey = "outcome-production-provider" }, outcomeStrategy, productionEligibleProvider, dryRunEvidence),
+    "Dry-run outcome pipeline must reject production-eligible RNG providers.");
+
+var invalidProviderReference = dryRunProvider with { ProviderId = "rng-provider:other" };
+AssertThrows(
+    () => outcomePipeline.Execute(outcomeRequest with { IdempotencyKey = "outcome-invalid-provider" }, outcomeStrategy, invalidProviderReference, dryRunEvidence),
+    "Outcome pipeline must reject invalid provider references.");
+
 Console.WriteLine("GameEngine.Application.Tests PASS");
+
+static void AssertThrows(Action action, string message)
+{
+    try
+    {
+        action();
+    }
+    catch (Exception)
+    {
+        return;
+    }
+
+    throw new InvalidOperationException(message);
+}
