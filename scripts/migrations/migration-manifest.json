@@ -367,6 +367,51 @@
       "reason": "Adds append-only Provably Fair runtime receipt, reveal, verification evidence, and dry-run attempt support while production authority remains disabled."
     },
     {
+      "id": "040_add_external_official_result_runtime",
+      "path": "scripts/migrations/local/040_add_external_official_result_runtime.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only External Official Result source, schema mapping, ingestion, verification evidence, and dry-run attempt support while production authority remains disabled."
+    },
+    {
+      "id": "041_add_physical_draw_result_runtime",
+      "path": "scripts/migrations/local/041_add_physical_draw_result_runtime.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only Physical Draw authority, event, witness, equipment, custody evidence, and dry-run attempt support while production authority remains disabled."
+    },
+    {
+      "id": "042_add_outcome_runtime_recovery_provenance",
+      "path": "scripts/migrations/local/042_add_outcome_runtime_recovery_provenance.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only Outcome Authority runtime boot identities, provenance stamps, recovery evidence, and rollback-detection support while production authority remains disabled."
+    },
+    {
+      "id": "043_add_outcome_validation_conformance_readiness",
+      "path": "scripts/migrations/local/043_add_outcome_validation_conformance_readiness.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only cryptographic conformance, statistical validation framework, provider registry, and certification readiness evidence without enabling production Outcome Authority."
+    },
+    {
+      "id": "044_add_outcome_authority_hardening",
+      "path": "scripts/migrations/local/044_add_outcome_authority_hardening.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only rollback watermark evidence for Outcome Authority recovery, PITR, and provenance regression detection while production authority remains disabled."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

@@ -11,20 +11,29 @@ public sealed class InfrastructureReadinessChecks
     private readonly ServiceConfiguration configuration;
     private readonly IOutcomeRuntimeRequestRepository outcomeRuntimeRequests;
     private readonly IOutcomeRuntimeLockManager outcomeRuntimeLocks;
+    private readonly OutcomeRuntimeRecoveryService outcomeRuntimeRecovery;
     private readonly ProvablyFairRuntimeService provablyFairRuntime;
+    private readonly ExternalOfficialResultRuntimeService externalOfficialResultRuntime;
+    private readonly PhysicalDrawResultRuntimeService physicalDrawRuntime;
     private readonly ILogger<InfrastructureReadinessChecks> logger;
 
     public InfrastructureReadinessChecks(
         ServiceConfiguration configuration,
         IOutcomeRuntimeRequestRepository outcomeRuntimeRequests,
         IOutcomeRuntimeLockManager outcomeRuntimeLocks,
+        OutcomeRuntimeRecoveryService outcomeRuntimeRecovery,
         ProvablyFairRuntimeService provablyFairRuntime,
+        ExternalOfficialResultRuntimeService externalOfficialResultRuntime,
+        PhysicalDrawResultRuntimeService physicalDrawRuntime,
         ILogger<InfrastructureReadinessChecks> logger)
     {
         this.configuration = configuration;
         this.outcomeRuntimeRequests = outcomeRuntimeRequests;
         this.outcomeRuntimeLocks = outcomeRuntimeLocks;
+        this.outcomeRuntimeRecovery = outcomeRuntimeRecovery;
         this.provablyFairRuntime = provablyFairRuntime;
+        this.externalOfficialResultRuntime = externalOfficialResultRuntime;
+        this.physicalDrawRuntime = physicalDrawRuntime;
         this.logger = logger;
     }
 
@@ -112,6 +121,23 @@ public sealed class InfrastructureReadinessChecks
                 string.Join("; ", readiness.Blockers));
     }
 
+    public async Task<DependencyHealthResult> CheckOutcomeRuntimeRecoveryAsync(CancellationToken cancellationToken)
+    {
+        var readiness = await outcomeRuntimeRecovery.CheckReadinessAsync(cancellationToken);
+        var ready = readiness.BootIdentityReady &&
+            readiness.ProvenanceRepositoryReady &&
+            readiness.RecoveryEvidenceRepositoryReady &&
+            readiness.RollbackDetectionReady &&
+            readiness.ProductionGenerationDisabled;
+
+        return ready
+            ? new DependencyHealthResult("outcome-runtime-recovery", true)
+            : new DependencyHealthResult(
+                "outcome-runtime-recovery",
+                false,
+                string.Join("; ", readiness.Blockers));
+    }
+
     public async Task<DependencyHealthResult> CheckProvablyFairRuntimeAsync(CancellationToken cancellationToken)
     {
         var readiness = await provablyFairRuntime.CheckReadinessAsync(cancellationToken);
@@ -126,6 +152,45 @@ public sealed class InfrastructureReadinessChecks
             ? new DependencyHealthResult("provably-fair-runtime", true)
             : new DependencyHealthResult(
                 "provably-fair-runtime",
+                false,
+                string.Join("; ", readiness.Blockers));
+    }
+
+    public async Task<DependencyHealthResult> CheckExternalOfficialResultRuntimeAsync(CancellationToken cancellationToken)
+    {
+        var readiness = await externalOfficialResultRuntime.CheckReadinessAsync(cancellationToken);
+        var ready = readiness.SourceRepositoryReady &&
+            readiness.SignatureVerificationReady &&
+            readiness.SchemaNormalizationReady &&
+            readiness.IngestionEvidenceRepositoryReady &&
+            readiness.DurableIdempotencyReady &&
+            readiness.AdvisoryLockingReady &&
+            readiness.ProductionGenerationDisabled;
+
+        return ready
+            ? new DependencyHealthResult("external-official-result-runtime", true)
+            : new DependencyHealthResult(
+                "external-official-result-runtime",
+                false,
+                string.Join("; ", readiness.Blockers));
+    }
+
+    public async Task<DependencyHealthResult> CheckPhysicalDrawRuntimeAsync(CancellationToken cancellationToken)
+    {
+        var readiness = await physicalDrawRuntime.CheckReadinessAsync(cancellationToken);
+        var ready = readiness.AuthorityRepositoryReady &&
+            readiness.WitnessValidationReady &&
+            readiness.EquipmentValidationReady &&
+            readiness.SchemaNormalizationReady &&
+            readiness.EvidenceRepositoryReady &&
+            readiness.DurableIdempotencyReady &&
+            readiness.AdvisoryLockingReady &&
+            readiness.ProductionGenerationDisabled;
+
+        return ready
+            ? new DependencyHealthResult("physical-draw-runtime", true)
+            : new DependencyHealthResult(
+                "physical-draw-runtime",
                 false,
                 string.Join("; ", readiness.Blockers));
     }

@@ -1,5 +1,13 @@
 namespace GameEngine.Domain.Model;
 
+public enum OsEntropyPlatform
+{
+    Linux,
+    Windows,
+    MacOS,
+    Unsupported
+}
+
 public enum EntropyProviderType
 {
     OsCsprng,

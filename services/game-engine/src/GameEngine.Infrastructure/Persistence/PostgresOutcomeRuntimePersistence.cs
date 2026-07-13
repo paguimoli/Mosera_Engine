@@ -488,6 +488,10 @@ internal static class OutcomeRuntimeLockScope
 {
     public static string ForStoredRequest(OutcomeRuntimeStoredRequest request)
     {
-        return $"outcome-runtime:{request.ProviderId}:{request.ProviderVersion}:{request.DrawRequestScope}";
+        return new OutcomeAuthorityHardeningService().DeriveAdvisoryLockScope(
+            "request",
+            $"{request.ProviderType}:{request.ProviderId}:{request.ProviderVersion}",
+            request.DrawRequestScope,
+            TimeSpan.FromSeconds(5)).DerivedLockScope;
     }
 }

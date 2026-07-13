@@ -1,17 +1,8 @@
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
-using System.Text;
 using GameEngine.Domain.Model;
 
 namespace GameEngine.Application.Services;
-
-public enum OsEntropyPlatform
-{
-    Linux,
-    Windows,
-    MacOS,
-    Unsupported
-}
 
 public sealed record OsEntropyReadiness(
     OsEntropyPlatform Platform,
@@ -451,27 +442,20 @@ public sealed class HmacDrbgRuntime : IHmacDrbgRuntime
     {
         var blockers = new List<string>();
         var results = new List<HmacDrbgKnownAnswerResult>();
-        foreach (var hashAlgorithm in Enum.GetValues<CertifiedCsprngHashAlgorithm>())
-        {
-            try
-            {
-                var first = GenerateDeterministicVector(hashAlgorithm);
-                var second = GenerateDeterministicVector(hashAlgorithm);
-                var passed = CryptographicOperations.FixedTimeEquals(first, second);
-                if (!passed)
-                {
-                    blockers.Add($"{hashAlgorithm} deterministic known-answer check failed.");
-                }
+        var conformance = new OutcomeAuthorityHardeningService(this, new OutcomeValidationFrameworkService())
+            .RunHmacDrbgConformanceVectors("mosera-game-engine-hmac-drbg-runtime");
 
-                results.Add(new HmacDrbgKnownAnswerResult(hashAlgorithm, passed, passed ? null : "Deterministic vector mismatch."));
-                CryptographicOperations.ZeroMemory(first);
-                CryptographicOperations.ZeroMemory(second);
-            }
-            catch (Exception error) when (error is CryptographicException or ObjectDisposedException)
+        foreach (var result in conformance.VectorResults)
+        {
+            if (!result.Passed)
             {
-                blockers.Add($"{hashAlgorithm} known-answer check failed: {error.Message}");
-                results.Add(new HmacDrbgKnownAnswerResult(hashAlgorithm, Passed: false, error.Message));
+                blockers.Add($"{result.HashAlgorithm} official HMAC-DRBG conformance vector failed: {result.FailureReason}");
             }
+
+            results.Add(new HmacDrbgKnownAnswerResult(
+                result.HashAlgorithm,
+                result.Passed,
+                result.FailureReason));
         }
 
         return new HmacDrbgRuntimeReadiness(
@@ -479,30 +463,6 @@ public sealed class HmacDrbgRuntime : IHmacDrbgRuntime
             KnownAnswerResults: results,
             ContinuousTestReady: true,
             Blockers: blockers);
-    }
-
-    private byte[] GenerateDeterministicVector(CertifiedCsprngHashAlgorithm hashAlgorithm)
-    {
-        var entropy = Enumerable.Range(0, 48).Select(i => (byte)(i + 1)).ToArray();
-        var nonce = Enumerable.Range(0, 16).Select(i => (byte)(0xa0 + i)).ToArray();
-        var personalization = Encoding.UTF8.GetBytes($"mosera-hmac-drbg-kat-{hashAlgorithm}");
-        HmacDrbgSession? session = null;
-        try
-        {
-            session = Instantiate(hashAlgorithm, entropy, nonce, personalization, 256);
-            return Generate(session, 64);
-        }
-        finally
-        {
-            if (session is not null)
-            {
-                Destroy(session);
-            }
-
-            CryptographicOperations.ZeroMemory(entropy);
-            CryptographicOperations.ZeroMemory(nonce);
-            CryptographicOperations.ZeroMemory(personalization);
-        }
     }
 
     private static void VerifyContinuousTest(HmacDrbgSession session, byte[] currentBlock)

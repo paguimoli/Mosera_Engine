@@ -1044,7 +1044,10 @@ public static class GameEngineEndpoints
         var databaseReady = await readinessChecks.CheckDatabaseAsync(context.RequestAborted);
         var outcomeRuntimePersistenceReady = await readinessChecks.CheckOutcomeRuntimePersistenceAsync(context.RequestAborted);
         var outcomeRuntimeLockingReady = await readinessChecks.CheckOutcomeRuntimeLockingAsync(context.RequestAborted);
+        var outcomeRuntimeRecoveryReady = await readinessChecks.CheckOutcomeRuntimeRecoveryAsync(context.RequestAborted);
         var provablyFairRuntimeReady = await readinessChecks.CheckProvablyFairRuntimeAsync(context.RequestAborted);
+        var externalOfficialResultRuntimeReady = await readinessChecks.CheckExternalOfficialResultRuntimeAsync(context.RequestAborted);
+        var physicalDrawRuntimeReady = await readinessChecks.CheckPhysicalDrawRuntimeAsync(context.RequestAborted);
         var dependencies = new[]
         {
             rabbitMqReady,
@@ -1052,7 +1055,10 @@ public static class GameEngineEndpoints
             databaseReady,
             outcomeRuntimePersistenceReady,
             outcomeRuntimeLockingReady,
-            provablyFairRuntimeReady
+            outcomeRuntimeRecoveryReady,
+            provablyFairRuntimeReady,
+            externalOfficialResultRuntimeReady,
+            physicalDrawRuntimeReady
         };
         var ready = dependencies.All(dependency => dependency.Ready);
 

@@ -365,6 +365,11 @@ if (!simulationProductionFailed)
 
 var runtimeRepository = new InMemoryOutcomeRuntimeRequestRepository();
 var runtimeLockManager = new InMemoryOutcomeRuntimeLockManager();
+var runtimeProvenanceRepository = new InMemoryOutcomeRuntimeProvenanceRepository();
+var runtimeRecoveryService = new OutcomeRuntimeRecoveryService(
+    runtimeProvenanceRepository,
+    new EnvironmentOutcomeRuntimeCrashInjector());
+await runtimeRecoveryService.RecordBootAsync(CancellationToken.None);
 var runtimeOrchestrator = new OutcomeProviderOrchestrationService(
     runtimeResolver,
     runtimeRepository,
@@ -375,7 +380,8 @@ var runtimeOrchestrator = new OutcomeProviderOrchestrationService(
         new ExternalOfficialResultOutcomeProviderRuntime(),
         new PhysicalDrawResultOutcomeProviderRuntime(),
         new SimulationTestOutcomeProviderRuntime()
-    ]);
+    ],
+    runtimeRecoveryService);
 var runtimeResult = await runtimeOrchestrator.ExecuteAsync(runtimeRequest, [runtimeProvider], CancellationToken.None);
 if (runtimeResult.Status != OutcomeRuntimeStatus.Accepted ||
     runtimeResult.FailureCode != OutcomeRuntimeFailureCode.None ||
@@ -390,11 +396,22 @@ if (runtimeRepository.Requests.Count != 1 || runtimeRepository.Attempts.Count !=
     throw new InvalidOperationException("Outcome Provider runtime attempt evidence must persist in the repository boundary.");
 }
 
+if (runtimeProvenanceRepository.Boots.Count != 1 ||
+    runtimeProvenanceRepository.Evidence.All(evidence => evidence.EventType != OutcomeRuntimeRecoveryEventType.Boot))
+{
+    throw new InvalidOperationException("Outcome runtime recovery service must persist immutable boot evidence.");
+}
+
 var duplicateRuntimeResult = await runtimeOrchestrator.ExecuteAsync(runtimeRequest, [runtimeProvider], CancellationToken.None);
 if (duplicateRuntimeResult.Status != OutcomeRuntimeStatus.DuplicateReturned ||
     duplicateRuntimeResult.RuntimeRequestId != runtimeResult.RuntimeRequestId)
 {
     throw new InvalidOperationException("Duplicate runtime idempotency request must return existing deterministic state.");
+}
+
+if (runtimeProvenanceRepository.Evidence.All(evidence => evidence.ReasonCode != "IDEMPOTENT_REPLAY"))
+{
+    throw new InvalidOperationException("Duplicate runtime replay must append recovery evidence without regenerating.");
 }
 
 var conflictFailed = false;
@@ -2181,7 +2198,712 @@ AssertThrows(
         CancellationToken.None).GetAwaiter().GetResult(),
     "Provably Fair conflicting duplicate request must fail closed.");
 
+var externalSource = new ExternalResultSourceDefinition(
+    Guid.NewGuid(),
+    "official-source:test",
+    "1.0.0",
+    "Official Source Test",
+    ExternalResultSourceType.SignedFileFeed,
+    new Dictionary<string, object?> { ["endpointReference"] = "qa-offline-feed" },
+    ExternalResultAuthenticationMethod.DetachedSignature,
+    ExternalResultSignatureRequirement.DetachedRequired,
+    ExternalResultTransportSecurityRequirement.OfflineSignedFile,
+    ["LOTTO-EXT"],
+    [ExternalResultSchemaType.UniqueNumberSet],
+    "UTC",
+    new ExternalResultPublicationDelayPolicy(TimeSpan.FromMinutes(5), TimeSpan.FromDays(1), FutureTimestampsRejected: true),
+    ReplayRetrievalCapability: true,
+    ProductionEligible: false,
+    ExternalResultSourceLifecycleState.Active,
+    ExternalResultFailureMode.FailClosed,
+    ExternalOfficialResultRuntimeService.HashCanonical("official-source:test|1.0.0"),
+    CertificationBinding: null,
+    VerificationKeyId: "test-key-1",
+    VerificationAlgorithmVersion: "TEST_SHA256_DETACHED_V1",
+    VerificationKeyRevokedAt: null,
+    SupersedesSourceVersion: null);
+if (!ExternalOfficialResultValidator.ValidateSource(externalSource).IsValid)
+{
+    throw new InvalidOperationException("Valid External Official Result source must pass validation.");
+}
+
+var externalProvider = RuntimeProvider(
+    "external-official:test",
+    "1.0.0",
+    OutcomeProviderType.ExternalOfficialResult);
+var externalEnvelope = new ExternalOfficialResultEnvelope(
+    Guid.NewGuid(),
+    "external-result-idempotency",
+    externalSource.SourceId,
+    externalSource.SourceVersion,
+    externalProvider.ProviderId,
+    externalProvider.ProviderVersion,
+    "manifest-external",
+    "1.0.0",
+    "LOTTO-EXT",
+    "draw-external-001",
+    "external-draw-001",
+    DateTimeOffset.UtcNow.AddMinutes(-2),
+    DateTimeOffset.UtcNow.AddMinutes(-2),
+    DateTimeOffset.UtcNow,
+    ExternalOfficialResultRuntimeService.HashCanonical("source-payload-001"),
+    SourceSignature: null,
+    externalSource.VerificationAlgorithmVersion!,
+    "official-numbers-v1",
+    ExternalResultSchemaType.UniqueNumberSet,
+    new Dictionary<string, object?> { ["numbers"] = new[] { 9, 1, 5, 2, 7 } },
+    "transport-evidence:test",
+    "source-metadata:test");
+externalEnvelope = externalEnvelope with
+{
+    SourceSignature = ExternalOfficialResultRuntimeService.CreateTestSignature(externalSource, externalEnvelope)
+};
+var externalRequest = RuntimeRequest(
+    "external-result-idempotency",
+    "draw-external-001",
+    externalProvider.ProviderId,
+    externalProvider.ProviderVersion,
+    OutcomeProviderType.ExternalOfficialResult,
+    canonicalHash: ExternalOfficialResultRuntimeService.HashCanonical("external-result-request-001")) with
+{
+    GameManifestId = "manifest-external",
+    GameManifestVersion = "1.0.0",
+    ExternalOfficialResult = externalEnvelope
+};
+var externalSourceRepository = new InMemoryExternalResultSourceRepository();
+externalSourceRepository.Add(externalSource);
+var externalEvidenceRepository = new InMemoryExternalResultEvidenceRepository();
+var externalRuntimeService = new ExternalOfficialResultRuntimeService(externalSourceRepository, externalEvidenceRepository);
+var normalizedExternal = ExternalOfficialResultRuntimeService.Normalize(externalEnvelope);
+var normalizedAgain = ExternalOfficialResultRuntimeService.Normalize(externalEnvelope with
+{
+    ResultPayload = new Dictionary<string, object?> { ["numbers"] = new[] { 7, 2, 5, 1, 9 } }
+});
+if (normalizedExternal.CanonicalPayloadHash != normalizedAgain.CanonicalPayloadHash)
+{
+    throw new InvalidOperationException("External official unique number set normalization must be deterministic.");
+}
+
+var externalContext = new OutcomeProviderRuntimeContext(externalRequest, externalProvider);
+var ingestedExternal = await externalRuntimeService.IngestAsync(externalContext, CancellationToken.None);
+if (ingestedExternal.Evidence.Status != ExternalResultVerificationStatus.Verified ||
+    ingestedExternal.OutcomeCertificate.CanonicalOutcomeHash != normalizedExternal.CanonicalPayloadHash)
+{
+    throw new InvalidOperationException("External Official Result runtime must verify, normalize, and certify dry-run evidence.");
+}
+
+AssertThrows(
+    () => externalRuntimeService.IngestAsync(
+        new OutcomeProviderRuntimeContext(
+            externalRequest with { ExternalOfficialResult = externalEnvelope with { SourceSignature = "sha256:invalid" } },
+            externalProvider),
+        CancellationToken.None).GetAwaiter().GetResult(),
+    "Invalid External Official Result signature must fail closed.");
+
+var externalRuntime = new ExternalOfficialResultOutcomeProviderRuntime(externalRuntimeService);
+var externalOrchestrator = new OutcomeProviderOrchestrationService(
+    runtimeResolver,
+    new InMemoryOutcomeRuntimeRequestRepository(),
+    new InMemoryOutcomeRuntimeLockManager(),
+    [externalRuntime]);
+var orchestratedExternal = await externalOrchestrator.ExecuteAsync(
+    externalRequest,
+    [externalProvider],
+    CancellationToken.None);
+if (orchestratedExternal.Status != OutcomeRuntimeStatus.Accepted ||
+    orchestratedExternal.EvidenceReference is null ||
+    !orchestratedExternal.EvidenceReference.StartsWith("placeholder:external-official-result:", StringComparison.Ordinal))
+{
+    throw new InvalidOperationException("External Official Result runtime must accept signed dry-run ingestion and return an evidence reference.");
+}
+
+var duplicateExternal = await externalOrchestrator.ExecuteAsync(
+    externalRequest,
+    [externalProvider],
+    CancellationToken.None);
+if (duplicateExternal.Status != OutcomeRuntimeStatus.DuplicateReturned ||
+    duplicateExternal.EvidenceReference != orchestratedExternal.EvidenceReference)
+{
+    throw new InvalidOperationException("External Official Result duplicate idempotent request must return the same evidence reference.");
+}
+
+var conflictingEnvelope = externalEnvelope with
+{
+    IngestionRequestId = Guid.NewGuid(),
+    IdempotencyKey = "external-result-idempotency-conflict",
+    SourcePayloadHash = ExternalOfficialResultRuntimeService.HashCanonical("source-payload-conflict"),
+    ResultPayload = new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4, 10 } }
+};
+conflictingEnvelope = conflictingEnvelope with
+{
+    SourceSignature = ExternalOfficialResultRuntimeService.CreateTestSignature(externalSource, conflictingEnvelope)
+};
+var conflictResult = await externalRuntime.CreateOutcomeAsync(
+    new OutcomeProviderRuntimeContext(
+        externalRequest with
+        {
+            RuntimeRequestId = Guid.NewGuid(),
+            IdempotencyKey = "external-result-idempotency-conflict",
+            CanonicalRequestHash = ExternalOfficialResultRuntimeService.HashCanonical("external-result-conflict"),
+            ExternalOfficialResult = conflictingEnvelope
+        },
+        externalProvider),
+    CancellationToken.None);
+if (conflictResult.Status != OutcomeRuntimeStatus.FailedClosed ||
+    conflictResult.FailureCode != OutcomeRuntimeFailureCode.ExternalResultConflict)
+{
+    throw new InvalidOperationException("Conflicting External Official Result must fail closed and require supersession.");
+}
+
+var productionExternal = await externalRuntime.CreateOutcomeAsync(
+    new OutcomeProviderRuntimeContext(
+        externalRequest with { Mode = OutcomeRuntimeExecutionMode.Production },
+        externalProvider),
+    CancellationToken.None);
+if (productionExternal.Status != OutcomeRuntimeStatus.ProductionDisabled)
+{
+    throw new InvalidOperationException("External Official Result runtime must reject production mode.");
+}
+
+var physicalAuthority = new PhysicalDrawAuthorityDefinition(
+    Guid.NewGuid(),
+    "physical-authority:test",
+    "1.0.0",
+    "QA Physical Draw Authority",
+    PhysicalDrawAuthorityType.GovernmentLottery,
+    "CR",
+    Jurisdiction: null,
+    "QA Operator",
+    "QA Draw Studio",
+    "machine-alpha",
+    "ball-set-alpha",
+    "procedures-v1",
+    ["LOTTO-PHYS"],
+    [PhysicalDrawResultSchemaType.UniqueNumberSet],
+    new PhysicalDrawWitnessPolicy(
+        OperatorRequired: true,
+        PrimaryWitnessRequired: true,
+        SecondaryWitnessRequired: false,
+        RegulatorWitnessRequired: false,
+        MinimumWitnessCount: 2),
+    new PhysicalDrawTimestampPolicy(TimeSpan.FromMinutes(5), TimeSpan.FromDays(1), FutureTimestampsRejected: true),
+    ProductionEligible: false,
+    PhysicalDrawAuthorityLifecycleState.Active,
+    PhysicalDrawFailureMode.FailClosed,
+    PhysicalDrawResultRuntimeService.HashCanonical("physical-authority:test|1.0.0"),
+    CertificationBinding: null);
+if (!PhysicalDrawResultValidator.ValidateAuthority(physicalAuthority).IsValid)
+{
+    throw new InvalidOperationException("Valid Physical Draw authority must pass validation.");
+}
+
+var physicalProvider = RuntimeProvider(
+    "physical-draw:test",
+    "1.0.0",
+    OutcomeProviderType.PhysicalDrawResult);
+var physicalEnvelope = new PhysicalDrawResultEnvelope(
+    Guid.NewGuid(),
+    "physical-draw-idempotency",
+    "physical-draw-001",
+    physicalProvider.ProviderId,
+    physicalProvider.ProviderVersion,
+    physicalAuthority.AuthorityId,
+    physicalAuthority.AuthorityVersion,
+    "manifest-physical",
+    "1.0.0",
+    "LOTTO-PHYS",
+    DateTimeOffset.UtcNow.AddMinutes(-3),
+    DateTimeOffset.UtcNow.AddMinutes(-5),
+    DateTimeOffset.UtcNow,
+    PhysicalDrawResultSchemaType.UniqueNumberSet,
+    new Dictionary<string, object?> { ["numbers"] = new[] { 19, 3, 11, 7, 5 } },
+    "machine-alpha",
+    "ball-set-alpha",
+    "operator-qa",
+    new PhysicalDrawWitnessEvidence(
+        "operator-qa",
+        "primary-witness-qa",
+        SecondaryWitness: null,
+        RegulatorWitness: null,
+        DigitalApprovalReferences: ["approval:qa"],
+        ManualCertificationReferences: ["manual-cert:qa"]),
+    [
+        new PhysicalDrawEquipmentReference(
+            "machine-alpha",
+            "DRAW_MACHINE",
+            "machine-v1",
+            PhysicalDrawEquipmentLifecycleState.Active,
+            "inspection:qa",
+            "maintenance:qa",
+            "calibration:qa",
+            "seal:qa",
+            Approved: true),
+        new PhysicalDrawEquipmentReference(
+            "ball-set-alpha",
+            "BALL_SET",
+            "balls-v1",
+            PhysicalDrawEquipmentLifecycleState.Active,
+            "inspection:balls",
+            "maintenance:balls",
+            "calibration:balls",
+            "seal:balls",
+            Approved: true)
+    ],
+    ["media:qa"],
+    VideoHash: PhysicalDrawResultRuntimeService.HashCanonical("video:qa"),
+    ImageHash: PhysicalDrawResultRuntimeService.HashCanonical("image:qa"),
+    "official-report:qa",
+    PhysicalDrawResultRuntimeService.HashCanonical("procedure:qa"),
+    PhysicalDrawResultRuntimeService.HashCanonical("event:qa"));
+var physicalRequest = RuntimeRequest(
+    "physical-draw-idempotency",
+    "physical-draw-001",
+    physicalProvider.ProviderId,
+    physicalProvider.ProviderVersion,
+    OutcomeProviderType.PhysicalDrawResult,
+    canonicalHash: PhysicalDrawResultRuntimeService.HashCanonical("physical-draw-request-001")) with
+{
+    GameManifestId = "manifest-physical",
+    GameManifestVersion = "1.0.0",
+    PhysicalDrawResult = physicalEnvelope
+};
+var physicalAuthorityRepository = new InMemoryPhysicalDrawAuthorityRepository();
+physicalAuthorityRepository.Add(physicalAuthority);
+var physicalEvidenceRepository = new InMemoryPhysicalDrawEvidenceRepository();
+var physicalRuntimeService = new PhysicalDrawResultRuntimeService(physicalAuthorityRepository, physicalEvidenceRepository);
+var normalizedPhysical = PhysicalDrawResultRuntimeService.Normalize(physicalEnvelope);
+var normalizedPhysicalAgain = PhysicalDrawResultRuntimeService.Normalize(physicalEnvelope with
+{
+    ResultPayload = new Dictionary<string, object?> { ["numbers"] = new[] { 5, 7, 11, 3, 19 } }
+});
+if (normalizedPhysical.CanonicalPayloadHash != normalizedPhysicalAgain.CanonicalPayloadHash)
+{
+    throw new InvalidOperationException("Physical Draw unique number set normalization must be deterministic.");
+}
+
+var physicalContext = new OutcomeProviderRuntimeContext(physicalRequest, physicalProvider);
+var ingestedPhysical = await physicalRuntimeService.IngestAsync(physicalContext, CancellationToken.None);
+if (ingestedPhysical.Evidence.Status != PhysicalDrawVerificationStatus.Verified ||
+    ingestedPhysical.OutcomeCertificate.CanonicalOutcomeHash != normalizedPhysical.CanonicalPayloadHash)
+{
+    throw new InvalidOperationException("Physical Draw runtime must verify, normalize, and certify dry-run evidence.");
+}
+
+AssertThrows(
+    () => physicalRuntimeService.IngestAsync(
+        new OutcomeProviderRuntimeContext(
+            physicalRequest with
+            {
+                RuntimeRequestId = Guid.NewGuid(),
+                IdempotencyKey = "physical-draw-missing-witness",
+                PhysicalDrawResult = physicalEnvelope with
+                {
+                    DrawEventId = Guid.NewGuid(),
+                    IdempotencyKey = "physical-draw-missing-witness",
+                    WitnessEvidence = physicalEnvelope.WitnessEvidence with { PrimaryWitness = null }
+                }
+            },
+            physicalProvider),
+        CancellationToken.None).GetAwaiter().GetResult(),
+    "Physical Draw missing required witness must fail closed.");
+
+AssertThrows(
+    () => physicalRuntimeService.IngestAsync(
+        new OutcomeProviderRuntimeContext(
+            physicalRequest with
+            {
+                RuntimeRequestId = Guid.NewGuid(),
+                IdempotencyKey = "physical-draw-retired-equipment",
+                PhysicalDrawResult = physicalEnvelope with
+                {
+                    DrawEventId = Guid.NewGuid(),
+                    IdempotencyKey = "physical-draw-retired-equipment",
+                    EquipmentReferences =
+                    [
+                        physicalEnvelope.EquipmentReferences.First() with
+                        {
+                            LifecycleState = PhysicalDrawEquipmentLifecycleState.Retired
+                        }
+                    ]
+                }
+            },
+            physicalProvider),
+        CancellationToken.None).GetAwaiter().GetResult(),
+    "Physical Draw retired equipment must fail closed.");
+
+var physicalRuntime = new PhysicalDrawResultOutcomeProviderRuntime(physicalRuntimeService);
+var physicalOrchestrator = new OutcomeProviderOrchestrationService(
+    runtimeResolver,
+    new InMemoryOutcomeRuntimeRequestRepository(),
+    new InMemoryOutcomeRuntimeLockManager(),
+    [physicalRuntime]);
+var orchestratedPhysical = await physicalOrchestrator.ExecuteAsync(
+    physicalRequest,
+    [physicalProvider],
+    CancellationToken.None);
+if (orchestratedPhysical.Status != OutcomeRuntimeStatus.Accepted ||
+    orchestratedPhysical.EvidenceReference is null ||
+    !orchestratedPhysical.EvidenceReference.StartsWith("placeholder:physical-draw-result:", StringComparison.Ordinal))
+{
+    throw new InvalidOperationException("Physical Draw runtime must accept dry-run ingestion and return an evidence reference.");
+}
+
+var duplicatePhysical = await physicalOrchestrator.ExecuteAsync(
+    physicalRequest,
+    [physicalProvider],
+    CancellationToken.None);
+if (duplicatePhysical.Status != OutcomeRuntimeStatus.DuplicateReturned ||
+    duplicatePhysical.EvidenceReference != orchestratedPhysical.EvidenceReference)
+{
+    throw new InvalidOperationException("Physical Draw duplicate idempotent request must return the same evidence reference.");
+}
+
+var conflictPhysical = await physicalRuntime.CreateOutcomeAsync(
+    new OutcomeProviderRuntimeContext(
+        physicalRequest with
+        {
+            RuntimeRequestId = Guid.NewGuid(),
+            IdempotencyKey = "physical-draw-conflict",
+            CanonicalRequestHash = PhysicalDrawResultRuntimeService.HashCanonical("physical-draw-conflict"),
+            PhysicalDrawResult = physicalEnvelope with
+            {
+                DrawEventId = Guid.NewGuid(),
+                IdempotencyKey = "physical-draw-conflict",
+                ContentHash = PhysicalDrawResultRuntimeService.HashCanonical("event:qa:conflict"),
+                ResultPayload = new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4, 5 } }
+            }
+        },
+        physicalProvider),
+    CancellationToken.None);
+if (conflictPhysical.Status != OutcomeRuntimeStatus.FailedClosed ||
+    conflictPhysical.FailureCode != OutcomeRuntimeFailureCode.PhysicalDrawConflict)
+{
+    throw new InvalidOperationException("Conflicting Physical Draw result must fail closed and require supersession.");
+}
+
+var productionPhysical = await physicalRuntime.CreateOutcomeAsync(
+    new OutcomeProviderRuntimeContext(
+        physicalRequest with { Mode = OutcomeRuntimeExecutionMode.Production },
+        physicalProvider),
+    CancellationToken.None);
+if (productionPhysical.Status != OutcomeRuntimeStatus.ProductionDisabled)
+{
+    throw new InvalidOperationException("Physical Draw runtime must reject production mode.");
+}
+
+var outcomeValidationService = new OutcomeValidationFrameworkService();
+var validationProvenance = new ValidationSupplyChainProvenance(
+    "qa-git-sha",
+    "0.0.0-qa",
+    "qa-build",
+    "sha256:qa-image",
+    Environment.Version.ToString(),
+    "sha256:qa-implementation",
+    "sha256:qa-configuration");
+var conformanceReport = outcomeValidationService.EvaluateCryptographicConformance(
+    CryptographicConformanceSubjectType.CertifiedCsprng,
+    "certified-csprng:qa",
+    "1.0.0",
+    "sha256:qa-csprng",
+    Enum.GetValues<CryptographicConformanceCheckType>(),
+    new Dictionary<string, object?> { ["kat"] = "passed" },
+    new Dictionary<string, object?>
+    {
+        ["healthTestsPassed"] = true,
+        ["knownAnswerTestsPassed"] = true,
+        ["continuousTestsPassed"] = true,
+        ["algorithmVersionCompatible"] = true
+    },
+    validationProvenance);
+if (conformanceReport.Status != ValidationEvaluationStatus.Pass ||
+    !conformanceReport.CanonicalReportHash.StartsWith("sha256:", StringComparison.Ordinal))
+{
+    throw new InvalidOperationException("Cryptographic conformance report must pass with complete CSPRNG checks.");
+}
+
+var failedConformanceReport = outcomeValidationService.EvaluateCryptographicConformance(
+    CryptographicConformanceSubjectType.CertifiedCsprng,
+    "certified-csprng:qa:failed",
+    "1.0.0",
+    "sha256:qa-csprng-failed",
+    [CryptographicConformanceCheckType.KnownAnswerTests],
+    new Dictionary<string, object?> { ["kat"] = "missing lifecycle checks" },
+    new Dictionary<string, object?> { ["knownAnswerTestsPassed"] = false },
+    validationProvenance);
+if (failedConformanceReport.Status != ValidationEvaluationStatus.Fail ||
+    failedConformanceReport.Blockers.Count == 0)
+{
+    throw new InvalidOperationException("Incomplete cryptographic conformance must fail with blockers.");
+}
+
+var statisticalReport = outcomeValidationService.EvaluateFrequency(
+    ProviderValidationSubjectType.OutcomeProvider,
+    "outcome-provider:qa",
+    "1.0.0",
+    "sha256:qa-outcome-provider",
+    "manifest:qa",
+    "1.0.0",
+    "internal-suite-v1",
+    new Dictionary<string, long> { ["A"] = 5000, ["B"] = 5000 },
+    new Dictionary<string, decimal> { ["A"] = 0.5m, ["B"] = 0.5m },
+    10000,
+    validationProvenance);
+if (statisticalReport.Status != ValidationEvaluationStatus.Pass ||
+    statisticalReport.SuiteType != StatisticalValidationSuiteType.Frequency)
+{
+    throw new InvalidOperationException("Frequency statistical validation must pass for balanced samples.");
+}
+
+var registryEntry = outcomeValidationService.CreateRegistryEntry(
+    ProviderValidationSubjectType.OutcomeProvider,
+    "outcome-provider:qa",
+    "1.0.0",
+    "validation-v1",
+    "sha256:qa-implementation",
+    "sha256:qa-configuration",
+    ValidationEvaluationStatus.Pass,
+    "qa-operator",
+    [conformanceReport.CanonicalReportHash, statisticalReport.CanonicalReportHash]);
+if (registryEntry.EvidenceHashes.Count != 2 ||
+    !registryEntry.CanonicalRegistryHash.StartsWith("sha256:", StringComparison.Ordinal))
+{
+    throw new InvalidOperationException("Provider validation registry entry must preserve evidence hashes.");
+}
+
+var readiness = outcomeValidationService.EvaluateReadiness(
+    ProviderValidationSubjectType.OutcomeProvider,
+    "outcome-provider:qa",
+    "1.0.0",
+    providerApproved: true,
+    guardrailsPassed: true,
+    cryptographicConformancePassed: true,
+    statisticalValidationPassed: true,
+    requiredEvidenceComplete: true,
+    providerHealthPassed: true,
+    runtimeReadinessPassed: true,
+    outcomeAuthorityDisabled: true,
+    [conformanceReport.CanonicalReportHash, statisticalReport.CanonicalReportHash, registryEntry.CanonicalRegistryHash],
+    validationProvenance);
+if (readiness.Status != CertificationReadinessStatus.ProductionEligible ||
+    readiness.Blockers.Count > 0)
+{
+    throw new InvalidOperationException("Full synthetic readiness should produce production eligibility evidence without activation.");
+}
+
+var notReady = outcomeValidationService.EvaluateReadiness(
+    ProviderValidationSubjectType.OutcomeProvider,
+    "outcome-provider:qa:not-ready",
+    "1.0.0",
+    providerApproved: true,
+    guardrailsPassed: true,
+    cryptographicConformancePassed: false,
+    statisticalValidationPassed: true,
+    requiredEvidenceComplete: true,
+    providerHealthPassed: true,
+    runtimeReadinessPassed: true,
+    outcomeAuthorityDisabled: true,
+    [statisticalReport.CanonicalReportHash],
+    validationProvenance);
+if (notReady.Status == CertificationReadinessStatus.ProductionEligible ||
+    !notReady.Blockers.Contains("Cryptographic conformance must pass."))
+{
+    throw new InvalidOperationException("Production eligibility must require independent cryptographic conformance.");
+}
+
+var hardeningService = new OutcomeAuthorityHardeningService();
+var vectorSuite = hardeningService.RunHmacDrbgConformanceVectors("application-tests-build");
+if (!vectorSuite.Passed ||
+    vectorSuite.VectorResults.Count != 3 ||
+    !vectorSuite.CanonicalResultHash.StartsWith("sha256:", StringComparison.Ordinal))
+{
+    throw new InvalidOperationException("Official HMAC-DRBG conformance vectors must pass for SHA-256, SHA-384, and SHA-512.");
+}
+
+var tamperedVector = OutcomeAuthorityHardeningService.OfficialHmacDrbgConformanceVectors()
+    .Select(vector => vector.HashAlgorithm == CertifiedCsprngHashAlgorithm.Sha256
+        ? vector with { ExpectedFirstGenerateHex = vector.ExpectedFirstGenerateHex.Replace('8', '9') }
+        : vector)
+    .ToArray();
+var tamperedSuite = hardeningService.RunHmacDrbgConformanceVectors("application-tests-build", tamperedVector);
+if (tamperedSuite.Passed ||
+    tamperedSuite.VectorResults.Single(result => result.HashAlgorithm == CertifiedCsprngHashAlgorithm.Sha256).Passed)
+{
+    throw new InvalidOperationException("Modified HMAC-DRBG vector must fail conformance.");
+}
+
+var entropyConfig = new EntropyProviderDeploymentConfiguration(
+    "entropy:qa",
+    "1.0.0",
+    EntropyProviderType.OsCsprng,
+    OsEntropyPlatform.Linux,
+    Approved: true,
+    ProductionEligible: true,
+    CertifiedCsprngFailureMode.FailClosed,
+    "sha256:entropy-config");
+var entropyReady = hardeningService.ValidateEntropyProviderConfiguration(
+    [entropyConfig],
+    new ConfiguredEntropyProvider(OsEntropyPlatform.Linux));
+if (!entropyReady.Ready)
+{
+    throw new InvalidOperationException("Exactly one matching approved entropy provider should be ready.");
+}
+
+var entropyMismatch = hardeningService.ValidateEntropyProviderConfiguration(
+    [entropyConfig],
+    new ConfiguredEntropyProvider(OsEntropyPlatform.MacOS));
+if (entropyMismatch.Ready ||
+    !entropyMismatch.Blockers.Any(blocker => blocker.Contains("does not match", StringComparison.OrdinalIgnoreCase)))
+{
+    throw new InvalidOperationException("Entropy provider OS mismatch must fail closed.");
+}
+
+var legacyIsolation = hardeningService.EvaluateLegacyRandomnessIsolation(
+    [
+        new LegacyRandomnessIsolationEvidence(
+            "services/game-engine/src/GameEngine.Application/Services/OutcomeDryRunPipeline.cs",
+            LegacyRandomnessUsageMode.DryRunOnly,
+            ProductionEligible: true,
+            RegisteredForCertifiedCsprngRuntime: true,
+            [])
+    ]).Single();
+if (legacyIsolation.ProductionEligible ||
+    legacyIsolation.RegisteredForCertifiedCsprngRuntime ||
+    legacyIsolation.Blockers.Count != 2)
+{
+    throw new InvalidOperationException("Legacy/test randomness must be isolated from production CSPRNG ownership.");
+}
+
+var readinessReport = hardeningService.CreateReadinessReport(
+    [
+        ReadySection("provider readiness"),
+        ReadySection("entropy readiness"),
+        ReadySection("DRBG conformance"),
+        ReadySection("statistical validation"),
+        ReadySection("runtime persistence"),
+        ReadySection("advisory locking"),
+        ReadySection("recovery/provenance"),
+        new OutcomeAuthorityReadinessSection(
+            "seed custody status",
+            OutcomeAuthorityReadinessSectionStatus.Blocked,
+            ["placeholder:seed-custody-abstraction"],
+            ["Production seed custody remains unavailable."]),
+        new OutcomeAuthorityReadinessSection(
+            "signing custody status",
+            OutcomeAuthorityReadinessSectionStatus.Blocked,
+            ["placeholder:signing-custody-abstraction"],
+            ["Production signing custody remains unavailable."]),
+        ReadySection("external suite evidence status"),
+        ReadySection("production activation status")
+    ],
+    productionAuthorityEnabled: false);
+if (readinessReport.Blockers.Count != 2 ||
+    readinessReport.ProductionAuthorityEnabled ||
+    !readinessReport.ProductionEligibleEvidenceOnly)
+{
+    throw new InvalidOperationException("Unified readiness report must derive custody blockers without enabling authority.");
+}
+
+var missingReadiness = hardeningService.CreateReadinessReport([ReadySection("provider readiness")], productionAuthorityEnabled: false);
+if (!missingReadiness.Blockers.Any(blocker => blocker.Contains("Missing readiness evidence", StringComparison.Ordinal)))
+{
+    throw new InvalidOperationException("Missing readiness evidence must fail closed.");
+}
+
+var lockScopeA = hardeningService.DeriveAdvisoryLockScope(
+    "request",
+    "CertifiedCsprng:provider:1.0.0",
+    "draw:100",
+    TimeSpan.FromSeconds(5));
+var lockScopeB = hardeningService.DeriveAdvisoryLockScope(
+    "certificate",
+    "CertifiedCsprng:provider:1.0.0",
+    "draw:100",
+    TimeSpan.FromSeconds(5));
+var lockScopeARepeat = hardeningService.DeriveAdvisoryLockScope(
+    "request",
+    "CertifiedCsprng:provider:1.0.0",
+    "draw:100",
+    TimeSpan.FromSeconds(5));
+if (lockScopeA.DerivedLockScope != lockScopeARepeat.DerivedLockScope ||
+    lockScopeA.DerivedLockScope == lockScopeB.DerivedLockScope ||
+    !lockScopeA.RedisDependencyAbsent)
+{
+    throw new InvalidOperationException("Advisory lock derivation must be deterministic and namespace-separated without Redis.");
+}
+
+var previousWatermark = new OutcomeRuntimeRollbackWatermark(
+    Guid.NewGuid(),
+    "outcome-runtime",
+    10,
+    "sha256:previous",
+    "sha256:chain-a",
+    Guid.NewGuid(),
+    null,
+    ["sha256:evidence-a"],
+    DateTimeOffset.UtcNow);
+var acceptedWatermark = new OutcomeRuntimeRollbackWatermark(
+    Guid.NewGuid(),
+    "outcome-runtime",
+    11,
+    previousWatermark.ChainRootHash,
+    "sha256:chain-b",
+    Guid.NewGuid(),
+    null,
+    ["sha256:evidence-b"],
+    DateTimeOffset.UtcNow);
+if (hardeningService.EvaluateRollbackWatermark(previousWatermark, acceptedWatermark).Status != OutcomeAuthorityRollbackWatermarkStatus.Accepted)
+{
+    throw new InvalidOperationException("Monotonic rollback watermark should be accepted.");
+}
+
+var regressedWatermark = acceptedWatermark with { SequenceNumber = 9 };
+if (hardeningService.EvaluateRollbackWatermark(previousWatermark, regressedWatermark).Status != OutcomeAuthorityRollbackWatermarkStatus.RegressionDetected)
+{
+    throw new InvalidOperationException("Rollback watermark sequence regression must fail closed.");
+}
+
+var externalStatisticalEvidence = hardeningService.ImportExternalStatisticalEvidence(
+    new ExternalStatisticalEvidenceImportRequest(
+        StatisticalValidationSuiteType.ExternalImported,
+        ProviderValidationSubjectType.CertifiedCsprng,
+        "certified-csprng:qa",
+        "1.0.0",
+        "sha256:qa-csprng",
+        "NIST SP 800-22",
+        "external-report-v1",
+        "application-tests-build",
+        new Dictionary<string, object?> { ["suiteProfile"] = "qa-import" },
+        100000,
+        "sha256:external-report",
+        ValidationEvaluationStatus.Pass,
+        "qa-operator",
+        [],
+        validationProvenance));
+if (externalStatisticalEvidence.Status != ValidationEvaluationStatus.Pass ||
+    externalStatisticalEvidence.SuiteType != StatisticalValidationSuiteType.ExternalImported ||
+    externalStatisticalEvidence.Configuration["runtimeSuiteBundled"] is not false)
+{
+    throw new InvalidOperationException("External statistical evidence import must be immutable metadata, not runtime suite execution.");
+}
+
+var restartHarnessPlan = hardeningService.CreateProcessRestartRecoveryHarnessPlan();
+if (!restartHarnessPlan.RequiresContainerKillApproval ||
+    !restartHarnessPlan.ProductionAuthorityDisabled ||
+    !restartHarnessPlan.SupportedCheckpoints.Contains(OutcomeRuntimeCrashInjectionStage.LockAcquisition))
+{
+    throw new InvalidOperationException("Process restart harness plan must cover lock/idempotency recovery without enabling production authority.");
+}
+
 Console.WriteLine("GameEngine.Application.Tests PASS");
+
+static OutcomeAuthorityReadinessSection ReadySection(string section)
+{
+    return new OutcomeAuthorityReadinessSection(
+        section,
+        OutcomeAuthorityReadinessSectionStatus.Ready,
+        [$"sha256:evidence:{section.Replace(' ', '-')}"],
+        []);
+}
 
 static void AssertThrows(Action action, string message)
 {
@@ -2209,6 +2931,23 @@ sealed class FixedEntropyProvider(byte[] fixedBytes) : IOsEntropyProvider
         {
             buffer[index] = fixedBytes[index % fixedBytes.Length];
         }
+    }
+
+    public OsEntropyReadiness CheckReadiness()
+    {
+        return new OsEntropyReadiness(Platform, Supported: true, Ready: true, []);
+    }
+}
+
+sealed class ConfiguredEntropyProvider(OsEntropyPlatform platform) : IOsEntropyProvider
+{
+    public OsEntropyPlatform Platform => platform;
+
+    public bool IsSupported => true;
+
+    public void Fill(byte[] buffer)
+    {
+        Array.Fill(buffer, (byte)0x42);
     }
 
     public OsEntropyReadiness CheckReadiness()

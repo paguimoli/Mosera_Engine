@@ -11,10 +11,11 @@ function read(path) {
 }
 
 const runtimeSource = read("services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs");
+const hardeningSource = read("services/game-engine/src/GameEngine.Application/Services/OutcomeAuthorityHardeningService.cs");
 const testSource = read("services/game-engine/tests/GameEngine.Application.Tests/Program.cs");
 
-addCheck("startup health checks run KATs", runtimeSource.includes("RunHealthChecks") && runtimeSource.includes("GenerateDeterministicVector"));
-addCheck("KATs cover SHA-256/384/512", testSource.includes("Enum.GetValues<CertifiedCsprngHashAlgorithm>()") && runtimeSource.includes("CertifiedCsprngHashAlgorithm.Sha256") && runtimeSource.includes("CertifiedCsprngHashAlgorithm.Sha384") && runtimeSource.includes("CertifiedCsprngHashAlgorithm.Sha512"));
+addCheck("startup health checks run KATs", runtimeSource.includes("RunHealthChecks") && runtimeSource.includes("RunHmacDrbgConformanceVectors"));
+addCheck("KATs cover SHA-256/384/512", hardeningSource.includes("CertifiedCsprngHashAlgorithm.Sha256") && hardeningSource.includes("CertifiedCsprngHashAlgorithm.Sha384") && hardeningSource.includes("CertifiedCsprngHashAlgorithm.Sha512"));
 addCheck("deterministic reproducibility asserted", testSource.includes("deterministic test vector must be reproducible"));
 addCheck("constant-time comparison used", runtimeSource.includes("CryptographicOperations.FixedTimeEquals") && testSource.includes("CryptographicOperations.FixedTimeEquals"));
 addCheck("continuous repetition test exists", runtimeSource.includes("VerifyContinuousTest") && runtimeSource.includes("continuous repetition test failed"));

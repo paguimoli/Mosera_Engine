@@ -710,15 +710,352 @@ public sealed class ProvablyFairOutcomeProviderRuntime : OutcomeProviderRuntimeS
 
 public sealed class ExternalOfficialResultOutcomeProviderRuntime : OutcomeProviderRuntimeShellBase
 {
-    public ExternalOfficialResultOutcomeProviderRuntime() : base(OutcomeProviderType.ExternalOfficialResult)
+    private readonly ExternalOfficialResultRuntimeService runtimeService;
+
+    public ExternalOfficialResultOutcomeProviderRuntime()
+        : this(new ExternalOfficialResultRuntimeService(
+            new InMemoryExternalResultSourceRepository(),
+            new InMemoryExternalResultEvidenceRepository()))
     {
+    }
+
+    public ExternalOfficialResultOutcomeProviderRuntime(ExternalOfficialResultRuntimeService runtimeService)
+        : base(OutcomeProviderType.ExternalOfficialResult)
+    {
+        this.runtimeService = runtimeService;
+    }
+
+    public override async Task<OutcomeProviderRuntimeReadiness> ValidateProviderReadinessAsync(
+        OutcomeProviderDefinitionV1 provider,
+        CancellationToken cancellationToken)
+    {
+        var blockers = new List<string>();
+        var compatibility = ExternalOfficialResultValidator.ValidateProviderCompatibility(provider);
+        blockers.AddRange(compatibility.Errors.Select(error => error.Message));
+
+        if (provider.LifecycleState != OutcomeProviderLifecycleState.Active)
+        {
+            blockers.Add("Provider definition is not active.");
+        }
+
+        if (provider.FailureMode != OutcomeProviderFailureMode.FailClosed)
+        {
+            blockers.Add("Provider runtime must fail closed.");
+        }
+
+        var readiness = await runtimeService.CheckReadinessAsync(cancellationToken);
+        blockers.AddRange(readiness.Blockers);
+
+        return new OutcomeProviderRuntimeReadiness(
+            ProviderType,
+            ProviderResolverReady: true,
+            OrchestrationReady: true,
+            DurableIdempotencyConfigured: readiness.DurableIdempotencyReady,
+            AdvisoryLockingConfigured: readiness.AdvisoryLockingReady,
+            ProviderRuntimeImplemented: true,
+            ProductionGenerationDisabled: true,
+            CapabilityMarkers: provider.HealthReadinessCapabilities
+                .Concat(readiness.CapabilityMarkers)
+                .Concat([
+                    "external-source-authenticity",
+                    "signed-result-ingestion",
+                    "canonical-result-normalization",
+                    "duplicate-conflict-handling",
+                    "external-custody-evidence"
+                ])
+                .Distinct(StringComparer.Ordinal)
+                .ToArray(),
+            Blockers: blockers);
+    }
+
+    public override async Task<OutcomeProviderRuntimeResult> CreateOutcomeAsync(
+        OutcomeProviderRuntimeContext context,
+        CancellationToken cancellationToken)
+    {
+        var started = DateTimeOffset.UtcNow;
+        if (context.Request.Mode == OutcomeRuntimeExecutionMode.Production)
+        {
+            return new OutcomeProviderRuntimeResult(
+                context.Request.RuntimeRequestId,
+                context.Request.IdempotencyKey,
+                context.Request.DrawRequestScope,
+                context.Request.GameManifestId,
+                context.Request.GameManifestVersion,
+                context.Provider.ProviderId,
+                context.Provider.ProviderVersion,
+                context.Provider.ProviderType,
+                context.Request.Mode,
+                OutcomeRuntimeStatus.ProductionDisabled,
+                OutcomeRuntimeFailureCode.ProductionDisabled,
+                "Production Outcome Authority remains disabled.",
+                context.Request.CanonicalRequestHash,
+                ResultReference: null,
+                EvidenceReference: null,
+                StartedAt: started,
+                CompletedAt: DateTimeOffset.UtcNow);
+        }
+
+        try
+        {
+            var result = await runtimeService.IngestAsync(context, cancellationToken);
+            return new OutcomeProviderRuntimeResult(
+                context.Request.RuntimeRequestId,
+                context.Request.IdempotencyKey,
+                context.Request.DrawRequestScope,
+                context.Request.GameManifestId,
+                context.Request.GameManifestVersion,
+                context.Provider.ProviderId,
+                context.Provider.ProviderVersion,
+                context.Provider.ProviderType,
+                context.Request.Mode,
+                OutcomeRuntimeStatus.Accepted,
+                OutcomeRuntimeFailureCode.None,
+                FailureReason: null,
+                context.Request.CanonicalRequestHash,
+                ResultReference: null,
+                EvidenceReference: $"placeholder:external-official-result:{result.Evidence.EvidenceHash}",
+                StartedAt: started,
+                CompletedAt: DateTimeOffset.UtcNow);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            return new OutcomeProviderRuntimeResult(
+                context.Request.RuntimeRequestId,
+                context.Request.IdempotencyKey,
+                context.Request.DrawRequestScope,
+                context.Request.GameManifestId,
+                context.Request.GameManifestVersion,
+                context.Provider.ProviderId,
+                context.Provider.ProviderVersion,
+                context.Provider.ProviderType,
+                context.Request.Mode,
+                OutcomeRuntimeStatus.FailedClosed,
+                ClassifyFailure(error),
+                error.Message,
+                context.Request.CanonicalRequestHash,
+                ResultReference: null,
+                EvidenceReference: null,
+                StartedAt: started,
+                CompletedAt: DateTimeOffset.UtcNow);
+        }
+    }
+
+    private static OutcomeRuntimeFailureCode ClassifyFailure(Exception error)
+    {
+        if (error.Message.Contains("signature", StringComparison.OrdinalIgnoreCase))
+        {
+            return OutcomeRuntimeFailureCode.ExternalResultSignatureInvalid;
+        }
+
+        if (error.Message.Contains("conflict", StringComparison.OrdinalIgnoreCase) ||
+            error.Message.Contains("supersession", StringComparison.OrdinalIgnoreCase))
+        {
+            return OutcomeRuntimeFailureCode.ExternalResultConflict;
+        }
+
+        if (error.Message.Contains("source is unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            return OutcomeRuntimeFailureCode.UnknownExternalSource;
+        }
+
+        if (error.Message.Contains("schema", StringComparison.OrdinalIgnoreCase))
+        {
+            return OutcomeRuntimeFailureCode.ExternalResultSchemaMismatch;
+        }
+
+        if (error.Message.Contains("timestamp", StringComparison.OrdinalIgnoreCase) ||
+            error.Message.Contains("stale", StringComparison.OrdinalIgnoreCase) ||
+            error.Message.Contains("future", StringComparison.OrdinalIgnoreCase))
+        {
+            return OutcomeRuntimeFailureCode.ExternalResultTimestampInvalid;
+        }
+
+        if (error.Message.Contains("game", StringComparison.OrdinalIgnoreCase) ||
+            error.Message.Contains("drawing", StringComparison.OrdinalIgnoreCase) ||
+            error.Message.Contains("manifest", StringComparison.OrdinalIgnoreCase))
+        {
+            return OutcomeRuntimeFailureCode.ExternalResultIdentityMismatch;
+        }
+
+        return OutcomeRuntimeFailureCode.ExternalSourceAuthenticationFailed;
     }
 }
 
 public sealed class PhysicalDrawResultOutcomeProviderRuntime : OutcomeProviderRuntimeShellBase
 {
-    public PhysicalDrawResultOutcomeProviderRuntime() : base(OutcomeProviderType.PhysicalDrawResult)
+    private readonly PhysicalDrawResultRuntimeService runtimeService;
+
+    public PhysicalDrawResultOutcomeProviderRuntime()
+        : this(new PhysicalDrawResultRuntimeService(
+            new InMemoryPhysicalDrawAuthorityRepository(),
+            new InMemoryPhysicalDrawEvidenceRepository()))
     {
+    }
+
+    public PhysicalDrawResultOutcomeProviderRuntime(PhysicalDrawResultRuntimeService runtimeService)
+        : base(OutcomeProviderType.PhysicalDrawResult)
+    {
+        this.runtimeService = runtimeService;
+    }
+
+    public override async Task<OutcomeProviderRuntimeReadiness> ValidateProviderReadinessAsync(
+        OutcomeProviderDefinitionV1 provider,
+        CancellationToken cancellationToken)
+    {
+        var blockers = new List<string>();
+        var compatibility = PhysicalDrawResultValidator.ValidateProviderCompatibility(provider);
+        blockers.AddRange(compatibility.Errors.Select(error => error.Message));
+
+        if (provider.LifecycleState != OutcomeProviderLifecycleState.Active)
+        {
+            blockers.Add("Provider definition is not active.");
+        }
+
+        if (provider.FailureMode != OutcomeProviderFailureMode.FailClosed)
+        {
+            blockers.Add("Provider runtime must fail closed.");
+        }
+
+        var readiness = await runtimeService.CheckReadinessAsync(cancellationToken);
+        blockers.AddRange(readiness.Blockers);
+
+        return new OutcomeProviderRuntimeReadiness(
+            ProviderType,
+            ProviderResolverReady: true,
+            OrchestrationReady: true,
+            DurableIdempotencyConfigured: readiness.DurableIdempotencyReady,
+            AdvisoryLockingConfigured: readiness.AdvisoryLockingReady,
+            ProviderRuntimeImplemented: true,
+            ProductionGenerationDisabled: true,
+            CapabilityMarkers: provider.HealthReadinessCapabilities
+                .Concat(readiness.CapabilityMarkers)
+                .Concat([
+                    "physical-draw-authority-validation",
+                    "physical-draw-witness-validation",
+                    "physical-draw-equipment-validation",
+                    "physical-draw-custody-evidence",
+                    "physical-draw-conflict-handling"
+                ])
+                .Distinct(StringComparer.Ordinal)
+                .ToArray(),
+            Blockers: blockers);
+    }
+
+    public override async Task<OutcomeProviderRuntimeResult> CreateOutcomeAsync(
+        OutcomeProviderRuntimeContext context,
+        CancellationToken cancellationToken)
+    {
+        var started = DateTimeOffset.UtcNow;
+        if (context.Request.Mode == OutcomeRuntimeExecutionMode.Production)
+        {
+            return new OutcomeProviderRuntimeResult(
+                context.Request.RuntimeRequestId,
+                context.Request.IdempotencyKey,
+                context.Request.DrawRequestScope,
+                context.Request.GameManifestId,
+                context.Request.GameManifestVersion,
+                context.Provider.ProviderId,
+                context.Provider.ProviderVersion,
+                context.Provider.ProviderType,
+                context.Request.Mode,
+                OutcomeRuntimeStatus.ProductionDisabled,
+                OutcomeRuntimeFailureCode.ProductionDisabled,
+                "Production Outcome Authority remains disabled.",
+                context.Request.CanonicalRequestHash,
+                ResultReference: null,
+                EvidenceReference: null,
+                StartedAt: started,
+                CompletedAt: DateTimeOffset.UtcNow);
+        }
+
+        try
+        {
+            var result = await runtimeService.IngestAsync(context, cancellationToken);
+            return new OutcomeProviderRuntimeResult(
+                context.Request.RuntimeRequestId,
+                context.Request.IdempotencyKey,
+                context.Request.DrawRequestScope,
+                context.Request.GameManifestId,
+                context.Request.GameManifestVersion,
+                context.Provider.ProviderId,
+                context.Provider.ProviderVersion,
+                context.Provider.ProviderType,
+                context.Request.Mode,
+                OutcomeRuntimeStatus.Accepted,
+                OutcomeRuntimeFailureCode.None,
+                FailureReason: null,
+                context.Request.CanonicalRequestHash,
+                ResultReference: null,
+                EvidenceReference: $"placeholder:physical-draw-result:{result.Evidence.EvidenceHash}",
+                StartedAt: started,
+                CompletedAt: DateTimeOffset.UtcNow);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            return new OutcomeProviderRuntimeResult(
+                context.Request.RuntimeRequestId,
+                context.Request.IdempotencyKey,
+                context.Request.DrawRequestScope,
+                context.Request.GameManifestId,
+                context.Request.GameManifestVersion,
+                context.Provider.ProviderId,
+                context.Provider.ProviderVersion,
+                context.Provider.ProviderType,
+                context.Request.Mode,
+                OutcomeRuntimeStatus.FailedClosed,
+                ClassifyFailure(error),
+                error.Message,
+                context.Request.CanonicalRequestHash,
+                ResultReference: null,
+                EvidenceReference: null,
+                StartedAt: started,
+                CompletedAt: DateTimeOffset.UtcNow);
+        }
+    }
+
+    private static OutcomeRuntimeFailureCode ClassifyFailure(Exception error)
+    {
+        if (error.Message.Contains("authority is unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            return OutcomeRuntimeFailureCode.UnknownPhysicalDrawAuthority;
+        }
+
+        if (error.Message.Contains("authority is not active", StringComparison.OrdinalIgnoreCase))
+        {
+            return OutcomeRuntimeFailureCode.PhysicalDrawAuthorityInactive;
+        }
+
+        if (error.Message.Contains("equipment", StringComparison.OrdinalIgnoreCase) ||
+            error.Message.Contains("machine", StringComparison.OrdinalIgnoreCase) ||
+            error.Message.Contains("ball set", StringComparison.OrdinalIgnoreCase))
+        {
+            return OutcomeRuntimeFailureCode.PhysicalDrawEquipmentInvalid;
+        }
+
+        if (error.Message.Contains("witness", StringComparison.OrdinalIgnoreCase))
+        {
+            return OutcomeRuntimeFailureCode.PhysicalDrawWitnessInvalid;
+        }
+
+        if (error.Message.Contains("conflict", StringComparison.OrdinalIgnoreCase) ||
+            error.Message.Contains("supersession", StringComparison.OrdinalIgnoreCase))
+        {
+            return OutcomeRuntimeFailureCode.PhysicalDrawConflict;
+        }
+
+        if (error.Message.Contains("schema", StringComparison.OrdinalIgnoreCase))
+        {
+            return OutcomeRuntimeFailureCode.PhysicalDrawSchemaMismatch;
+        }
+
+        if (error.Message.Contains("timestamp", StringComparison.OrdinalIgnoreCase) ||
+            error.Message.Contains("stale", StringComparison.OrdinalIgnoreCase) ||
+            error.Message.Contains("future", StringComparison.OrdinalIgnoreCase))
+        {
+            return OutcomeRuntimeFailureCode.PhysicalDrawTimestampInvalid;
+        }
+
+        return OutcomeRuntimeFailureCode.PhysicalDrawIdentityMismatch;
     }
 }
 
@@ -734,17 +1071,22 @@ public sealed class OutcomeProviderOrchestrationService
     private readonly IOutcomeProviderResolver resolver;
     private readonly IOutcomeRuntimeRequestRepository requestRepository;
     private readonly IOutcomeRuntimeLockManager lockManager;
+    private readonly OutcomeRuntimeRecoveryService recoveryService;
     private readonly IReadOnlyDictionary<OutcomeProviderType, IOutcomeProviderRuntime> runtimes;
 
     public OutcomeProviderOrchestrationService(
         IOutcomeProviderResolver resolver,
         IOutcomeRuntimeRequestRepository requestRepository,
         IOutcomeRuntimeLockManager lockManager,
-        IEnumerable<IOutcomeProviderRuntime> runtimes)
+        IEnumerable<IOutcomeProviderRuntime> runtimes,
+        OutcomeRuntimeRecoveryService? recoveryService = null)
     {
         this.resolver = resolver;
         this.requestRepository = requestRepository;
         this.lockManager = lockManager;
+        this.recoveryService = recoveryService ?? new OutcomeRuntimeRecoveryService(
+            new InMemoryOutcomeRuntimeProvenanceRepository(),
+            new EnvironmentOutcomeRuntimeCrashInjector());
         this.runtimes = runtimes.ToDictionary(runtime => runtime.ProviderType);
     }
 
@@ -762,9 +1104,23 @@ public sealed class OutcomeProviderOrchestrationService
         {
             if (existing.CanonicalRequestHash != request.CanonicalRequestHash)
             {
+                await recoveryService.AppendRecoveryEvidenceAsync(
+                    OutcomeRuntimeRecoveryEventType.RollbackDetection,
+                    request,
+                    provider: null,
+                    OutcomeRuntimeFailureCode.IdempotencyConflict.ToString(),
+                    "Conflicting payload for the same runtime idempotency key.",
+                    cancellationToken);
                 throw new InvalidOperationException("Conflicting payload for the same runtime idempotency key.");
             }
 
+            await recoveryService.AppendRecoveryEvidenceAsync(
+                OutcomeRuntimeRecoveryEventType.RecoveredRuntime,
+                request,
+                provider: null,
+                "IDEMPOTENT_REPLAY",
+                "Completed runtime request was replayed idempotently without regeneration.",
+                cancellationToken);
             return ToResult(existing, OutcomeRuntimeStatus.DuplicateReturned);
         }
 
@@ -786,6 +1142,7 @@ public sealed class OutcomeProviderOrchestrationService
                 cancellationToken);
         }
 
+        recoveryService.ThrowIfCrashPoint(OutcomeRuntimeCrashInjectionStage.ProviderValidation);
         if (!runtimes.TryGetValue(provider.ProviderType, out var runtime))
         {
             return await PersistFailClosedAsync(
@@ -814,6 +1171,7 @@ public sealed class OutcomeProviderOrchestrationService
         }
 
         var lockScope = BuildLockScope(request);
+        recoveryService.ThrowIfCrashPoint(OutcomeRuntimeCrashInjectionStage.LockAcquisition);
         var lease = await lockManager.TryAcquireAsync(lockScope, TimeSpan.FromSeconds(5), cancellationToken);
         if (!lease.Acquired)
         {
@@ -831,28 +1189,81 @@ public sealed class OutcomeProviderOrchestrationService
         try
         {
             var context = new OutcomeProviderRuntimeContext(request, provider);
-            var result = await runtime.CreateOutcomeAsync(context, cancellationToken);
+            recoveryService.ThrowIfCrashPoint(OutcomeRuntimeCrashInjectionStage.ProviderExecution);
+            OutcomeProviderRuntimeResult result;
+            try
+            {
+                result = await runtime.CreateOutcomeAsync(context, cancellationToken);
+            }
+            catch (Exception error) when (error is InvalidOperationException or CryptographicException)
+            {
+                await recoveryService.AppendRecoveryEvidenceAsync(
+                    OutcomeRuntimeRecoveryEventType.ProviderRecovery,
+                    request,
+                    provider,
+                    OutcomeRuntimeFailureCode.RuntimeRecoveryRequired.ToString(),
+                    error.Message,
+                    cancellationToken);
+
+                return await PersistFailClosedAsync(
+                    request,
+                    provider.ProviderId,
+                    provider.ProviderVersion,
+                    provider.ProviderType,
+                    OutcomeRuntimeFailureCode.RuntimeRecoveryRequired,
+                    error.Message,
+                    lockAcquired: true,
+                    cancellationToken);
+            }
+
+            recoveryService.ThrowIfCrashPoint(OutcomeRuntimeCrashInjectionStage.Completion);
             var stored = ToStored(result);
             var claim = await requestRepository.ClaimRequestAsync(stored, cancellationToken);
             if (claim.Duplicate)
             {
+                await recoveryService.AppendRecoveryEvidenceAsync(
+                    OutcomeRuntimeRecoveryEventType.RecoveredRuntime,
+                    request,
+                    provider,
+                    "DUPLICATE_CLAIM",
+                    "Runtime request claim returned existing immutable state without regeneration.",
+                    cancellationToken);
                 return ToResult(claim.Request, OutcomeRuntimeStatus.DuplicateReturned);
             }
 
-            await requestRepository.AppendAttemptAsync(
-                await runtime.CreateEvidenceAsync(
-                    context,
-                    result.Status,
-                    result.FailureCode,
-                    result.FailureReason,
-                    lockAcquired: true,
-                    cancellationToken),
+            await recoveryService.RecordRequestProvenanceAsync(
+                claim.Request.RuntimeRequestId,
+                request,
+                provider,
                 cancellationToken);
+
+            var attempt = await runtime.CreateEvidenceAsync(
+                context,
+                result.Status,
+                result.FailureCode,
+                result.FailureReason,
+                lockAcquired: true,
+                cancellationToken);
+            await requestRepository.AppendAttemptAsync(attempt, cancellationToken);
+            await recoveryService.RecordAttemptProvenanceAsync(attempt, request, provider, cancellationToken);
+
+            if (result.Status is OutcomeRuntimeStatus.GenerationNotImplemented or OutcomeRuntimeStatus.ProductionDisabled)
+            {
+                await recoveryService.AppendRecoveryEvidenceAsync(
+                    OutcomeRuntimeRecoveryEventType.ProviderRecovery,
+                    request,
+                    provider,
+                    result.FailureCode.ToString(),
+                    result.FailureReason,
+                    cancellationToken);
+            }
+
             return result;
         }
         finally
         {
             await lockManager.ReleaseAsync(lease, cancellationToken);
+            recoveryService.ThrowIfCrashPoint(OutcomeRuntimeCrashInjectionStage.LockRelease);
         }
     }
 
@@ -909,10 +1320,25 @@ public sealed class OutcomeProviderOrchestrationService
         var claim = await requestRepository.ClaimRequestAsync(stored, cancellationToken);
         if (claim.Duplicate)
         {
+            await recoveryService.AppendRecoveryEvidenceAsync(
+                OutcomeRuntimeRecoveryEventType.RecoveredRuntime,
+                request,
+                provider: null,
+                "FAIL_CLOSED_REPLAY",
+                "Failed-closed runtime request was replayed idempotently without regeneration.",
+                cancellationToken);
             return ToResult(claim.Request, OutcomeRuntimeStatus.DuplicateReturned);
         }
 
-        await requestRepository.AppendAttemptAsync(new OutcomeRuntimeAttemptEvidence(
+        await recoveryService.AppendRecoveryEvidenceAsync(
+            OutcomeRuntimeRecoveryEventType.RecoveryAttempt,
+            request,
+            provider: null,
+            failureCode.ToString(),
+            failureReason,
+            cancellationToken);
+
+        var attempt = new OutcomeRuntimeAttemptEvidence(
             Guid.NewGuid(),
             request.RuntimeRequestId,
             request.IdempotencyKey,
@@ -928,7 +1354,8 @@ public sealed class OutcomeProviderOrchestrationService
             lockAcquired,
             HashCanonical($"{request.IdempotencyKey}|{request.DrawRequestScope}|{failureCode}|{failureReason}|{lockAcquired}"),
             now,
-            now), cancellationToken);
+            now);
+        await requestRepository.AppendAttemptAsync(attempt, cancellationToken);
 
         return ToResult(stored);
     }

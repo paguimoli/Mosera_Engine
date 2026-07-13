@@ -42,6 +42,10 @@ builder.Services.AddSingleton<IOutcomeProviderRuntime, ExternalOfficialResultOut
 builder.Services.AddSingleton<IOutcomeProviderRuntime, PhysicalDrawResultOutcomeProviderRuntime>();
 builder.Services.AddSingleton<IOutcomeProviderRuntime, SimulationTestOutcomeProviderRuntime>();
 builder.Services.AddSingleton<ProvablyFairRuntimeService>();
+builder.Services.AddSingleton<ExternalOfficialResultRuntimeService>();
+builder.Services.AddSingleton<PhysicalDrawResultRuntimeService>();
+builder.Services.AddSingleton<IOutcomeRuntimeCrashInjector, EnvironmentOutcomeRuntimeCrashInjector>();
+builder.Services.AddSingleton<OutcomeRuntimeRecoveryService>();
 builder.Services.AddSingleton<OutcomeProviderOrchestrationService>();
 if (string.IsNullOrWhiteSpace(databaseUrl))
 {
@@ -59,10 +63,15 @@ if (string.IsNullOrWhiteSpace(databaseUrl))
     builder.Services.AddSingleton<IEvaluationCheckpointRepository, InMemoryEvaluationCheckpointRepository>();
     builder.Services.AddSingleton<IOutcomeRuntimeRequestRepository, InMemoryOutcomeRuntimeRequestRepository>();
     builder.Services.AddSingleton<IOutcomeRuntimeLockManager, InMemoryOutcomeRuntimeLockManager>();
+    builder.Services.AddSingleton<IOutcomeRuntimeProvenanceRepository, InMemoryOutcomeRuntimeProvenanceRepository>();
     builder.Services.AddSingleton<ICertifiedCsprngEvidenceRepository, InMemoryCertifiedCsprngEvidenceRepository>();
     builder.Services.AddSingleton<IProvablyFairSeedCustodyRepository, InMemoryProvablyFairSeedCustodyRepository>();
     builder.Services.AddSingleton<IProvablyFairNonceAllocator, InMemoryProvablyFairNonceAllocator>();
     builder.Services.AddSingleton<IProvablyFairRuntimeEvidenceRepository, InMemoryProvablyFairRuntimeEvidenceRepository>();
+    builder.Services.AddSingleton<IExternalResultSourceRepository, InMemoryExternalResultSourceRepository>();
+    builder.Services.AddSingleton<IExternalResultEvidenceRepository, InMemoryExternalResultEvidenceRepository>();
+    builder.Services.AddSingleton<IPhysicalDrawAuthorityRepository, InMemoryPhysicalDrawAuthorityRepository>();
+    builder.Services.AddSingleton<IPhysicalDrawEvidenceRepository, InMemoryPhysicalDrawEvidenceRepository>();
 }
 else
 {
@@ -80,10 +89,15 @@ else
     builder.Services.AddSingleton<IEvaluationCheckpointRepository>(_ => new PostgresEvaluationCheckpointRepository(databaseUrl));
     builder.Services.AddSingleton<IOutcomeRuntimeRequestRepository>(_ => new PostgresOutcomeRuntimeRequestRepository(databaseUrl));
     builder.Services.AddSingleton<IOutcomeRuntimeLockManager>(_ => new PostgresOutcomeRuntimeLockManager(databaseUrl));
+    builder.Services.AddSingleton<IOutcomeRuntimeProvenanceRepository>(_ => new PostgresOutcomeRuntimeProvenanceRepository(databaseUrl));
     builder.Services.AddSingleton<ICertifiedCsprngEvidenceRepository>(_ => new PostgresCertifiedCsprngEvidenceRepository(databaseUrl));
     builder.Services.AddSingleton<IProvablyFairSeedCustodyRepository, InMemoryProvablyFairSeedCustodyRepository>();
     builder.Services.AddSingleton<IProvablyFairNonceAllocator>(_ => new PostgresProvablyFairNonceAllocator(databaseUrl));
     builder.Services.AddSingleton<IProvablyFairRuntimeEvidenceRepository>(_ => new PostgresProvablyFairRuntimeEvidenceRepository(databaseUrl));
+    builder.Services.AddSingleton<IExternalResultSourceRepository>(_ => new PostgresExternalResultSourceRepository(databaseUrl));
+    builder.Services.AddSingleton<IExternalResultEvidenceRepository>(_ => new PostgresExternalResultEvidenceRepository(databaseUrl));
+    builder.Services.AddSingleton<IPhysicalDrawAuthorityRepository>(_ => new PostgresPhysicalDrawAuthorityRepository(databaseUrl));
+    builder.Services.AddSingleton<IPhysicalDrawEvidenceRepository>(_ => new PostgresPhysicalDrawEvidenceRepository(databaseUrl));
 }
 
 builder.Services.AddSingleton<ITicketReader, DatabaseTicketReader>();
@@ -101,6 +115,8 @@ var app = builder.Build();
 app.Logger.LogInformation(
     "Game Engine persistence mode active: {PersistenceMode}",
     persistenceMode);
+await app.Services.GetRequiredService<OutcomeRuntimeRecoveryService>()
+    .RecordBootAsync(app.Lifetime.ApplicationStopping);
 
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.MapGameEngineEndpoints();
