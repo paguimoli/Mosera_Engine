@@ -42,11 +42,17 @@ export type AuthenticatedPermission = {
   updatedAt?: string | null;
 };
 
+export type AuthenticatedPlatformScope = {
+  scopeType: string;
+  scopeId: string;
+};
+
 export type AuthContext = {
   user: AuthenticatedUser;
   session: AuthenticatedSession;
   groups: AuthenticatedUserGroup[];
   permissions: AuthenticatedPermission[];
+  platformScopes?: AuthenticatedPlatformScope[];
   hasPermission(permissionKey: string): boolean;
 };
 
@@ -55,4 +61,5 @@ export type SerializableAuthContext = {
   session: AuthenticatedSession;
   groups: AuthenticatedUserGroup[];
   permissions: AuthenticatedPermission[];
+  platformScopes?: AuthenticatedPlatformScope[];
 };

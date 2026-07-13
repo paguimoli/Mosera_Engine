@@ -150,6 +150,11 @@ const requiredTables = [
   "platform.tenants",
   "platform.brands",
   "platform.markets",
+  "platform.websites",
+  "platform.website_domains",
+  "platform.brand_themes",
+  "platform.brand_assets",
+  "platform.game_availability",
   "public.accounts",
   "public.financial_wallets",
   "public.financial_ledger_entries",
@@ -389,6 +394,149 @@ addCheck("platform_brands_delete_trigger", triggerExists("platform", "brands", "
 addCheck("platform_markets_validate_trigger", triggerExists("platform", "markets", "trg_validate_platform_market"));
 addCheck("platform_markets_update_trigger", triggerExists("platform", "markets", "trg_prevent_platform_market_update"));
 addCheck("platform_markets_delete_trigger", triggerExists("platform", "markets", "trg_prevent_platform_market_delete"));
+addCheck("platform_websites_brand_code_unique", indexExists("platform", "websites", "ux_platform_websites_brand_code_version"));
+addCheck("platform_websites_content_hash_unique", indexExists("platform", "websites", "ux_platform_websites_content_hash"));
+addCheck("platform_websites_tenant_brand_market_index", indexExists("platform", "websites", "idx_platform_websites_tenant_brand_market"));
+addCheck("platform_websites_brand_code_index", indexExists("platform", "websites", "idx_platform_websites_brand_code"));
+addCheck("platform_websites_status_index", indexExists("platform", "websites", "idx_platform_websites_status"));
+addCheck("platform_websites_hash_index", indexExists("platform", "websites", "idx_platform_websites_hash"));
+addCheck("platform_websites_market_optional", columnIsNullable("platform", "websites", "market_id"));
+addCheck("platform_websites_validate_trigger", triggerExists("platform", "websites", "trg_validate_platform_website"));
+addCheck("platform_websites_update_trigger", triggerExists("platform", "websites", "trg_prevent_platform_website_update"));
+addCheck("platform_websites_delete_trigger", triggerExists("platform", "websites", "trg_prevent_platform_website_delete"));
+addCheck("platform_website_domains_hostname_unique", indexExists("platform", "website_domains", "ux_platform_website_domains_hostname_version"));
+addCheck("platform_website_domains_content_hash_unique", indexExists("platform", "website_domains", "ux_platform_website_domains_content_hash"));
+addCheck("platform_website_domains_canonical_website_unique", indexExists("platform", "website_domains", "ux_platform_website_domains_canonical_website"));
+addCheck("platform_website_domains_hostname_index", indexExists("platform", "website_domains", "idx_platform_website_domains_hostname"));
+addCheck("platform_website_domains_website_status_index", indexExists("platform", "website_domains", "idx_platform_website_domains_website_status"));
+addCheck("platform_website_domains_status_index", indexExists("platform", "website_domains", "idx_platform_website_domains_status"));
+addCheck("platform_website_domains_effective_window_index", indexExists("platform", "website_domains", "idx_platform_website_domains_effective_window"));
+addCheck("platform_website_domains_hash_index", indexExists("platform", "website_domains", "idx_platform_website_domains_hash"));
+addCheck("platform_website_domains_effective_to_optional", columnIsNullable("platform", "website_domains", "effective_to"));
+addCheck("platform_website_domains_validate_trigger", triggerExists("platform", "website_domains", "trg_validate_platform_website_domain"));
+addCheck("platform_website_domains_update_trigger", triggerExists("platform", "website_domains", "trg_prevent_platform_website_domain_update"));
+addCheck("platform_website_domains_delete_trigger", triggerExists("platform", "website_domains", "trg_prevent_platform_website_domain_delete"));
+addCheck("platform_active_host_resolutions_view", existsRegclass("platform.active_host_resolutions"));
+addCheck("platform_brand_themes_brand_code_unique", indexExists("platform", "brand_themes", "ux_platform_brand_themes_brand_code_version"));
+addCheck("platform_brand_themes_content_hash_unique", indexExists("platform", "brand_themes", "ux_platform_brand_themes_content_hash"));
+addCheck("platform_brand_themes_active_default_unique", indexExists("platform", "brand_themes", "ux_platform_brand_themes_active_default_brand"));
+addCheck("platform_brand_themes_brand_status_index", indexExists("platform", "brand_themes", "idx_platform_brand_themes_brand_status"));
+addCheck("platform_brand_themes_brand_code_index", indexExists("platform", "brand_themes", "idx_platform_brand_themes_brand_code"));
+addCheck("platform_brand_themes_tenant_brand_index", indexExists("platform", "brand_themes", "idx_platform_brand_themes_tenant_brand"));
+addCheck("platform_brand_themes_hash_index", indexExists("platform", "brand_themes", "idx_platform_brand_themes_hash"));
+addCheck("platform_brand_themes_default_column", columnExists("platform", "brand_themes", "is_default"));
+addCheck("platform_brand_themes_validate_trigger", triggerExists("platform", "brand_themes", "trg_validate_platform_brand_theme"));
+addCheck("platform_brand_themes_update_trigger", triggerExists("platform", "brand_themes", "trg_prevent_platform_brand_theme_update"));
+addCheck("platform_brand_themes_delete_trigger", triggerExists("platform", "brand_themes", "trg_prevent_platform_brand_theme_delete"));
+addCheck("platform_brand_assets_brand_type_key_version_unique", indexExists("platform", "brand_assets", "ux_platform_brand_assets_brand_type_key_version"));
+addCheck("platform_brand_assets_content_hash_unique", indexExists("platform", "brand_assets", "ux_platform_brand_assets_content_hash"));
+addCheck("platform_brand_assets_brand_status_index", indexExists("platform", "brand_assets", "idx_platform_brand_assets_brand_status"));
+addCheck("platform_brand_assets_brand_type_index", indexExists("platform", "brand_assets", "idx_platform_brand_assets_brand_type"));
+addCheck("platform_brand_assets_brand_type_key_index", indexExists("platform", "brand_assets", "idx_platform_brand_assets_brand_type_key"));
+addCheck("platform_brand_assets_tenant_brand_index", indexExists("platform", "brand_assets", "idx_platform_brand_assets_tenant_brand"));
+addCheck("platform_brand_assets_checksum_index", indexExists("platform", "brand_assets", "idx_platform_brand_assets_checksum"));
+addCheck("platform_brand_assets_hash_index", indexExists("platform", "brand_assets", "idx_platform_brand_assets_hash"));
+addCheck("platform_brand_assets_validate_trigger", triggerExists("platform", "brand_assets", "trg_validate_platform_brand_asset"));
+addCheck("platform_brand_assets_update_trigger", triggerExists("platform", "brand_assets", "trg_prevent_platform_brand_asset_update"));
+addCheck("platform_brand_assets_delete_trigger", triggerExists("platform", "brand_assets", "trg_prevent_platform_brand_asset_delete"));
+addCheck("platform_game_availability_scope_game_version_unique", indexExists("platform", "game_availability", "ux_platform_game_availability_scope_game_version"));
+addCheck("platform_game_availability_content_hash_unique", indexExists("platform", "game_availability", "ux_platform_game_availability_content_hash"));
+addCheck("platform_game_availability_tenant_brand_index", indexExists("platform", "game_availability", "idx_platform_game_availability_tenant_brand"));
+addCheck("platform_game_availability_market_index", indexExists("platform", "game_availability", "idx_platform_game_availability_market"));
+addCheck("platform_game_availability_website_index", indexExists("platform", "game_availability", "idx_platform_game_availability_website"));
+addCheck("platform_game_availability_agent_index", indexExists("platform", "game_availability", "idx_platform_game_availability_agent"));
+addCheck("platform_game_availability_game_status_index", indexExists("platform", "game_availability", "idx_platform_game_availability_game_status"));
+addCheck("platform_game_availability_effective_window_index", indexExists("platform", "game_availability", "idx_platform_game_availability_effective_window"));
+addCheck("platform_game_availability_hash_index", indexExists("platform", "game_availability", "idx_platform_game_availability_hash"));
+addCheck("platform_game_availability_market_optional", columnIsNullable("platform", "game_availability", "market_id"));
+addCheck("platform_game_availability_website_optional", columnIsNullable("platform", "game_availability", "website_id"));
+addCheck("platform_game_availability_agent_optional", columnIsNullable("platform", "game_availability", "agent_id"));
+addCheck("platform_game_availability_manifest_optional", columnIsNullable("platform", "game_availability", "game_manifest_reference"));
+addCheck("platform_game_availability_jurisdiction_optional", columnIsNullable("platform", "game_availability", "jurisdiction"));
+addCheck("platform_game_availability_validate_trigger", triggerExists("platform", "game_availability", "trg_validate_platform_game_availability"));
+addCheck("platform_game_availability_update_trigger", triggerExists("platform", "game_availability", "trg_prevent_platform_game_availability_update"));
+addCheck("platform_game_availability_delete_trigger", triggerExists("platform", "game_availability", "trg_prevent_platform_game_availability_delete"));
+addCheck("platform_resolve_game_availability_function", functionExists("platform", "resolve_game_availability"));
+addCheck("platform_lifecycle_events_table_exists", existsRegclass("platform.platform_lifecycle_events"));
+addCheck("platform_lifecycle_events_hash_unique", indexExists("platform", "platform_lifecycle_events", "ux_platform_lifecycle_event_hash"));
+addCheck("platform_lifecycle_events_resource_record_index", indexExists("platform", "platform_lifecycle_events", "idx_platform_lifecycle_resource_record"));
+addCheck("platform_lifecycle_events_entity_key_index", indexExists("platform", "platform_lifecycle_events", "idx_platform_lifecycle_entity_key"));
+addCheck("platform_lifecycle_events_update_trigger", triggerExists("platform", "platform_lifecycle_events", "trg_prevent_platform_lifecycle_events_update"));
+addCheck("platform_lifecycle_events_delete_trigger", triggerExists("platform", "platform_lifecycle_events", "trg_prevent_platform_lifecycle_events_delete"));
+addCheck("platform_organizations_lifecycle_metadata", columnExists("platform", "organizations", "previous_version") && columnExists("platform", "organizations", "effective_from"));
+addCheck("platform_tenants_lifecycle_metadata", columnExists("platform", "tenants", "previous_version") && columnExists("platform", "tenants", "effective_from"));
+addCheck("platform_brands_lifecycle_metadata", columnExists("platform", "brands", "previous_version") && columnExists("platform", "brands", "effective_from"));
+addCheck("platform_markets_lifecycle_metadata", columnExists("platform", "markets", "previous_version") && columnExists("platform", "markets", "effective_from"));
+addCheck("platform_websites_lifecycle_metadata", columnExists("platform", "websites", "previous_version") && columnExists("platform", "websites", "effective_from"));
+addCheck("platform_domains_lifecycle_metadata", columnExists("platform", "website_domains", "previous_version") && columnExists("platform", "website_domains", "approval_metadata"));
+addCheck("platform_themes_lifecycle_metadata", columnExists("platform", "brand_themes", "previous_version") && columnExists("platform", "brand_themes", "effective_from"));
+addCheck("platform_assets_lifecycle_metadata", columnExists("platform", "brand_assets", "previous_version") && columnExists("platform", "brand_assets", "effective_from"));
+addCheck("platform_game_availability_lifecycle_metadata", columnExists("platform", "game_availability", "previous_version") && columnExists("platform", "game_availability", "approval_metadata"));
+addCheck("platform_websites_brand_code_version_unique", indexExists("platform", "websites", "ux_platform_websites_brand_code_version"));
+addCheck("platform_domains_hostname_version_unique", indexExists("platform", "website_domains", "ux_platform_website_domains_hostname_version"));
+addCheck("platform_themes_brand_code_version_unique", indexExists("platform", "brand_themes", "ux_platform_brand_themes_brand_code_version"));
+addCheck(
+  "platform_management_permission_catalog_seeded",
+  queryScalar(`
+select count(*) = 18
+from auth_service.permissions
+where code in (
+  'platform.organization.read',
+  'platform.organization.create',
+  'platform.tenant.read',
+  'platform.tenant.create',
+  'platform.brand.read',
+  'platform.brand.create',
+  'platform.market.read',
+  'platform.market.create',
+  'platform.website.read',
+  'platform.website.create',
+  'platform.domain.read',
+  'platform.domain.create',
+  'platform.theme.read',
+  'platform.theme.create',
+  'platform.asset.read',
+  'platform.asset.create',
+  'platform.game_availability.read',
+  'platform.game_availability.create'
+);
+`) === "t"
+);
+addCheck(
+  "platform_super_admin_role_has_all_platform_permissions",
+  queryScalar(`
+select coalesce(jsonb_array_length(metadata->'permissions'), 0) = 18
+from auth_service.roles
+where code = 'PLATFORM_SUPER_ADMIN'
+  and metadata->>'platformManagementRole' = 'true';
+`) === "t"
+);
+addCheck(
+  "platform_operations_admin_excludes_organization_create",
+  queryScalar(`
+select
+  coalesce(jsonb_array_length(metadata->'permissions'), 0) = 17
+  and not (metadata->'permissions' ? 'platform.organization.create')
+from auth_service.roles
+where code = 'PLATFORM_OPERATIONS_ADMIN'
+  and metadata->>'platformManagementRole' = 'true';
+`) === "t"
+);
+addCheck(
+  "platform_read_only_auditor_has_read_permissions_only",
+  queryScalar(`
+select
+  coalesce(jsonb_array_length(metadata->'permissions'), 0) = 9
+  and not exists (
+    select 1
+    from jsonb_array_elements_text(metadata->'permissions') permission(code)
+    where permission.code not like 'platform.%.read'
+  )
+from auth_service.roles
+where code = 'PLATFORM_READ_ONLY_AUDITOR'
+  and metadata->>'platformManagementRole' = 'true';
+`) === "t"
+);
 addCheck("settlement_records_update_trigger", triggerExists("settlement_service", "settlement_records", "trg_prevent_settlement_record_update"));
 addCheck("settlement_records_delete_trigger", triggerExists("settlement_service", "settlement_records", "trg_prevent_settlement_record_delete"));
 addCheck("settlement_ledger_effects_update_trigger", triggerExists("settlement_service", "settlement_ledger_effects", "trg_prevent_settlement_ledger_effect_update"));

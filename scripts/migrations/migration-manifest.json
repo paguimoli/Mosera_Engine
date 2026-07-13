@@ -259,6 +259,51 @@
       "reason": "Adds append-only local Platform Management Foundation hierarchy storage for organizations, tenants, brands, and markets."
     },
     {
+      "id": "028_add_website_domain_management_foundation",
+      "path": "scripts/migrations/local/028_add_website_domain_management_foundation.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "platform"
+      ],
+      "reason": "Adds append-only local website/domain management storage and active host-resolution foundation without DNS or routing automation."
+    },
+    {
+      "id": "029_add_theme_brand_asset_foundation",
+      "path": "scripts/migrations/local/029_add_theme_brand_asset_foundation.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "platform"
+      ],
+      "reason": "Adds append-only local brand theme and asset reference storage without UI, uploads, CDN, or object storage integration."
+    },
+    {
+      "id": "030_add_game_availability_matrix",
+      "path": "scripts/migrations/local/030_add_game_availability_matrix.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "platform"
+      ],
+      "reason": "Adds append-only local game availability matrix storage and effective-date-aware resolution without Game Engine activation."
+    },
+    {
+      "id": "031_seed_platform_management_permissions",
+      "path": "scripts/migrations/local/031_seed_platform_management_permissions.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "auth_service"
+      ],
+      "reason": "Seeds durable Auth Service platform-management permission catalog and role governance metadata without redesigning RBAC."
+    },
+    {
+      "id": "032_add_platform_lifecycle_supersession",
+      "path": "scripts/migrations/local/032_add_platform_lifecycle_supersession.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "platform"
+      ],
+      "reason": "Adds append-only lifecycle events, version supersession metadata, and lifecycle-aware platform resolution without update/delete endpoints."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

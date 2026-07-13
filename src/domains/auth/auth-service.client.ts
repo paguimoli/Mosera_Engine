@@ -79,7 +79,8 @@ type AuthServiceContextResponse = {
   roles?: AuthServiceGroup[];
   groups?: AuthServiceGroup[];
   permissions?: AuthServicePermission[];
-  claims?: Array<{ type?: string; value?: string }>;
+  claims?: Array<{ type?: string; value?: string; scopeType?: string; scopeId?: string }>;
+  memberships?: Array<{ scopeType?: string; scopeId?: string }>;
 };
 
 type AuthServiceFailure = {
@@ -167,7 +168,8 @@ function toAuthContext(
   identity: AuthServiceIdentity,
   session: AuthServiceSession,
   groups: AuthenticatedUserGroup[] = [],
-  permissions: AuthenticatedPermission[] = []
+  permissions: AuthenticatedPermission[] = [],
+  platformScopes: Array<{ scopeType: string; scopeId: string }> = []
 ): AuthContext {
   return {
     user: {
@@ -193,6 +195,7 @@ function toAuthContext(
     },
     groups,
     permissions,
+    platformScopes,
     hasPermission(permissionKey: string) {
       return permissions.some(
         (permission) =>
@@ -246,6 +249,37 @@ function mapPermissionClaims(claims: AuthServiceContextResponse["claims"]): Auth
     .filter((claim) => claim.type?.toLowerCase() === "permission" && claim.value)
     .map((claim, index) => mapPermission(claim.value!, index))
     .filter((permission): permission is AuthenticatedPermission => permission !== null);
+}
+
+function mapPlatformScopes(response: AuthServiceContextResponse) {
+  const memberships = (response.memberships ?? [])
+    .filter((membership) => membership.scopeType && membership.scopeId)
+    .map((membership) => ({
+      scopeType: membership.scopeType!,
+      scopeId: membership.scopeId!,
+    }));
+
+  const claimScopes = (response.claims ?? [])
+    .filter(
+      (claim) =>
+        claim.type?.toLowerCase() === "platform_scope" &&
+        claim.scopeType &&
+        claim.scopeId
+    )
+    .map((claim) => ({
+      scopeType: claim.scopeType!,
+      scopeId: claim.scopeId!,
+    }));
+
+  const scopesByKey = new Map<string, { scopeType: string; scopeId: string }>();
+  for (const scope of [...memberships, ...claimScopes]) {
+    scopesByKey.set(
+      `${scope.scopeType.toUpperCase()}:${scope.scopeId.toLowerCase()}`,
+      scope
+    );
+  }
+
+  return [...scopesByKey.values()];
 }
 
 export async function loginWithAuthService({
@@ -348,7 +382,8 @@ export async function getAuthServiceContext(
       response.body.identity,
       response.body.session,
       groups,
-      [...permissionsByKey.values()]
+      [...permissionsByKey.values()],
+      mapPlatformScopes(response.body)
     );
   } catch {
     return null;
@@ -369,6 +404,7 @@ export async function getSerializableAuthServiceContext(
     session: context.session,
     groups: context.groups,
     permissions: context.permissions,
+    platformScopes: context.platformScopes,
   };
 }
 

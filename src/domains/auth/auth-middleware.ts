@@ -68,6 +68,7 @@ export function serializeAuthContext(
     session: context.session,
     groups: context.groups,
     permissions: context.permissions,
+    platformScopes: context.platformScopes,
   };
 }
 
@@ -108,6 +109,7 @@ export async function getAuthenticatedUser(
     session: toAuthenticatedSession(session),
     groups,
     permissions,
+    platformScopes: [],
     hasPermission(permissionKey: string) {
       return permissions.some(
         (permission) =>
