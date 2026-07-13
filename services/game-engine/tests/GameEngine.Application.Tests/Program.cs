@@ -2894,7 +2894,681 @@ if (!restartHarnessPlan.RequiresContainerKillApproval ||
     throw new InvalidOperationException("Process restart harness plan must cover lock/idempotency recovery without enabling production authority.");
 }
 
+RunMathEvaluatorContractTests();
+RunKenoMathEvaluatorTests();
+RunMathCertificateEvaluationTests();
+await RunDurableMathEvaluationTests();
+await RunMathEvaluationBatchTests();
+await RunSettlementInputAdapterTests();
+
 Console.WriteLine("GameEngine.Application.Tests PASS");
+
+static void RunMathEvaluatorContractTests()
+{
+    var registry = new MathEvaluatorRegistry([new KenoMathEvaluator()]);
+    var evaluator = registry.Resolve(nameof(GameType.Keno), nameof(WagerType.KenoSpot));
+    if (evaluator.GameFamily != nameof(GameType.Keno) ||
+        !evaluator.SupportedWagerSchemas.Contains(nameof(WagerType.KenoBullseye)))
+    {
+        throw new InvalidOperationException("Math evaluator registry must resolve the Keno evaluator deterministically.");
+    }
+
+    AssertThrows(
+        () => registry.Resolve(nameof(GameType.HotSpot), nameof(WagerType.Straight)),
+        "Hot Spot must fail explicitly instead of using a fabricated deterministic loss.");
+
+    AssertThrows(
+        () => registry.Resolve(nameof(GameType.Keno), nameof(WagerType.Straight)),
+        "Math evaluator registry must not provide a silent fallback evaluator.");
+}
+
+static void RunKenoMathEvaluatorTests()
+{
+    var evaluator = new KenoMathEvaluator();
+    var manifest = MathEvalManifest();
+    var mathModel = MathEvalModel();
+    var paytable = MathEvalPaytable(mathModel);
+    var outcomePayload = MathEvalOutcomePayload([1, 2, 3, 4, 5, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39], bullseye: 1);
+    var outcome = MathEvalOutcomeCertificate(outcomePayload);
+
+    AssertKenoPrize(
+        evaluator,
+        manifest,
+        mathModel,
+        paytable,
+        outcome,
+        outcomePayload,
+        nameof(WagerType.KenoSpot),
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4, 5 } },
+        "KENO_SPOT_5",
+        5);
+
+    AssertKenoPrize(
+        evaluator,
+        manifest,
+        mathModel,
+        paytable,
+        outcome,
+        outcomePayload,
+        nameof(WagerType.KenoBullseye),
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3 }, ["bullseye"] = 1 },
+        "KENO_BULLSEYE",
+        3);
+
+    AssertKenoPrize(
+        evaluator,
+        manifest,
+        mathModel,
+        paytable,
+        outcome,
+        outcomePayload,
+        nameof(WagerType.KenoBigSmall),
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1 }, ["selection"] = "SMALL" },
+        "KENO_BIG_SMALL",
+        1);
+
+    AssertKenoPrize(
+        evaluator,
+        manifest,
+        mathModel,
+        paytable,
+        outcome,
+        outcomePayload,
+        nameof(WagerType.KenoOddEven),
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1 }, ["selection"] = "ODD" },
+        "KENO_ODD_EVEN",
+        1);
+
+    AssertKenoPrize(
+        evaluator,
+        manifest,
+        mathModel,
+        paytable,
+        outcome,
+        outcomePayload,
+        nameof(WagerType.KenoUpDown),
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1 }, ["selection"] = "DOWN" },
+        "KENO_UP_DOWN",
+        1);
+
+    AssertKenoPrize(
+        evaluator,
+        manifest,
+        mathModel,
+        paytable,
+        outcome,
+        outcomePayload,
+        nameof(WagerType.KenoDragonTiger),
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1 }, ["selection"] = "TIGER" },
+        "KENO_DRAGON_TIGER",
+        1);
+
+    AssertKenoPrize(
+        evaluator,
+        manifest,
+        mathModel,
+        paytable,
+        outcome,
+        outcomePayload,
+        nameof(WagerType.KenoSumOverUnder),
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1 }, ["selection"] = "UNDER" },
+        "KENO_SUM_OVER_UNDER",
+        1);
+
+    AssertKenoPrize(
+        evaluator,
+        manifest,
+        mathModel,
+        paytable,
+        outcome,
+        outcomePayload,
+        nameof(WagerType.KenoElement),
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1 }, ["selection"] = "EARTH" },
+        "KENO_ELEMENT",
+        1);
+
+    var first = evaluator.Evaluate(new MathEvaluatorRequest(
+        manifest,
+        outcome,
+        mathModel,
+        paytable,
+        "ticket:deterministic",
+        nameof(WagerType.KenoSpot),
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4, 5 } },
+        outcomePayload));
+    var second = evaluator.Evaluate(new MathEvaluatorRequest(
+        manifest,
+        outcome,
+        mathModel,
+        paytable,
+        "ticket:deterministic",
+        nameof(WagerType.KenoSpot),
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4, 5 } },
+        outcomePayload));
+    if (first.CanonicalPrizeFactsHash != second.CanonicalPrizeFactsHash ||
+        first.CanonicalPrizeFactsJson != second.CanonicalPrizeFactsJson)
+    {
+        throw new InvalidOperationException("Repeated Keno math evaluation must produce deterministic PrizeFacts and hash.");
+    }
+
+    var mismatchedModel = mathModel with { Version = "2.0.0" };
+    if (evaluator.ValidateCompatibility(new MathEvaluatorCompatibility(manifest, mismatchedModel, paytable, nameof(WagerType.KenoSpot))).IsValid)
+    {
+        throw new InvalidOperationException("Keno evaluator must reject mismatched Math Model / Paytable versions.");
+    }
+}
+
+static void RunMathCertificateEvaluationTests()
+{
+    var registry = new MathEvaluatorRegistry([new KenoMathEvaluator()]);
+    var service = new MathCertificateEvaluationService(registry);
+    var manifest = MathEvalManifest();
+    var mathModel = MathEvalModel();
+    var paytable = MathEvalPaytable(mathModel);
+    var outcomePayload = MathEvalOutcomePayload([1, 2, 3, 4, 5, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39], bullseye: 1);
+    var outcome = MathEvalOutcomeCertificate(outcomePayload);
+    var request = new MathCertificateEvaluationRequest(
+        Guid.NewGuid(),
+        "math-certificate-evaluation:keno:1",
+        MathEvaluationMode.DryRun,
+        manifest,
+        outcome,
+        mathModel,
+        paytable,
+        "ticket:math-certificate:1",
+        nameof(WagerType.KenoSpot),
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4, 5 } },
+        outcomePayload);
+
+    var first = service.Evaluate(request);
+    var second = service.Evaluate(request);
+    if (first.CanonicalPrizeFactsHash != second.CanonicalPrizeFactsHash ||
+        first.Certificate.EvaluatorVersion != "keno-math-evaluator-1" ||
+        first.Certificate.GameManifestHash != manifest.ContentHash ||
+        first.PrizeFacts.Outcome != PrizeOutcome.Win ||
+        first.PrizeFacts.OutcomeDerivedFacts.ContainsKey("ledgerEntryId") ||
+        first.PrizeFacts.OutcomeDerivedFacts.ContainsKey("walletTransactionId") ||
+        first.PrizeFacts.OutcomeDerivedFacts.ContainsKey("commission") ||
+        first.PrizeFacts.OutcomeDerivedFacts.ContainsKey("tax") ||
+        first.PrizeFacts.OutcomeDerivedFacts.ContainsKey("cashierReference"))
+    {
+        throw new InvalidOperationException("Math Certificate evaluation must produce deterministic certificate-ready PrizeFacts without financial side effects.");
+    }
+
+    var mismatchedOutcome = outcome with { CanonicalOutcomeHash = "sha256:mismatched" };
+    AssertThrows(
+        () => service.Evaluate(request with { OutcomeCertificate = mismatchedOutcome, IdempotencyKey = "math-certificate-evaluation:mismatch" }),
+        "Math Certificate evaluation must reject mismatched Outcome Certificate hashes.");
+
+    var badManifest = manifest with { MathModelReferences = ["math-model:other:1.0.0"] };
+    AssertThrows(
+        () => service.Evaluate(request with { Manifest = badManifest, IdempotencyKey = "math-certificate-evaluation:manifest-mismatch" }),
+        "Math Certificate evaluation must reject stale or mismatched manifest Math Model references.");
+
+    AssertThrows(
+        () => service.Evaluate(request with { Mode = MathEvaluationMode.ProductionDisabled, IdempotencyKey = "math-certificate-evaluation:production-disabled" }),
+        "Production Math Authority mode must remain disabled.");
+}
+
+static async Task RunDurableMathEvaluationTests()
+{
+    var repository = new InMemoryMathEvaluationDurableRepository();
+    var registry = new MathEvaluatorRegistry([new KenoMathEvaluator()]);
+    var service = new DurableMathEvaluationService(
+        registry,
+        new MathCertificateEvaluationService(registry),
+        repository);
+    var request = DurableMathEvalRequest(
+        "math-evaluation-durable:1",
+        "ticket:durable:1",
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4, 5 } });
+
+    var first = await service.EvaluateAsync(request, CancellationToken.None);
+    if (first.PrizeFacts.Outcome != PrizeOutcome.Win ||
+        first.Certificate.CertificateId == Guid.Empty ||
+        repository.Requests.Single().Status != DurableMathEvaluationStatus.Completed)
+    {
+        throw new InvalidOperationException("First durable Math Evaluation must persist a completed request and certificate.");
+    }
+
+    var attemptsAfterFirst = repository.Attempts.Count;
+    var duplicate = await service.EvaluateAsync(request with { RequestId = Guid.NewGuid() }, CancellationToken.None);
+    if (duplicate.Certificate.CertificateId != first.Certificate.CertificateId ||
+        duplicate.MathEvaluationId != first.MathEvaluationId ||
+        repository.Attempts.Count != attemptsAfterFirst)
+    {
+        throw new InvalidOperationException("Duplicate Math Evaluation payload must return existing certificate without recomputation.");
+    }
+
+    AssertThrows(
+        () => service.EvaluateAsync(
+            request with
+            {
+                RequestId = Guid.NewGuid(),
+                WagerPayload = new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4 } }
+            },
+            CancellationToken.None).GetAwaiter().GetResult(),
+        "Conflicting duplicate Math Evaluation payload must fail closed.");
+
+    AssertThrows(
+        () => service.EvaluateAsync(
+            DurableMathEvalRequest(
+                "math-evaluation-durable:evaluator-mismatch",
+                "ticket:durable:evaluator-mismatch",
+                new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3 } },
+                wagerSchema: nameof(WagerType.Straight)),
+            CancellationToken.None).GetAwaiter().GetResult(),
+        "Unsupported evaluator/wager mismatch must be rejected.");
+
+    var badOutcome = request.OutcomeCertificate with { CanonicalOutcomeHash = "sha256:mismatch" };
+    AssertThrows(
+        () => service.EvaluateAsync(
+            request with
+            {
+                RequestId = Guid.NewGuid(),
+                IdempotencyKey = "math-evaluation-durable:outcome-mismatch",
+                OutcomeCertificate = badOutcome
+            },
+            CancellationToken.None).GetAwaiter().GetResult(),
+        "Outcome Certificate hash mismatch must be rejected.");
+
+    var retryRepository = new InMemoryMathEvaluationDurableRepository();
+    var retryService = new DurableMathEvaluationService(
+        registry,
+        new MathCertificateEvaluationService(registry),
+        retryRepository);
+    var retryRequest = DurableMathEvalRequest(
+        "math-evaluation-durable:retry",
+        "ticket:durable:retry",
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4, 5 } });
+    var evaluator = registry.Resolve(retryRequest.Manifest.GameFamily, retryRequest.WagerSchema);
+    var preclaimed = DurableMathEvaluationService.BuildDurableRequest(retryRequest, evaluator);
+    await retryRepository.ClaimRequestAsync(preclaimed, CancellationToken.None);
+    await retryRepository.AppendAttemptAsync(
+        preclaimed.EvaluationRequestId,
+        MathEvaluationAttemptStatus.Started,
+        null,
+        null,
+        DurableMathEvaluationService.HashCanonical("incomplete-attempt"),
+        DateTimeOffset.UtcNow,
+        null,
+        CancellationToken.None);
+    var retried = await retryService.EvaluateAsync(retryRequest, CancellationToken.None);
+    if (retried.Certificate.CertificateId == Guid.Empty ||
+        retryRepository.Attempts.Count(attempt => attempt.EvaluationRequestId == preclaimed.EvaluationRequestId) != 3)
+    {
+        throw new InvalidOperationException("Incomplete Math Evaluation attempts must retry as new append-only attempts.");
+    }
+
+    var replay = await service.ReplayAsync(request, CancellationToken.None);
+    if (!replay.Verified ||
+        replay.OriginalPrizeFactsHash != first.CanonicalPrizeFactsHash ||
+        repository.Attempts.Last().Status != MathEvaluationAttemptStatus.ReplayVerified)
+    {
+        throw new InvalidOperationException("Math Evaluation replay must reproduce the original PrizeFacts hash.");
+    }
+
+    var mutatedPaytable = MathEvalPaytable(MathEvalModel()) with
+    {
+        PrizeMatrixRows =
+        [
+            new PrizeMatrixRow(
+                "keno-spot-5",
+                nameof(WagerType.KenoSpot),
+                "KENO_SPOT_5",
+                0m,
+                49m,
+                10000m,
+                new Dictionary<string, object?> { ["spotCount"] = 5, ["hitCount"] = 5 })
+        ]
+    };
+    AssertThrows(
+        () => service.ReplayAsync(request with { Paytable = mutatedPaytable }, CancellationToken.None).GetAwaiter().GetResult(),
+        "Replay mismatch must fail closed and record mismatch evidence.");
+
+    if (repository.Attempts.Last().Status != MathEvaluationAttemptStatus.ReplayMismatch)
+    {
+        throw new InvalidOperationException("Replay mismatch must append replay mismatch evidence.");
+    }
+
+    var ticketMatches = await repository.FindByTicketReferenceAsync("ticket:durable:1", CancellationToken.None);
+    var outcomeMatches = await repository.FindByOutcomeCertificateAsync(
+        first.Certificate.OutcomeCertificateId,
+        first.Certificate.OutcomeCertificateHash,
+        CancellationToken.None);
+    var certificateMatch = await repository.FindByCertificateHashAsync(first.CanonicalPrizeFactsHash, CancellationToken.None);
+    if (ticketMatches.Count != 1 ||
+        outcomeMatches.Count != 1 ||
+        certificateMatch?.CertificateId != first.Certificate.CertificateId)
+    {
+        throw new InvalidOperationException("Durable Math Evaluation lookup indexes must support ticket, outcome certificate, and certificate hash lookups.");
+    }
+
+    if (first.CanonicalPrizeFactsJson.Contains("ledger", StringComparison.OrdinalIgnoreCase) ||
+        first.CanonicalPrizeFactsJson.Contains("wallet", StringComparison.OrdinalIgnoreCase) ||
+        first.CanonicalPrizeFactsJson.Contains("tax", StringComparison.OrdinalIgnoreCase) ||
+        first.CanonicalPrizeFactsJson.Contains("commission", StringComparison.OrdinalIgnoreCase) ||
+        first.CanonicalPrizeFactsJson.Contains("cashier", StringComparison.OrdinalIgnoreCase) ||
+        first.CanonicalPrizeFactsJson.Contains("rng", StringComparison.OrdinalIgnoreCase) ||
+        first.CanonicalPrizeFactsJson.Contains("entropy", StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException("Math Evaluation PrizeFacts must not contain financial or randomness side effects.");
+    }
+
+    var readiness = await repository.CheckReadinessAsync(CancellationToken.None);
+    if (!readiness.IdempotencyConfigured ||
+        !readiness.ReplayVerificationReady ||
+        !readiness.ProductionActivationDisabled ||
+        readiness.DurableRepositoryConfigured)
+    {
+        throw new InvalidOperationException("In-memory Math Evaluation repository readiness must remain explicit non-production fallback.");
+    }
+}
+
+static async Task RunMathEvaluationBatchTests()
+{
+    var registry = new MathEvaluatorRegistry([new KenoMathEvaluator()]);
+    var durableRepository = new InMemoryMathEvaluationDurableRepository();
+    var durableService = new DurableMathEvaluationService(
+        registry,
+        new MathCertificateEvaluationService(registry),
+        durableRepository);
+    var batchRepository = new InMemoryMathEvaluationBatchRepository();
+    var batchService = new MathEvaluationBatchService(registry, durableService, batchRepository);
+    var batchRequest = DurableMathEvalBatchRequest(
+        "math-evaluation-batch:1",
+        [
+            ("ticket:batch:1", "math-evaluation-batch:item:1", new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4, 5 } }),
+            ("ticket:batch:2", "math-evaluation-batch:item:2", new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3 } }),
+            ("ticket:batch:3", "math-evaluation-batch:item:3", new Dictionary<string, object?> { ["numbers"] = new[] { 11, 13, 15 } })
+        ],
+        maxDegreeOfParallelism: 2);
+
+    var result = await batchService.ExecuteAsync(batchRequest, CancellationToken.None);
+    if (result.Batch.Status != MathEvaluationBatchStatus.Completed ||
+        result.Items.Count != 3 ||
+        result.Items.Any(item => item.EvaluationStatus != MathEvaluationBatchItemStatus.Completed) ||
+        result.Items.Select(item => item.CertificateId).Distinct().Count() != 3)
+    {
+        throw new InvalidOperationException("Valid Math Evaluation batch must complete multiple Keno items with one certificate per item.");
+    }
+
+    var sharedScopeInvalid = result.Items.Any(item =>
+        item.CertificateHash is null ||
+        item.EvaluationRequestId is null ||
+        batchRepository.Batches.Single().OutcomeCertificateId != batchRequest.OutcomeCertificate.CertificateId ||
+        batchRepository.Batches.Single().MathModelVersion != batchRequest.MathModel.Version ||
+        batchRepository.Batches.Single().PaytableVersion != batchRequest.Paytable.Version);
+    if (sharedScopeInvalid)
+    {
+        throw new InvalidOperationException("Math Evaluation batch items must use one Outcome Certificate and immutable version set.");
+    }
+
+    var attemptsAfterFirst = batchRepository.Attempts.Count;
+    var duplicate = await batchService.ExecuteAsync(batchRequest with { BatchId = Guid.NewGuid() }, CancellationToken.None);
+    if (duplicate.Batch.BatchId != result.Batch.BatchId ||
+        batchRepository.Attempts.Count != attemptsAfterFirst)
+    {
+        throw new InvalidOperationException("Duplicate completed Math Evaluation batch must return existing state without recomputing items.");
+    }
+
+    AssertThrows(
+        () => batchService.ExecuteAsync(
+            batchRequest with
+            {
+                BatchId = Guid.NewGuid(),
+                OutcomeCertificate = batchRequest.OutcomeCertificate with { CanonicalOutcomeHash = "sha256:mixed-outcome" }
+            },
+            CancellationToken.None).GetAwaiter().GetResult(),
+        "Mixed Outcome Certificate for the same Math Evaluation batch idempotency key must fail closed.");
+
+    AssertThrows(
+        () => batchService.ExecuteAsync(
+            batchRequest with
+            {
+                BatchId = Guid.NewGuid(),
+                MathModel = batchRequest.MathModel with { Version = "2.0.0" }
+            },
+            CancellationToken.None).GetAwaiter().GetResult(),
+        "Mixed Math Model version for the same Math Evaluation batch idempotency key must fail closed.");
+
+    var itemConflictRequest = DurableMathEvalBatchRequest(
+        "math-evaluation-batch:conflicting-item",
+        [("ticket:batch:1", "math-evaluation-batch:item:1", new Dictionary<string, object?> { ["numbers"] = new[] { 1 } })]);
+    AssertThrows(
+        () => batchService.ExecuteAsync(itemConflictRequest, CancellationToken.None).GetAwaiter().GetResult(),
+        "Conflicting duplicate Math Evaluation batch item payload must fail closed.");
+
+    var partialRepository = new InMemoryMathEvaluationBatchRepository();
+    var partialService = new MathEvaluationBatchService(
+        registry,
+        new DurableMathEvaluationService(registry, new MathCertificateEvaluationService(registry), new InMemoryMathEvaluationDurableRepository()),
+        partialRepository);
+    var partialRequest = DurableMathEvalBatchRequest(
+        "math-evaluation-batch:partial",
+        [
+            ("ticket:batch:partial:1", "math-evaluation-batch:partial:item:1", new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4, 5 } }),
+            ("ticket:batch:partial:bad", "math-evaluation-batch:partial:item:bad", new Dictionary<string, object?> { ["numbers"] = new[] { 1, 1, 2 } })
+        ]);
+    var partial = await partialService.ExecuteAsync(partialRequest, CancellationToken.None);
+    if (partial.Batch.Status != MathEvaluationBatchStatus.PartiallyCompleted ||
+        partial.Items.Count(item => item.EvaluationStatus == MathEvaluationBatchItemStatus.Completed) != 1 ||
+        partial.Items.Count(item => item.EvaluationStatus == MathEvaluationBatchItemStatus.Failed) != 1)
+    {
+        throw new InvalidOperationException("Math Evaluation batch must derive partially completed status from mixed item states.");
+    }
+
+    var failedAttemptsBeforeRecovery = partialRepository.Attempts.Count;
+    var recoveryRequest = partialRequest with
+    {
+        Items =
+        [
+            partialRequest.Items.First(),
+            partialRequest.Items.Last() with { WagerPayload = new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3 } } }
+        ]
+    };
+    var recovered = await partialService.RecoverAsync(partialRequest.BatchIdempotencyKey, recoveryRequest, retryFailedItems: true, CancellationToken.None);
+    if (recovered.Batch.Status != MathEvaluationBatchStatus.Completed ||
+        partialRepository.Attempts.Count <= failedAttemptsBeforeRecovery)
+    {
+        throw new InvalidOperationException("Math Evaluation batch recovery must retry failed/incomplete items as new governed attempts.");
+    }
+
+    var cancelRepository = new InMemoryMathEvaluationBatchRepository();
+    var cancelService = new MathEvaluationBatchService(
+        registry,
+        new DurableMathEvaluationService(registry, new MathCertificateEvaluationService(registry), new InMemoryMathEvaluationDurableRepository()),
+        cancelRepository);
+    var cancelRequest = DurableMathEvalBatchRequest(
+        "math-evaluation-batch:cancel",
+        [
+            ("ticket:batch:cancel:1", "math-evaluation-batch:cancel:item:1", new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4, 5 } }),
+            ("ticket:batch:cancel:bad", "math-evaluation-batch:cancel:item:bad", new Dictionary<string, object?> { ["numbers"] = new[] { 1, 1, 2 } })
+        ]);
+    await cancelService.ExecuteAsync(cancelRequest, CancellationToken.None);
+    var cancelled = await cancelService.CancelAsync(cancelRequest.BatchIdempotencyKey, "QA_CANCEL", "QA governed cancellation", CancellationToken.None);
+    if (cancelled.Batch.Status != MathEvaluationBatchStatus.Cancelled ||
+        cancelled.Items.Count(item => item.EvaluationStatus == MathEvaluationBatchItemStatus.Completed) != 1)
+    {
+        throw new InvalidOperationException("Math Evaluation batch cancellation must preserve completed immutable items.");
+    }
+
+    var ordered = DurableMathEvalBatchRequest(
+        "math-evaluation-batch:ordered",
+        [
+            ("ticket:batch:ordered:1", "math-evaluation-batch:ordered:item:1", new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4, 5 } }),
+            ("ticket:batch:ordered:2", "math-evaluation-batch:ordered:item:2", new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3 } })
+        ],
+        maxDegreeOfParallelism: 2);
+    var reversed = ordered with
+    {
+        BatchId = Guid.NewGuid(),
+        BatchIdempotencyKey = "math-evaluation-batch:reversed",
+        Items = ordered.Items.Reverse().ToArray()
+    };
+    var orderedRepository = new InMemoryMathEvaluationBatchRepository();
+    var orderedDurable = new InMemoryMathEvaluationDurableRepository();
+    var orderedService = new MathEvaluationBatchService(
+        registry,
+        new DurableMathEvaluationService(registry, new MathCertificateEvaluationService(registry), orderedDurable),
+        orderedRepository);
+    var orderedResult = await orderedService.ExecuteAsync(ordered, CancellationToken.None);
+    var reversedResult = await orderedService.ExecuteAsync(reversed, CancellationToken.None);
+    var orderedHashes = orderedResult.CompletedResults.Values.Select(item => item.CanonicalPrizeFactsHash).Order(StringComparer.Ordinal).ToArray();
+    var reversedHashes = reversedResult.CompletedResults.Values.Select(item => item.CanonicalPrizeFactsHash).Order(StringComparer.Ordinal).ToArray();
+    if (!orderedHashes.SequenceEqual(reversedHashes) ||
+        orderedResult.Items.Select(item => item.CertificateId).Intersect(reversedResult.Items.Select(item => item.CertificateId)).Any())
+    {
+        throw new InvalidOperationException("Batch item ordering and bounded parallel execution must not alter PrizeFacts or duplicate certificates.");
+    }
+
+    var readiness = await batchRepository.CheckReadinessAsync(CancellationToken.None);
+    if (!readiness.BatchRecoveryReady ||
+        !readiness.ItemIdempotencyReady ||
+        !readiness.BoundedParallelExecutionReady ||
+        !readiness.ProductionActivationDisabled ||
+        readiness.BatchRepositoryConfigured)
+    {
+        throw new InvalidOperationException("In-memory Math Evaluation batch readiness must remain explicit non-production fallback.");
+    }
+}
+
+static async Task RunSettlementInputAdapterTests()
+{
+    var registry = new MathEvaluatorRegistry([new KenoMathEvaluator()]);
+    var durableRepository = new InMemoryMathEvaluationDurableRepository();
+    var durableService = new DurableMathEvaluationService(
+        registry,
+        new MathCertificateEvaluationService(registry),
+        durableRepository);
+    var mathResult = await durableService.EvaluateAsync(
+        DurableMathEvalRequest(
+            "settlement-input:math-evaluation:1",
+            "ticket:settlement-input:1",
+            new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4, 5 } }),
+        CancellationToken.None);
+    var repository = new InMemorySettlementInputRepository();
+    var adapter = new SettlementInputAdapter(repository);
+
+    var first = await adapter.ConvertAsync(mathResult, CancellationToken.None);
+    var duplicate = await adapter.ConvertAsync(mathResult with { RequestId = Guid.NewGuid() }, CancellationToken.None);
+    if (first.SettlementInputId == Guid.Empty ||
+        first.MathEvaluationCertificateId != mathResult.Certificate.CertificateId ||
+        first.MathEvaluationCertificateHash != mathResult.CanonicalPrizeFactsHash ||
+        first.OutcomeCertificateId != mathResult.Certificate.OutcomeCertificateId ||
+        first.OutcomeCertificateHash != mathResult.Certificate.OutcomeCertificateHash ||
+        first.TicketReference != mathResult.Certificate.TicketReference ||
+        first.GameManifestHash != mathResult.Certificate.GameManifestHash ||
+        first.MathModelHash != mathResult.Certificate.MathModelHash ||
+        first.PaytableHash != mathResult.Certificate.PaytableHash ||
+        first.PrizeFactsHash != mathResult.CanonicalPrizeFactsHash ||
+        duplicate.SettlementInputId != first.SettlementInputId ||
+        repository.Inputs.Count != 1)
+    {
+        throw new InvalidOperationException("Valid Math Evaluation Certificate must convert to one deterministic SettlementInput record.");
+    }
+
+    var repeat = SettlementInputAdapter.BuildSettlementInput(mathResult);
+    if (repeat.CanonicalPayloadHash != first.CanonicalPayloadHash ||
+        repeat.CanonicalPayloadJson != first.CanonicalPayloadJson ||
+        repeat.ReplayHash != first.ReplayHash)
+    {
+        throw new InvalidOperationException("SettlementInput canonical payload and replay hash must be deterministic.");
+    }
+
+    var replay = await adapter.ReplayAsync(mathResult, CancellationToken.None);
+    if (replay.CanonicalPayloadHash != first.CanonicalPayloadHash)
+    {
+        throw new InvalidOperationException("SettlementInput replay must return the original canonical handoff artifact.");
+    }
+
+    var byCertificate = await adapter.FindByMathEvaluationCertificateAsync(
+        mathResult.Certificate.CertificateId,
+        mathResult.CanonicalPrizeFactsHash,
+        CancellationToken.None);
+    var byHash = await adapter.FindByCanonicalPayloadHashAsync(first.CanonicalPayloadHash, CancellationToken.None);
+    if (byCertificate?.SettlementInputId != first.SettlementInputId ||
+        byHash?.SettlementInputId != first.SettlementInputId)
+    {
+        throw new InvalidOperationException("SettlementInput lookup by Math Evaluation Certificate and payload hash must work.");
+    }
+
+    var conflictingCertificate = mathResult.Certificate with { EvaluatorVersion = "keno-math-evaluator-conflict" };
+    AssertThrows(
+        () => adapter.ConvertAsync(mathResult with { Certificate = conflictingCertificate }, CancellationToken.None).GetAwaiter().GetResult(),
+        "Conflicting SettlementInput payload for the same Math Evaluation Certificate must fail closed.");
+
+    AssertThrows(
+        () => adapter.ConvertAsync(
+            mathResult with { CanonicalPrizeFactsHash = "sha256:bad-certificate-hash" },
+            CancellationToken.None).GetAwaiter().GetResult(),
+        "Math Evaluation Certificate hash mismatch must be rejected.");
+
+    AssertThrows(
+        () => adapter.ConvertAsync(
+            mathResult with { Certificate = mathResult.Certificate with { OutcomeCertificateId = Guid.Empty } },
+            CancellationToken.None).GetAwaiter().GetResult(),
+        "Outcome Certificate reference mismatch must be rejected.");
+
+    AssertThrows(
+        () => adapter.ConvertAsync(
+            mathResult with { Certificate = mathResult.Certificate with { GameManifestHash = "not-a-hash" } },
+            CancellationToken.None).GetAwaiter().GetResult(),
+        "Game Manifest mismatch must be rejected.");
+
+    AssertThrows(
+        () => adapter.ConvertAsync(
+            mathResult with { Certificate = mathResult.Certificate with { RtpMathMetadataReference = "math-model:mismatch" } },
+            CancellationToken.None).GetAwaiter().GetResult(),
+        "Math Model mismatch must be rejected.");
+
+    AssertThrows(
+        () => adapter.ConvertAsync(
+            mathResult with { Certificate = mathResult.Certificate with { PaytableHash = "not-a-hash" } },
+            CancellationToken.None).GetAwaiter().GetResult(),
+        "Paytable mismatch must be rejected.");
+
+    var badPrizeFacts = mathResult.PrizeFacts with
+    {
+        OutcomeDerivedFacts = new Dictionary<string, object?> { ["ledgerEntryId"] = "forbidden" }
+    };
+    var badPrizeFactsJson = MathEvaluationCanonicalizer.CanonicalizePrizeFacts(badPrizeFacts);
+    var badPrizeFactsHash = MathEvaluationCanonicalizer.HashJson(badPrizeFactsJson);
+    AssertThrows(
+        () => adapter.ConvertAsync(
+            mathResult with
+            {
+                PrizeFacts = badPrizeFacts,
+                CanonicalPrizeFactsJson = badPrizeFactsJson,
+                CanonicalPrizeFactsHash = badPrizeFactsHash,
+                Certificate = mathResult.Certificate with { CanonicalPrizeFactsHash = badPrizeFactsHash }
+            },
+            CancellationToken.None).GetAwaiter().GetResult(),
+        "SettlementInput adapter must reject PrizeFacts with ledger references.");
+
+    var lowerPayload = first.CanonicalPayloadJson.ToLowerInvariant();
+    if (lowerPayload.Contains("balance", StringComparison.Ordinal) ||
+        lowerPayload.Contains("wallet", StringComparison.Ordinal) ||
+        lowerPayload.Contains("ledger", StringComparison.Ordinal) ||
+        lowerPayload.Contains("commission", StringComparison.Ordinal) ||
+        lowerPayload.Contains("tax", StringComparison.Ordinal) ||
+        lowerPayload.Contains("cashier", StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException("SettlementInput canonical payload must not contain financial, wallet, ledger, commission, tax, or cashier fields.");
+    }
+
+    var readiness = await repository.CheckReadinessAsync(CancellationToken.None);
+    if (!readiness.SettlementHandoffReady ||
+        !readiness.AdapterReady ||
+        !readiness.CertificateValidationReady ||
+        !readiness.CanonicalPayloadReady ||
+        !readiness.ReplayReady ||
+        !readiness.ProductionActivationDisabled ||
+        readiness.RepositoryConfigured)
+    {
+        throw new InvalidOperationException("In-memory SettlementInput readiness must remain explicit non-production fallback.");
+    }
+}
 
 static OutcomeAuthorityReadinessSection ReadySection(string section)
 {
@@ -2903,6 +3577,58 @@ static OutcomeAuthorityReadinessSection ReadySection(string section)
         OutcomeAuthorityReadinessSectionStatus.Ready,
         [$"sha256:evidence:{section.Replace(' ', '-')}"],
         []);
+}
+
+static MathCertificateEvaluationRequest DurableMathEvalRequest(
+    string idempotencyKey,
+    string ticketReference,
+    IReadOnlyDictionary<string, object?> wagerPayload,
+    string wagerSchema = nameof(WagerType.KenoSpot))
+{
+    var manifest = MathEvalManifest();
+    var mathModel = MathEvalModel();
+    var paytable = MathEvalPaytable(mathModel);
+    var outcomePayload = MathEvalOutcomePayload([1, 2, 3, 4, 5, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39], bullseye: 1);
+    return new MathCertificateEvaluationRequest(
+        Guid.NewGuid(),
+        idempotencyKey,
+        MathEvaluationMode.DryRun,
+        manifest,
+        MathEvalOutcomeCertificate(outcomePayload),
+        mathModel,
+        paytable,
+        ticketReference,
+        wagerSchema,
+        wagerPayload,
+        outcomePayload);
+}
+
+static MathEvaluationBatchRequest DurableMathEvalBatchRequest(
+    string batchIdempotencyKey,
+    IReadOnlyCollection<(string TicketReference, string ItemIdempotencyKey, IReadOnlyDictionary<string, object?> WagerPayload)> items,
+    int maxDegreeOfParallelism = 1)
+{
+    var manifest = MathEvalManifest();
+    var mathModel = MathEvalModel();
+    var paytable = MathEvalPaytable(mathModel);
+    var outcomePayload = MathEvalOutcomePayload([1, 2, 3, 4, 5, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39], bullseye: 1);
+    return new MathEvaluationBatchRequest(
+        Guid.NewGuid(),
+        batchIdempotencyKey,
+        MathEvaluationMode.DryRun,
+        manifest,
+        MathEvalOutcomeCertificate(outcomePayload),
+        mathModel,
+        paytable,
+        nameof(WagerType.KenoSpot),
+        outcomePayload,
+        items.Select(item => new MathEvaluationBatchItemRequest(
+            Guid.NewGuid(),
+            item.TicketReference,
+            item.ItemIdempotencyKey,
+            item.WagerPayload)).ToArray(),
+        maxDegreeOfParallelism,
+        new Dictionary<string, object?> { ["qaPhase"] = "P1-004" });
 }
 
 static void AssertThrows(Action action, string message)
@@ -2917,6 +3643,170 @@ static void AssertThrows(Action action, string message)
     }
 
     throw new InvalidOperationException(message);
+}
+
+static void AssertKenoPrize(
+    KenoMathEvaluator evaluator,
+    GameManifestV1 manifest,
+    MathModelDefinitionV1 mathModel,
+    PaytableDefinitionV1 paytable,
+    OutcomeCertificate outcome,
+    IReadOnlyDictionary<string, object?> outcomePayload,
+    string wagerSchema,
+    IReadOnlyDictionary<string, object?> wagerPayload,
+    string expectedPrizeTier,
+    int expectedHitCount)
+{
+    var result = evaluator.Evaluate(new MathEvaluatorRequest(
+        manifest,
+        outcome,
+        mathModel,
+        paytable,
+        $"ticket:{wagerSchema}",
+        wagerSchema,
+        wagerPayload,
+        outcomePayload));
+
+    if (result.PrizeFacts.Outcome != PrizeOutcome.Win ||
+        result.PrizeFacts.PrizeTier != expectedPrizeTier ||
+        result.PrizeFacts.HitCount != expectedHitCount ||
+        string.IsNullOrWhiteSpace(result.PrizeFacts.PaytableRowReference) ||
+        string.IsNullOrWhiteSpace(result.CanonicalPrizeFactsHash) ||
+        result.CanonicalPrizeFactsJson.Contains("ledger", StringComparison.OrdinalIgnoreCase) ||
+        result.CanonicalPrizeFactsJson.Contains("wallet", StringComparison.OrdinalIgnoreCase) ||
+        result.CanonicalPrizeFactsJson.Contains("cashier", StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException($"Keno Math evaluator produced invalid PrizeFacts for {wagerSchema}.");
+    }
+}
+
+static GameManifestV1 MathEvalManifest()
+{
+    return new GameManifestV1(
+        Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+        "KENO",
+        "Keno",
+        nameof(GameType.Keno),
+        [],
+        [
+            nameof(WagerType.KenoSpot),
+            nameof(WagerType.KenoBullseye),
+            nameof(WagerType.KenoBigSmall),
+            nameof(WagerType.KenoOddEven),
+            nameof(WagerType.KenoUpDown),
+            nameof(WagerType.KenoDragonTiger),
+            nameof(WagerType.KenoSumOverUnder),
+            nameof(WagerType.KenoElement)
+        ],
+        ["outcome-strategy:keno:1.0.0"],
+        ["math-model:keno:1.0.0:sha256:math-model-keno"],
+        ["paytable:keno:1.0.0:sha256:paytable-keno"],
+        ["settlement-policy:standard:1.0.0"],
+        new Dictionary<string, object?>(),
+        new Dictionary<string, object?>(),
+        new Dictionary<string, object?>(),
+        "cert-pack:keno:1.0.0",
+        string.Empty,
+        OperatorApprovalState.Approved,
+        GameManifestLifecycleState.GovernanceApproved,
+        DateTimeOffset.UnixEpoch,
+        null,
+        "1.0.0",
+        "sha256:manifest-keno",
+        new SignatureMetadata("qa-signing-key", "sha256-v1", "placeholder-v1", "qa-signature", DateTimeOffset.UnixEpoch));
+}
+
+static MathModelDefinitionV1 MathEvalModel()
+{
+    return new MathModelDefinitionV1(
+        Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+        "math-model:keno",
+        "1.0.0",
+        [nameof(GameType.Keno)],
+        [
+            nameof(WagerType.KenoSpot),
+            nameof(WagerType.KenoBullseye),
+            nameof(WagerType.KenoBigSmall),
+            nameof(WagerType.KenoOddEven),
+            nameof(WagerType.KenoUpDown),
+            nameof(WagerType.KenoDragonTiger),
+            nameof(WagerType.KenoSumOverUnder),
+            nameof(WagerType.KenoElement)
+        ],
+        0.92m,
+        -0.08m,
+        "Medium",
+        0.18m,
+        new Dictionary<string, object?> { ["maxExposureMultiple"] = 100 },
+        new Dictionary<string, object?>(),
+        new Dictionary<string, object?> { ["mode"] = "bankers" },
+        new Dictionary<string, object?> { ["currency"] = "USD", ["minorUnit"] = 2 },
+        null,
+        null,
+        MathGovernanceLifecycleState.GovernanceApproved,
+        "sha256:math-model-keno",
+        MathCertificationBindingState.None,
+        null);
+}
+
+static PaytableDefinitionV1 MathEvalPaytable(MathModelDefinitionV1 mathModel)
+{
+    return new PaytableDefinitionV1(
+        Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+        "paytable:keno",
+        "1.0.0",
+        mathModel.MathModelId,
+        mathModel.Version,
+        [
+            Row("keno-spot-5", nameof(WagerType.KenoSpot), "KENO_SPOT_5", 50m, new Dictionary<string, object?> { ["spotCount"] = 5, ["hitCount"] = 5 }),
+            Row("keno-bullseye", nameof(WagerType.KenoBullseye), "KENO_BULLSEYE", 25m, new Dictionary<string, object?> { ["bullseyeMatch"] = true }),
+            Row("keno-big-small", nameof(WagerType.KenoBigSmall), "KENO_BIG_SMALL", 18m, new Dictionary<string, object?> { ["result"] = "WIN" }),
+            Row("keno-odd-even", nameof(WagerType.KenoOddEven), "KENO_ODD_EVEN", 18m, new Dictionary<string, object?> { ["result"] = "WIN" }),
+            Row("keno-up-down", nameof(WagerType.KenoUpDown), "KENO_UP_DOWN", 18m, new Dictionary<string, object?> { ["result"] = "WIN" }),
+            Row("keno-dragon-tiger", nameof(WagerType.KenoDragonTiger), "KENO_DRAGON_TIGER", 18m, new Dictionary<string, object?> { ["result"] = "WIN" }),
+            Row("keno-sum-over-under", nameof(WagerType.KenoSumOverUnder), "KENO_SUM_OVER_UNDER", 18m, new Dictionary<string, object?> { ["result"] = "WIN" }),
+            Row("keno-element", nameof(WagerType.KenoElement), "KENO_ELEMENT", 18m, new Dictionary<string, object?> { ["result"] = "WIN" })
+        ],
+        [],
+        new Dictionary<string, object?> { ["maxPayout"] = 10000m },
+        null,
+        MathGovernanceLifecycleState.GovernanceApproved,
+        "sha256:paytable-keno",
+        MathCertificationBindingState.None,
+        null);
+
+    static PrizeMatrixRow Row(string id, string wagerSchema, string prizeCode, decimal payout, IReadOnlyDictionary<string, object?> conditions)
+    {
+        return new PrizeMatrixRow(id, wagerSchema, prizeCode, 0m, payout, 10000m, conditions);
+    }
+}
+
+static IReadOnlyDictionary<string, object?> MathEvalOutcomePayload(int[] numbers, int bullseye)
+{
+    return new SortedDictionary<string, object?>(StringComparer.Ordinal)
+    {
+        ["bullseye"] = bullseye,
+        ["numbers"] = numbers
+    };
+}
+
+static OutcomeCertificate MathEvalOutcomeCertificate(IReadOnlyDictionary<string, object?> outcomePayload)
+{
+    return new OutcomeCertificate(
+        Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+        Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+        Guid.Parse("99999999-9999-9999-9999-999999999999"),
+        "outcome-strategy:keno",
+        "1.0.0",
+        "rng-provider:test",
+        "1.0.0",
+        MathEvaluationCanonicalizer.HashPayload(outcomePayload),
+        "sha256:evidence",
+        [],
+        null,
+        OutcomeCustodyState.Generated,
+        DateTimeOffset.UnixEpoch);
 }
 
 sealed class FixedEntropyProvider(byte[] fixedBytes) : IOsEntropyProvider

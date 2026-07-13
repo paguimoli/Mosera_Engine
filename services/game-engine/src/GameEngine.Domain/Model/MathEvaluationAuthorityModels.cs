@@ -36,7 +36,11 @@ public sealed record PrizeFacts(
     string PrizeTier,
     decimal Multiplier,
     decimal PayoutUnits,
-    IReadOnlyDictionary<string, object?> OutcomeDerivedFacts);
+    IReadOnlyDictionary<string, object?> OutcomeDerivedFacts,
+    int HitCount = 0,
+    string? PaytableRowReference = null,
+    string? EvaluationReasonCode = null,
+    IReadOnlyCollection<string>? EvaluationNotes = null);
 
 public sealed record MathEvaluationCertificate(
     Guid CertificateId,
@@ -53,7 +57,11 @@ public sealed record MathEvaluationCertificate(
     string CanonicalPrizeFactsHash,
     string RtpMathMetadataReference,
     SignatureMetadata? SigningMetadata,
-    DateTimeOffset IssuedAt);
+    DateTimeOffset IssuedAt,
+    string? EvaluatorVersion = null,
+    string? GameManifestId = null,
+    string? GameManifestVersion = null,
+    string? GameManifestHash = null);
 
 public sealed record MathEvaluationResult(
     Guid MathEvaluationId,

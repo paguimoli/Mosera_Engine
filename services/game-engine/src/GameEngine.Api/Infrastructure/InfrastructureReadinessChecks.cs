@@ -12,6 +12,9 @@ public sealed class InfrastructureReadinessChecks
     private readonly IOutcomeRuntimeRequestRepository outcomeRuntimeRequests;
     private readonly IOutcomeRuntimeLockManager outcomeRuntimeLocks;
     private readonly OutcomeRuntimeRecoveryService outcomeRuntimeRecovery;
+    private readonly DurableMathEvaluationService mathEvaluationService;
+    private readonly MathEvaluationBatchService mathEvaluationBatchService;
+    private readonly SettlementInputAdapter settlementInputAdapter;
     private readonly ProvablyFairRuntimeService provablyFairRuntime;
     private readonly ExternalOfficialResultRuntimeService externalOfficialResultRuntime;
     private readonly PhysicalDrawResultRuntimeService physicalDrawRuntime;
@@ -22,6 +25,9 @@ public sealed class InfrastructureReadinessChecks
         IOutcomeRuntimeRequestRepository outcomeRuntimeRequests,
         IOutcomeRuntimeLockManager outcomeRuntimeLocks,
         OutcomeRuntimeRecoveryService outcomeRuntimeRecovery,
+        DurableMathEvaluationService mathEvaluationService,
+        MathEvaluationBatchService mathEvaluationBatchService,
+        SettlementInputAdapter settlementInputAdapter,
         ProvablyFairRuntimeService provablyFairRuntime,
         ExternalOfficialResultRuntimeService externalOfficialResultRuntime,
         PhysicalDrawResultRuntimeService physicalDrawRuntime,
@@ -31,6 +37,9 @@ public sealed class InfrastructureReadinessChecks
         this.outcomeRuntimeRequests = outcomeRuntimeRequests;
         this.outcomeRuntimeLocks = outcomeRuntimeLocks;
         this.outcomeRuntimeRecovery = outcomeRuntimeRecovery;
+        this.mathEvaluationService = mathEvaluationService;
+        this.mathEvaluationBatchService = mathEvaluationBatchService;
+        this.settlementInputAdapter = settlementInputAdapter;
         this.provablyFairRuntime = provablyFairRuntime;
         this.externalOfficialResultRuntime = externalOfficialResultRuntime;
         this.physicalDrawRuntime = physicalDrawRuntime;
@@ -134,6 +143,62 @@ public sealed class InfrastructureReadinessChecks
             ? new DependencyHealthResult("outcome-runtime-recovery", true)
             : new DependencyHealthResult(
                 "outcome-runtime-recovery",
+                false,
+                string.Join("; ", readiness.Blockers));
+    }
+
+    public async Task<DependencyHealthResult> CheckMathEvaluationPersistenceAsync(CancellationToken cancellationToken)
+    {
+        var readiness = await mathEvaluationService.CheckReadinessAsync(cancellationToken);
+        var ready = readiness.TypedEvaluatorRegistryReady &&
+            readiness.DurableRepositoryConfigured &&
+            readiness.DurableRepositoryReachable &&
+            readiness.IdempotencyConfigured &&
+            readiness.ReplayVerificationReady &&
+            readiness.ProductionActivationDisabled;
+
+        return ready
+            ? new DependencyHealthResult("math-evaluation-persistence", true)
+            : new DependencyHealthResult(
+                "math-evaluation-persistence",
+                false,
+                string.Join("; ", readiness.Blockers));
+    }
+
+    public async Task<DependencyHealthResult> CheckMathEvaluationBatchPersistenceAsync(CancellationToken cancellationToken)
+    {
+        var readiness = await mathEvaluationBatchService.CheckReadinessAsync(cancellationToken);
+        var ready = readiness.BatchRepositoryConfigured &&
+            readiness.BatchPersistenceReachable &&
+            readiness.BatchRecoveryReady &&
+            readiness.ItemIdempotencyReady &&
+            readiness.BoundedParallelExecutionReady &&
+            readiness.ProductionActivationDisabled;
+
+        return ready
+            ? new DependencyHealthResult("math-evaluation-batch-persistence", true)
+            : new DependencyHealthResult(
+                "math-evaluation-batch-persistence",
+                false,
+                string.Join("; ", readiness.Blockers));
+    }
+
+    public async Task<DependencyHealthResult> CheckSettlementInputHandoffAsync(CancellationToken cancellationToken)
+    {
+        var readiness = await settlementInputAdapter.CheckReadinessAsync(cancellationToken);
+        var ready = readiness.SettlementHandoffReady &&
+            readiness.AdapterReady &&
+            readiness.CertificateValidationReady &&
+            readiness.CanonicalPayloadReady &&
+            readiness.ReplayReady &&
+            readiness.RepositoryConfigured &&
+            readiness.RepositoryReachable &&
+            readiness.ProductionActivationDisabled;
+
+        return ready
+            ? new DependencyHealthResult("settlement-input-handoff", true)
+            : new DependencyHealthResult(
+                "settlement-input-handoff",
                 false,
                 string.Join("; ", readiness.Blockers));
     }

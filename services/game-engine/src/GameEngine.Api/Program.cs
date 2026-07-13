@@ -47,6 +47,12 @@ builder.Services.AddSingleton<PhysicalDrawResultRuntimeService>();
 builder.Services.AddSingleton<IOutcomeRuntimeCrashInjector, EnvironmentOutcomeRuntimeCrashInjector>();
 builder.Services.AddSingleton<OutcomeRuntimeRecoveryService>();
 builder.Services.AddSingleton<OutcomeProviderOrchestrationService>();
+builder.Services.AddSingleton<IMathEvaluator, KenoMathEvaluator>();
+builder.Services.AddSingleton<MathEvaluatorRegistry>();
+builder.Services.AddSingleton<MathCertificateEvaluationService>();
+builder.Services.AddSingleton<DurableMathEvaluationService>();
+builder.Services.AddSingleton<MathEvaluationBatchService>();
+builder.Services.AddSingleton<SettlementInputAdapter>();
 if (string.IsNullOrWhiteSpace(databaseUrl))
 {
     builder.Services.AddSingleton<IDrawScheduleRepository, InMemoryDrawScheduleRepository>();
@@ -72,6 +78,9 @@ if (string.IsNullOrWhiteSpace(databaseUrl))
     builder.Services.AddSingleton<IExternalResultEvidenceRepository, InMemoryExternalResultEvidenceRepository>();
     builder.Services.AddSingleton<IPhysicalDrawAuthorityRepository, InMemoryPhysicalDrawAuthorityRepository>();
     builder.Services.AddSingleton<IPhysicalDrawEvidenceRepository, InMemoryPhysicalDrawEvidenceRepository>();
+    builder.Services.AddSingleton<IMathEvaluationDurableRepository, InMemoryMathEvaluationDurableRepository>();
+    builder.Services.AddSingleton<IMathEvaluationBatchRepository, InMemoryMathEvaluationBatchRepository>();
+    builder.Services.AddSingleton<ISettlementInputRepository, InMemorySettlementInputRepository>();
 }
 else
 {
@@ -98,6 +107,9 @@ else
     builder.Services.AddSingleton<IExternalResultEvidenceRepository>(_ => new PostgresExternalResultEvidenceRepository(databaseUrl));
     builder.Services.AddSingleton<IPhysicalDrawAuthorityRepository>(_ => new PostgresPhysicalDrawAuthorityRepository(databaseUrl));
     builder.Services.AddSingleton<IPhysicalDrawEvidenceRepository>(_ => new PostgresPhysicalDrawEvidenceRepository(databaseUrl));
+    builder.Services.AddSingleton<IMathEvaluationDurableRepository>(_ => new PostgresMathEvaluationDurableRepository(databaseUrl));
+    builder.Services.AddSingleton<IMathEvaluationBatchRepository>(_ => new PostgresMathEvaluationBatchRepository(databaseUrl));
+    builder.Services.AddSingleton<ISettlementInputRepository>(_ => new PostgresSettlementInputRepository(databaseUrl));
 }
 
 builder.Services.AddSingleton<ITicketReader, DatabaseTicketReader>();

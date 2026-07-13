@@ -1045,6 +1045,9 @@ public static class GameEngineEndpoints
         var outcomeRuntimePersistenceReady = await readinessChecks.CheckOutcomeRuntimePersistenceAsync(context.RequestAborted);
         var outcomeRuntimeLockingReady = await readinessChecks.CheckOutcomeRuntimeLockingAsync(context.RequestAborted);
         var outcomeRuntimeRecoveryReady = await readinessChecks.CheckOutcomeRuntimeRecoveryAsync(context.RequestAborted);
+        var mathEvaluationPersistenceReady = await readinessChecks.CheckMathEvaluationPersistenceAsync(context.RequestAborted);
+        var mathEvaluationBatchPersistenceReady = await readinessChecks.CheckMathEvaluationBatchPersistenceAsync(context.RequestAborted);
+        var settlementInputHandoffReady = await readinessChecks.CheckSettlementInputHandoffAsync(context.RequestAborted);
         var provablyFairRuntimeReady = await readinessChecks.CheckProvablyFairRuntimeAsync(context.RequestAborted);
         var externalOfficialResultRuntimeReady = await readinessChecks.CheckExternalOfficialResultRuntimeAsync(context.RequestAborted);
         var physicalDrawRuntimeReady = await readinessChecks.CheckPhysicalDrawRuntimeAsync(context.RequestAborted);
@@ -1056,6 +1059,9 @@ public static class GameEngineEndpoints
             outcomeRuntimePersistenceReady,
             outcomeRuntimeLockingReady,
             outcomeRuntimeRecoveryReady,
+            mathEvaluationPersistenceReady,
+            mathEvaluationBatchPersistenceReady,
+            settlementInputHandoffReady,
             provablyFairRuntimeReady,
             externalOfficialResultRuntimeReady,
             physicalDrawRuntimeReady

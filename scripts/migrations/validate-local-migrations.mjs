@@ -173,6 +173,12 @@ const requiredTables = [
   "game_engine.outcome_certificates",
   "game_engine.math_evaluation_events",
   "game_engine.math_evaluation_certificates",
+  "game_engine.math_evaluation_requests",
+  "game_engine.math_evaluation_attempts",
+  "game_engine.math_evaluation_batches",
+  "game_engine.math_evaluation_batch_items",
+  "game_engine.math_evaluation_batch_attempts",
+  "game_engine.settlement_input_records",
   "game_engine.certification_packs",
   "game_engine.signing_providers",
   "game_engine.certificate_signatures",
@@ -937,6 +943,48 @@ addCheck("outcome_runtime_rollback_watermark_update_trigger", triggerExists("gam
 addCheck("outcome_runtime_rollback_watermark_delete_trigger", triggerExists("game_engine", "outcome_runtime_rollback_watermarks", "trg_prevent_outcome_runtime_rollback_watermark_delete"));
 addCheck("outcome_validation_hash_function", functionExists("game_engine", "validate_outcome_validation_hashes"));
 addCheck("outcome_validation_provenance_function", functionExists("game_engine", "validate_outcome_validation_provenance"));
+addCheck("math_evaluation_requests_idempotency_unique", indexExists("game_engine", "math_evaluation_requests", "ux_math_evaluation_requests_idempotency"));
+addCheck("math_evaluation_requests_scope_unique", indexExists("game_engine", "math_evaluation_requests", "ux_math_evaluation_requests_scope"));
+addCheck("math_evaluation_requests_certificate_unique", indexExists("game_engine", "math_evaluation_requests", "ux_math_evaluation_requests_certificate"));
+addCheck("math_evaluation_requests_outcome_certificate_index", indexExists("game_engine", "math_evaluation_requests", "idx_math_evaluation_requests_outcome_certificate"));
+addCheck("math_evaluation_requests_ticket_index", indexExists("game_engine", "math_evaluation_requests", "idx_math_evaluation_requests_ticket"));
+addCheck("math_evaluation_requests_certificate_hash_index", indexExists("game_engine", "math_evaluation_requests", "idx_math_evaluation_requests_certificate_hash"));
+addCheck("math_evaluation_requests_status_index", indexExists("game_engine", "math_evaluation_requests", "idx_math_evaluation_requests_status"));
+addCheck("math_evaluation_requests_validate_trigger", triggerExists("game_engine", "math_evaluation_requests", "trg_validate_math_evaluation_request"));
+addCheck("math_evaluation_attempts_request_number_unique", indexExists("game_engine", "math_evaluation_attempts", "ux_math_evaluation_attempts_request_number"));
+addCheck("math_evaluation_attempts_request_index", indexExists("game_engine", "math_evaluation_attempts", "idx_math_evaluation_attempts_request"));
+addCheck("math_evaluation_attempts_validate_trigger", triggerExists("game_engine", "math_evaluation_attempts", "trg_validate_math_evaluation_attempt"));
+addCheck("math_evaluation_attempts_update_trigger", triggerExists("game_engine", "math_evaluation_attempts", "trg_prevent_math_evaluation_attempt_update"));
+addCheck("math_evaluation_attempts_delete_trigger", triggerExists("game_engine", "math_evaluation_attempts", "trg_prevent_math_evaluation_attempt_delete"));
+addCheck("math_evaluation_batches_idempotency_unique", indexExists("game_engine", "math_evaluation_batches", "ux_math_evaluation_batches_idempotency"));
+addCheck("math_evaluation_batches_scope_unique", indexExists("game_engine", "math_evaluation_batches", "ux_math_evaluation_batches_scope"));
+addCheck("math_evaluation_batches_status_index", indexExists("game_engine", "math_evaluation_batches", "idx_math_evaluation_batches_status"));
+addCheck("math_evaluation_batches_outcome_certificate_index", indexExists("game_engine", "math_evaluation_batches", "idx_math_evaluation_batches_outcome_certificate"));
+addCheck("math_evaluation_batches_validate_trigger", triggerExists("game_engine", "math_evaluation_batches", "trg_validate_math_evaluation_batch"));
+addCheck("math_evaluation_batches_delete_trigger", triggerExists("game_engine", "math_evaluation_batches", "trg_prevent_math_evaluation_batch_delete"));
+addCheck("math_evaluation_batch_items_idempotency_unique", indexExists("game_engine", "math_evaluation_batch_items", "ux_math_evaluation_batch_items_idempotency"));
+addCheck("math_evaluation_batch_items_scope_unique", indexExists("game_engine", "math_evaluation_batch_items", "ux_math_evaluation_batch_items_scope"));
+addCheck("math_evaluation_batch_items_certificate_unique", indexExists("game_engine", "math_evaluation_batch_items", "ux_math_evaluation_batch_items_certificate"));
+addCheck("math_evaluation_batch_items_batch_index", indexExists("game_engine", "math_evaluation_batch_items", "idx_math_evaluation_batch_items_batch"));
+addCheck("math_evaluation_batch_items_ticket_index", indexExists("game_engine", "math_evaluation_batch_items", "idx_math_evaluation_batch_items_ticket"));
+addCheck("math_evaluation_batch_items_certificate_hash_index", indexExists("game_engine", "math_evaluation_batch_items", "idx_math_evaluation_batch_items_certificate_hash"));
+addCheck("math_evaluation_batch_items_validate_trigger", triggerExists("game_engine", "math_evaluation_batch_items", "trg_validate_math_evaluation_batch_item"));
+addCheck("math_evaluation_batch_items_delete_trigger", triggerExists("game_engine", "math_evaluation_batch_items", "trg_prevent_math_evaluation_batch_item_delete"));
+addCheck("math_evaluation_batch_attempts_scope_unique", indexExists("game_engine", "math_evaluation_batch_attempts", "ux_math_evaluation_batch_attempts_scope"));
+addCheck("math_evaluation_batch_attempts_batch_index", indexExists("game_engine", "math_evaluation_batch_attempts", "idx_math_evaluation_batch_attempts_batch"));
+addCheck("math_evaluation_batch_attempts_validate_trigger", triggerExists("game_engine", "math_evaluation_batch_attempts", "trg_validate_math_evaluation_batch_attempt"));
+addCheck("math_evaluation_batch_attempts_update_trigger", triggerExists("game_engine", "math_evaluation_batch_attempts", "trg_prevent_math_evaluation_batch_attempt_update"));
+addCheck("math_evaluation_batch_attempts_delete_trigger", triggerExists("game_engine", "math_evaluation_batch_attempts", "trg_prevent_math_evaluation_batch_attempt_delete"));
+addCheck("settlement_input_records_math_certificate_unique", indexExists("game_engine", "settlement_input_records", "ux_settlement_input_records_math_certificate"));
+addCheck("settlement_input_records_payload_hash_unique", indexExists("game_engine", "settlement_input_records", "ux_settlement_input_records_payload_hash"));
+addCheck("settlement_input_records_idempotency_unique", indexExists("game_engine", "settlement_input_records", "ux_settlement_input_records_idempotency"));
+addCheck("settlement_input_records_ticket_index", indexExists("game_engine", "settlement_input_records", "idx_settlement_input_records_ticket"));
+addCheck("settlement_input_records_outcome_certificate_index", indexExists("game_engine", "settlement_input_records", "idx_settlement_input_records_outcome_certificate"));
+addCheck("settlement_input_records_math_model_index", indexExists("game_engine", "settlement_input_records", "idx_settlement_input_records_math_model"));
+addCheck("settlement_input_records_paytable_index", indexExists("game_engine", "settlement_input_records", "idx_settlement_input_records_paytable"));
+addCheck("settlement_input_records_validate_trigger", triggerExists("game_engine", "settlement_input_records", "trg_validate_settlement_input_record"));
+addCheck("settlement_input_records_update_trigger", triggerExists("game_engine", "settlement_input_records", "trg_prevent_settlement_input_record_update"));
+addCheck("settlement_input_records_delete_trigger", triggerExists("game_engine", "settlement_input_records", "trg_prevent_settlement_input_record_delete"));
 addCheck("settlement_records_update_trigger", triggerExists("settlement_service", "settlement_records", "trg_prevent_settlement_record_update"));
 addCheck("settlement_records_delete_trigger", triggerExists("settlement_service", "settlement_records", "trg_prevent_settlement_record_delete"));
 addCheck("settlement_ledger_effects_update_trigger", triggerExists("settlement_service", "settlement_ledger_effects", "trg_prevent_settlement_ledger_effect_update"));
