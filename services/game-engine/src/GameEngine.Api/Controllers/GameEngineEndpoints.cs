@@ -1042,7 +1042,18 @@ public static class GameEngineEndpoints
         var rabbitMqReady = await readinessChecks.CheckRabbitMqAsync(context.RequestAborted);
         var redisReady = await readinessChecks.CheckRedisAsync(context.RequestAborted);
         var databaseReady = await readinessChecks.CheckDatabaseAsync(context.RequestAborted);
-        var dependencies = new[] { rabbitMqReady, redisReady, databaseReady };
+        var outcomeRuntimePersistenceReady = await readinessChecks.CheckOutcomeRuntimePersistenceAsync(context.RequestAborted);
+        var outcomeRuntimeLockingReady = await readinessChecks.CheckOutcomeRuntimeLockingAsync(context.RequestAborted);
+        var provablyFairRuntimeReady = await readinessChecks.CheckProvablyFairRuntimeAsync(context.RequestAborted);
+        var dependencies = new[]
+        {
+            rabbitMqReady,
+            redisReady,
+            databaseReady,
+            outcomeRuntimePersistenceReady,
+            outcomeRuntimeLockingReady,
+            provablyFairRuntimeReady
+        };
         var ready = dependencies.All(dependency => dependency.Ready);
 
         var response = new

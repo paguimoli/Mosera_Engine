@@ -124,6 +124,19 @@ const requiredTables = [
   "game_engine.paytable_definitions",
   "game_engine.rng_provider_definitions",
   "game_engine.rng_provider_evidence",
+  "game_engine.outcome_provider_definitions",
+  "game_engine.entropy_provider_definitions",
+  "game_engine.csprng_provider_definitions",
+  "game_engine.drbg_session_evidence",
+  "game_engine.provably_fair_provider_definitions",
+  "game_engine.provably_fair_seed_commitments",
+  "game_engine.provably_fair_nonce_sequences",
+  "game_engine.provably_fair_verification_receipts",
+  "game_engine.provably_fair_runtime_receipts",
+  "game_engine.provably_fair_seed_reveal_evidence",
+  "game_engine.provably_fair_verification_results",
+  "game_engine.outcome_runtime_requests",
+  "game_engine.outcome_runtime_attempts",
   "game_engine.outcome_events",
   "game_engine.outcome_certificates",
   "game_engine.math_evaluation_events",
@@ -218,6 +231,256 @@ addCheck("rng_provider_definitions_production_eligible_index", indexExists("game
 addCheck("rng_provider_evidence_hash_unique", uniqueIndexExists("game_engine", "rng_provider_evidence", "canonical_evidence_hash"));
 addCheck("rng_provider_evidence_provider_version_index", indexExists("game_engine", "rng_provider_evidence", "idx_rng_provider_evidence_provider_version"));
 addCheck("rng_provider_evidence_hash_index", indexExists("game_engine", "rng_provider_evidence", "idx_rng_provider_evidence_hash"));
+addCheck("outcome_provider_definitions_provider_version_unique", indexExists("game_engine", "outcome_provider_definitions", "ux_outcome_provider_definitions_provider_version"));
+addCheck("outcome_provider_definitions_content_hash_unique", uniqueIndexExists("game_engine", "outcome_provider_definitions", "content_hash"));
+addCheck("outcome_provider_definitions_lookup_index", indexExists("game_engine", "outcome_provider_definitions", "idx_outcome_provider_definitions_provider_version"));
+addCheck("outcome_provider_definitions_type_hash_index", indexExists("game_engine", "outcome_provider_definitions", "idx_outcome_provider_definitions_type_hash"));
+addCheck("outcome_provider_definitions_lifecycle_eligible_index", indexExists("game_engine", "outcome_provider_definitions", "idx_outcome_provider_definitions_lifecycle_eligible"));
+addCheck("outcome_provider_definitions_validate_trigger", triggerExists("game_engine", "outcome_provider_definitions", "trg_validate_outcome_provider_definition"));
+addCheck("outcome_provider_definitions_update_trigger", triggerExists("game_engine", "outcome_provider_definitions", "trg_prevent_outcome_provider_update"));
+addCheck("outcome_provider_definitions_delete_trigger", triggerExists("game_engine", "outcome_provider_definitions", "trg_prevent_outcome_provider_delete"));
+addCheck("entropy_provider_definitions_provider_version_unique", indexExists("game_engine", "entropy_provider_definitions", "ux_entropy_provider_definitions_provider_version"));
+addCheck("entropy_provider_definitions_content_hash_unique", uniqueIndexExists("game_engine", "entropy_provider_definitions", "content_hash"));
+addCheck("entropy_provider_definitions_lookup_index", indexExists("game_engine", "entropy_provider_definitions", "idx_entropy_provider_definitions_provider_version"));
+addCheck("entropy_provider_definitions_type_eligible_index", indexExists("game_engine", "entropy_provider_definitions", "idx_entropy_provider_definitions_type_eligible"));
+addCheck("entropy_provider_definitions_validate_trigger", triggerExists("game_engine", "entropy_provider_definitions", "trg_validate_entropy_provider_definition"));
+addCheck("entropy_provider_definitions_update_trigger", triggerExists("game_engine", "entropy_provider_definitions", "trg_prevent_entropy_provider_update"));
+addCheck("entropy_provider_definitions_delete_trigger", triggerExists("game_engine", "entropy_provider_definitions", "trg_prevent_entropy_provider_delete"));
+addCheck("entropy_provider_definitions_no_raw_secret_columns", !columnExists("game_engine", "entropy_provider_definitions", "raw_seed") && !columnExists("game_engine", "entropy_provider_definitions", "raw_entropy") && !columnExists("game_engine", "entropy_provider_definitions", "drbg_state"));
+addCheck("csprng_provider_definitions_provider_version_unique", indexExists("game_engine", "csprng_provider_definitions", "ux_csprng_provider_definitions_provider_version"));
+addCheck("csprng_provider_definitions_content_hash_unique", uniqueIndexExists("game_engine", "csprng_provider_definitions", "content_hash"));
+addCheck("csprng_provider_definitions_lookup_index", indexExists("game_engine", "csprng_provider_definitions", "idx_csprng_provider_definitions_provider_version"));
+addCheck("csprng_provider_definitions_outcome_provider_index", indexExists("game_engine", "csprng_provider_definitions", "idx_csprng_provider_definitions_outcome_provider"));
+addCheck("csprng_provider_definitions_rng_provider_index", indexExists("game_engine", "csprng_provider_definitions", "idx_csprng_provider_definitions_rng_provider"));
+addCheck("csprng_provider_definitions_lifecycle_eligible_index", indexExists("game_engine", "csprng_provider_definitions", "idx_csprng_provider_definitions_lifecycle_eligible"));
+addCheck("csprng_provider_definitions_validate_trigger", triggerExists("game_engine", "csprng_provider_definitions", "trg_validate_csprng_provider_definition"));
+addCheck("csprng_provider_definitions_update_trigger", triggerExists("game_engine", "csprng_provider_definitions", "trg_prevent_csprng_provider_update"));
+addCheck("csprng_provider_definitions_delete_trigger", triggerExists("game_engine", "csprng_provider_definitions", "trg_prevent_csprng_provider_delete"));
+addCheck("csprng_provider_definitions_no_raw_secret_columns", !columnExists("game_engine", "csprng_provider_definitions", "raw_seed") && !columnExists("game_engine", "csprng_provider_definitions", "raw_entropy") && !columnExists("game_engine", "csprng_provider_definitions", "drbg_state"));
+addCheck("drbg_session_evidence_hash_unique", uniqueIndexExists("game_engine", "drbg_session_evidence", "canonical_evidence_hash"));
+addCheck("drbg_session_evidence_provider_index", indexExists("game_engine", "drbg_session_evidence", "idx_drbg_session_evidence_provider_version"));
+addCheck("drbg_session_evidence_entropy_provider_index", indexExists("game_engine", "drbg_session_evidence", "idx_drbg_session_evidence_entropy_provider"));
+addCheck("drbg_session_evidence_scope_index", indexExists("game_engine", "drbg_session_evidence", "idx_drbg_session_evidence_scope"));
+addCheck("drbg_session_evidence_hash_index", indexExists("game_engine", "drbg_session_evidence", "idx_drbg_session_evidence_hash"));
+addCheck("drbg_session_evidence_validate_trigger", triggerExists("game_engine", "drbg_session_evidence", "trg_validate_drbg_session_evidence"));
+addCheck("drbg_session_evidence_update_trigger", triggerExists("game_engine", "drbg_session_evidence", "trg_prevent_drbg_session_evidence_update"));
+addCheck("drbg_session_evidence_delete_trigger", triggerExists("game_engine", "drbg_session_evidence", "trg_prevent_drbg_session_evidence_delete"));
+addCheck("drbg_session_evidence_no_raw_secret_columns", !columnExists("game_engine", "drbg_session_evidence", "raw_seed") && !columnExists("game_engine", "drbg_session_evidence", "raw_entropy") && !columnExists("game_engine", "drbg_session_evidence", "drbg_state"));
+addCheck("provably_fair_provider_definitions_provider_version_unique", indexExists("game_engine", "provably_fair_provider_definitions", "ux_provably_fair_provider_definitions_provider_version"));
+addCheck("provably_fair_provider_definitions_content_hash_unique", uniqueIndexExists("game_engine", "provably_fair_provider_definitions", "content_hash"));
+addCheck("provably_fair_provider_definitions_lookup_index", indexExists("game_engine", "provably_fair_provider_definitions", "idx_provably_fair_provider_definitions_provider_version"));
+addCheck("provably_fair_provider_definitions_outcome_provider_index", indexExists("game_engine", "provably_fair_provider_definitions", "idx_provably_fair_provider_definitions_outcome_provider"));
+addCheck("provably_fair_provider_definitions_lifecycle_eligible_index", indexExists("game_engine", "provably_fair_provider_definitions", "idx_provably_fair_provider_definitions_lifecycle_eligible"));
+addCheck("provably_fair_provider_definitions_validate_trigger", triggerExists("game_engine", "provably_fair_provider_definitions", "trg_validate_provably_fair_provider_definition"));
+addCheck("provably_fair_provider_definitions_update_trigger", triggerExists("game_engine", "provably_fair_provider_definitions", "trg_prevent_provably_fair_provider_update"));
+addCheck("provably_fair_provider_definitions_delete_trigger", triggerExists("game_engine", "provably_fair_provider_definitions", "trg_prevent_provably_fair_provider_delete"));
+addCheck("provably_fair_provider_definitions_no_plaintext_seed_columns", !columnExists("game_engine", "provably_fair_provider_definitions", "server_seed") && !columnExists("game_engine", "provably_fair_provider_definitions", "raw_seed") && !columnExists("game_engine", "provably_fair_provider_definitions", "plaintext_seed"));
+addCheck("provably_fair_seed_commitments_commitment_unique", uniqueIndexExists("game_engine", "provably_fair_seed_commitments", "commitment_hash"));
+addCheck("provably_fair_seed_commitments_content_hash_unique", uniqueIndexExists("game_engine", "provably_fair_seed_commitments", "content_hash"));
+addCheck("provably_fair_seed_commitments_provider_index", indexExists("game_engine", "provably_fair_seed_commitments", "idx_provably_fair_seed_commitments_provider_version"));
+addCheck("provably_fair_seed_commitments_commitment_index", indexExists("game_engine", "provably_fair_seed_commitments", "idx_provably_fair_seed_commitments_commitment"));
+addCheck("provably_fair_seed_commitments_validate_trigger", triggerExists("game_engine", "provably_fair_seed_commitments", "trg_validate_provably_fair_seed_commitment"));
+addCheck("provably_fair_seed_commitments_update_trigger", triggerExists("game_engine", "provably_fair_seed_commitments", "trg_prevent_provably_fair_seed_update"));
+addCheck("provably_fair_seed_commitments_delete_trigger", triggerExists("game_engine", "provably_fair_seed_commitments", "trg_prevent_provably_fair_seed_delete"));
+addCheck("provably_fair_seed_commitments_no_plaintext_seed_columns", !columnExists("game_engine", "provably_fair_seed_commitments", "server_seed") && !columnExists("game_engine", "provably_fair_seed_commitments", "raw_seed") && !columnExists("game_engine", "provably_fair_seed_commitments", "plaintext_seed"));
+addCheck("provably_fair_nonce_sequences_nonce_unique", indexExists("game_engine", "provably_fair_nonce_sequences", "ux_provably_fair_nonce_sequences_nonce"));
+addCheck("provably_fair_nonce_sequences_content_hash_unique", uniqueIndexExists("game_engine", "provably_fair_nonce_sequences", "content_hash"));
+addCheck("provably_fair_nonce_sequences_scope_index", indexExists("game_engine", "provably_fair_nonce_sequences", "idx_provably_fair_nonce_sequences_scope"));
+addCheck("provably_fair_nonce_sequences_validate_trigger", triggerExists("game_engine", "provably_fair_nonce_sequences", "trg_validate_provably_fair_nonce_sequence"));
+addCheck("provably_fair_nonce_sequences_update_trigger", triggerExists("game_engine", "provably_fair_nonce_sequences", "trg_prevent_provably_fair_nonce_update"));
+addCheck("provably_fair_nonce_sequences_delete_trigger", triggerExists("game_engine", "provably_fair_nonce_sequences", "trg_prevent_provably_fair_nonce_delete"));
+addCheck("provably_fair_verification_receipts_hash_unique", uniqueIndexExists("game_engine", "provably_fair_verification_receipts", "receipt_hash"));
+addCheck("provably_fair_verification_receipts_wager_provider_unique", indexExists("game_engine", "provably_fair_verification_receipts", "ux_provably_fair_verification_receipts_wager_provider"));
+addCheck("provably_fair_verification_receipts_provider_index", indexExists("game_engine", "provably_fair_verification_receipts", "idx_provably_fair_verification_receipts_provider"));
+addCheck("provably_fair_verification_receipts_outcome_certificate_index", indexExists("game_engine", "provably_fair_verification_receipts", "idx_provably_fair_verification_receipts_outcome_certificate"));
+addCheck("provably_fair_verification_receipts_validate_trigger", triggerExists("game_engine", "provably_fair_verification_receipts", "trg_validate_provably_fair_verification_receipt"));
+addCheck("provably_fair_verification_receipts_update_trigger", triggerExists("game_engine", "provably_fair_verification_receipts", "trg_prevent_provably_fair_receipt_update"));
+addCheck("provably_fair_verification_receipts_delete_trigger", triggerExists("game_engine", "provably_fair_verification_receipts", "trg_prevent_provably_fair_receipt_delete"));
+addCheck("provably_fair_verification_receipts_no_plaintext_seed_columns", !columnExists("game_engine", "provably_fair_verification_receipts", "server_seed") && !columnExists("game_engine", "provably_fair_verification_receipts", "raw_seed") && !columnExists("game_engine", "provably_fair_verification_receipts", "plaintext_seed"));
+addCheck("provably_fair_runtime_receipts_hash_unique", uniqueIndexExists("game_engine", "provably_fair_runtime_receipts", "receipt_hash"));
+addCheck("provably_fair_runtime_receipts_scope_nonce_unique", indexExists("game_engine", "provably_fair_runtime_receipts", "ux_provably_fair_runtime_receipts_scope_nonce"));
+addCheck("provably_fair_runtime_receipts_provider_index", indexExists("game_engine", "provably_fair_runtime_receipts", "idx_provably_fair_runtime_receipts_provider"));
+addCheck("provably_fair_runtime_receipts_validate_trigger", triggerExists("game_engine", "provably_fair_runtime_receipts", "trg_validate_provably_fair_runtime_receipt"));
+addCheck("provably_fair_runtime_receipts_update_trigger", triggerExists("game_engine", "provably_fair_runtime_receipts", "trg_prevent_provably_fair_runtime_receipt_update"));
+addCheck("provably_fair_runtime_receipts_delete_trigger", triggerExists("game_engine", "provably_fair_runtime_receipts", "trg_prevent_provably_fair_runtime_receipt_delete"));
+addCheck("provably_fair_runtime_receipts_no_plaintext_seed_columns", !columnExists("game_engine", "provably_fair_runtime_receipts", "server_seed") && !columnExists("game_engine", "provably_fair_runtime_receipts", "raw_seed") && !columnExists("game_engine", "provably_fair_runtime_receipts", "plaintext_seed"));
+addCheck("provably_fair_seed_reveal_evidence_hash_unique", uniqueIndexExists("game_engine", "provably_fair_seed_reveal_evidence", "canonical_evidence_hash"));
+addCheck("provably_fair_seed_reveal_evidence_seed_index", indexExists("game_engine", "provably_fair_seed_reveal_evidence", "idx_provably_fair_seed_reveal_evidence_seed"));
+addCheck("provably_fair_seed_reveal_evidence_validate_trigger", triggerExists("game_engine", "provably_fair_seed_reveal_evidence", "trg_validate_provably_fair_runtime_reveal"));
+addCheck("provably_fair_seed_reveal_evidence_update_trigger", triggerExists("game_engine", "provably_fair_seed_reveal_evidence", "trg_prevent_provably_fair_runtime_reveal_update"));
+addCheck("provably_fair_seed_reveal_evidence_delete_trigger", triggerExists("game_engine", "provably_fair_seed_reveal_evidence", "trg_prevent_provably_fair_runtime_reveal_delete"));
+addCheck("provably_fair_seed_reveal_evidence_no_plaintext_seed_columns", !columnExists("game_engine", "provably_fair_seed_reveal_evidence", "server_seed") && !columnExists("game_engine", "provably_fair_seed_reveal_evidence", "raw_seed") && !columnExists("game_engine", "provably_fair_seed_reveal_evidence", "plaintext_seed"));
+addCheck("provably_fair_verification_results_hash_unique", uniqueIndexExists("game_engine", "provably_fair_verification_results", "canonical_result_hash"));
+addCheck("provably_fair_verification_results_receipt_index", indexExists("game_engine", "provably_fair_verification_results", "idx_provably_fair_verification_results_receipt"));
+addCheck("provably_fair_verification_results_update_trigger", triggerExists("game_engine", "provably_fair_verification_results", "trg_prevent_provably_fair_verification_result_update"));
+addCheck("provably_fair_verification_results_delete_trigger", triggerExists("game_engine", "provably_fair_verification_results", "trg_prevent_provably_fair_verification_result_delete"));
+addCheck("outcome_runtime_requests_idempotency_scope_unique", indexExists("game_engine", "outcome_runtime_requests", "ux_outcome_runtime_requests_idempotency_scope"));
+addCheck("outcome_runtime_requests_manifest_index", indexExists("game_engine", "outcome_runtime_requests", "idx_outcome_runtime_requests_manifest"));
+addCheck("outcome_runtime_requests_provider_index", indexExists("game_engine", "outcome_runtime_requests", "idx_outcome_runtime_requests_provider"));
+addCheck("outcome_runtime_requests_lock_scope_index", indexExists("game_engine", "outcome_runtime_requests", "idx_outcome_runtime_requests_lock_scope"));
+addCheck("outcome_runtime_requests_validate_trigger", triggerExists("game_engine", "outcome_runtime_requests", "trg_validate_outcome_runtime_request"));
+addCheck("outcome_runtime_requests_update_trigger", triggerExists("game_engine", "outcome_runtime_requests", "trg_prevent_outcome_runtime_request_update"));
+addCheck("outcome_runtime_requests_delete_trigger", triggerExists("game_engine", "outcome_runtime_requests", "trg_prevent_outcome_runtime_request_delete"));
+addCheck("outcome_runtime_requests_no_raw_secret_columns", !columnExists("game_engine", "outcome_runtime_requests", "raw_seed") && !columnExists("game_engine", "outcome_runtime_requests", "raw_entropy") && !columnExists("game_engine", "outcome_runtime_requests", "drbg_state"));
+addCheck("outcome_runtime_attempts_hash_unique", uniqueIndexExists("game_engine", "outcome_runtime_attempts", "canonical_attempt_hash"));
+addCheck("outcome_runtime_attempts_request_index", indexExists("game_engine", "outcome_runtime_attempts", "idx_outcome_runtime_attempts_request"));
+addCheck("outcome_runtime_attempts_provider_index", indexExists("game_engine", "outcome_runtime_attempts", "idx_outcome_runtime_attempts_provider"));
+addCheck("outcome_runtime_attempts_scope_index", indexExists("game_engine", "outcome_runtime_attempts", "idx_outcome_runtime_attempts_scope"));
+addCheck("outcome_runtime_attempts_validate_trigger", triggerExists("game_engine", "outcome_runtime_attempts", "trg_validate_outcome_runtime_attempt"));
+addCheck("outcome_runtime_attempts_update_trigger", triggerExists("game_engine", "outcome_runtime_attempts", "trg_prevent_outcome_runtime_attempt_update"));
+addCheck("outcome_runtime_attempts_delete_trigger", triggerExists("game_engine", "outcome_runtime_attempts", "trg_prevent_outcome_runtime_attempt_delete"));
+addCheck("outcome_runtime_advisory_lock_function", functionExists("game_engine", "try_outcome_runtime_advisory_lock"));
+addCheck("outcome_runtime_attempts_no_raw_secret_columns", !columnExists("game_engine", "outcome_runtime_attempts", "raw_seed") && !columnExists("game_engine", "outcome_runtime_attempts", "raw_entropy") && !columnExists("game_engine", "outcome_runtime_attempts", "drbg_state"));
+addCheck(
+  "outcome_runtime_certified_csprng_dry_run_accepted_attempt_supported",
+  queryScalar(`
+with inserted as (
+  insert into game_engine.outcome_runtime_attempts (
+    attempt_id,
+    runtime_request_id,
+    idempotency_key,
+    draw_request_scope,
+    provider_id,
+    provider_version,
+    provider_type,
+    mode,
+    status,
+    failure_code,
+    failure_reason,
+    lock_scope,
+    lock_acquired,
+    canonical_attempt_hash,
+    started_at,
+    completed_at
+  ) values (
+    gen_random_uuid(),
+    gen_random_uuid(),
+    'migration-validation:csprng-runtime-accepted',
+    'migration-validation:csprng-runtime-accepted',
+    'certified-csprng-runtime',
+    '1.0.0',
+    'CERTIFIED_CSPRNG',
+    'DryRun',
+    'Accepted',
+    'None',
+    null,
+    'outcome-runtime:certified-csprng-runtime:1.0.0:migration-validation',
+    true,
+    'sha256:migration-validation-csprng-runtime-accepted-attempt',
+    now(),
+    now()
+  )
+  on conflict (canonical_attempt_hash) do nothing
+  returning 1
+)
+select count(*) >= 0 from inserted;
+`) === "t"
+);
+addCheck(
+  "outcome_runtime_provably_fair_dry_run_accepted_attempt_supported",
+  queryScalar(`
+with inserted as (
+  insert into game_engine.outcome_runtime_attempts (
+    attempt_id,
+    runtime_request_id,
+    idempotency_key,
+    draw_request_scope,
+    provider_id,
+    provider_version,
+    provider_type,
+    mode,
+    status,
+    failure_code,
+    failure_reason,
+    lock_scope,
+    lock_acquired,
+    canonical_attempt_hash,
+    started_at,
+    completed_at
+  ) values (
+    gen_random_uuid(),
+    gen_random_uuid(),
+    'migration-validation:provably-fair-runtime-accepted',
+    'migration-validation:provably-fair-runtime-accepted',
+    'provably-fair-runtime',
+    '1.0.0',
+    'PROVABLY_FAIR',
+    'DryRun',
+    'Accepted',
+    'None',
+    null,
+    'outcome-runtime:provably-fair-runtime:1.0.0:migration-validation',
+    true,
+    'sha256:migration-validation-provably-fair-runtime-accepted-attempt',
+    now(),
+    now()
+  )
+  on conflict (canonical_attempt_hash) do nothing
+  returning 1
+)
+select count(*) >= 0 from inserted;
+`) === "t"
+);
+addCheck(
+  "outcome_runtime_fail_closed_unresolved_provider_supported",
+  queryScalar(`
+with inserted as (
+  insert into game_engine.outcome_runtime_requests (
+    runtime_request_id,
+    idempotency_key,
+    draw_request_scope,
+    game_manifest_id,
+    game_manifest_version,
+    provider_id,
+    provider_version,
+    provider_type,
+    mode,
+    status,
+    started_at,
+    completed_at,
+    failure_code,
+    failure_reason,
+    canonical_request_hash,
+    result_reference_placeholder,
+    evidence_reference_placeholder,
+    lock_scope,
+    lock_acquired
+  ) values (
+    gen_random_uuid(),
+    'migration-validation:outcome-runtime-unresolved-provider',
+    'migration-validation:outcome-runtime-unresolved-provider',
+    'game-manifest:migration-validation',
+    '1.0.0',
+    'unresolved',
+    'unresolved',
+    'CERTIFIED_CSPRNG',
+    'DryRun',
+    'FailedClosed',
+    now(),
+    now(),
+    'MissingProvider',
+    'Manifest-bound Outcome Provider was not found.',
+    'sha256:migration-validation-outcome-runtime-unresolved-provider',
+    null,
+    'placeholder:migration-validation',
+    'outcome-runtime:migration-validation',
+    false
+  )
+  on conflict (idempotency_key, draw_request_scope) do nothing
+  returning 1
+)
+select count(*) >= 0 from inserted;
+`) === "t"
+);
+addCheck("game_manifests_outcome_provider_id_column", columnExists("game_engine", "game_manifests", "outcome_provider_id"));
+addCheck("game_manifests_outcome_provider_version_column", columnExists("game_engine", "game_manifests", "outcome_provider_version"));
+addCheck("game_manifests_provider_capability_requirements_column", columnExists("game_engine", "game_manifests", "provider_capability_requirements"));
+addCheck("game_manifests_provider_evidence_requirements_column", columnExists("game_engine", "game_manifests", "provider_evidence_requirements"));
+addCheck("game_manifests_receipt_required_column", columnExists("game_engine", "game_manifests", "player_verification_receipt_required"));
+addCheck("game_manifests_provider_eligibility_profile_column", columnExists("game_engine", "game_manifests", "provider_eligibility_profile"));
+addCheck("game_manifests_certification_required_column", columnExists("game_engine", "game_manifests", "certification_required"));
+addCheck("game_manifests_outcome_provider_index", indexExists("game_engine", "game_manifests", "idx_game_manifests_outcome_provider_version"));
+addCheck("game_manifests_outcome_provider_binding_trigger", triggerExists("game_engine", "game_manifests", "trg_validate_game_manifest_outcome_provider_binding"));
 addCheck("outcome_events_idempotency_unique", uniqueIndexExists("game_engine", "outcome_events", "idempotency_key"));
 addCheck("outcome_events_draw_id_index", indexExists("game_engine", "outcome_events", "idx_outcome_events_draw_id"));
 addCheck("outcome_events_strategy_index", indexExists("game_engine", "outcome_events", "idx_outcome_events_strategy"));

@@ -437,4 +437,368 @@ if (RngProviderGovernanceValidator.Validate(missingEvidence).IsValid)
     throw new InvalidOperationException("RNG evidence validator must reject missing health evidence.");
 }
 
+var outcomeProvider = new OutcomeProviderDefinitionV1(
+    Guid.NewGuid(),
+    "outcome-provider:certified-csprng",
+    "1.0.0",
+    OutcomeProviderType.CertifiedCsprng,
+    OutcomeProviderLifecycleState.Active,
+    ProductionEligible: true,
+    [OutcomePrimitiveType.UniqueNumberSet, OutcomePrimitiveType.WeightedSelection],
+    new Dictionary<string, object?> { ["healthEvidence"] = true },
+    ["startup-health", "continuous-health"],
+    OutcomeProviderIdempotencyModel.PerDraw,
+    [OutcomeProviderCustodyState.Generated, OutcomeProviderCustodyState.Sealed, OutcomeProviderCustodyState.Certified],
+    new Dictionary<string, object?> { ["certificateSignatureRequired"] = true },
+    ReplayabilitySupport: true,
+    OutcomeProviderFailureMode.FailClosed,
+    new OutcomeProviderCapabilityMarkers(
+        GeneratesOutcomes: true,
+        IngestsExternalOutcomes: false,
+        SupportsPlayerVerificationReceipt: false,
+        SupportsDeterministicReplay: true,
+        SupportsProviderHealthEvidence: true,
+        SupportsDisputeHandling: true,
+        SupportsExternalSourceEvidence: false,
+        SupportsPhysicalDrawEvidence: false),
+    "sha256:outcome-provider",
+    CertificationBinding: null);
+
+if (!OutcomeProviderValidator.Validate(outcomeProvider).IsValid)
+{
+    throw new InvalidOperationException("Outcome Provider validator must accept a valid Certified CSPRNG provider.");
+}
+
+var simulationOutcomeProvider = outcomeProvider with
+{
+    ProviderType = OutcomeProviderType.SimulationTest,
+    ProductionEligible = true
+};
+
+if (OutcomeProviderValidator.Validate(simulationOutcomeProvider).IsValid)
+{
+    throw new InvalidOperationException("Outcome Provider validator must reject production-eligible simulation/test providers.");
+}
+
+var invalidOutcomeProviderCapabilities = outcomeProvider with
+{
+    CapabilityMarkers = outcomeProvider.CapabilityMarkers with
+    {
+        GeneratesOutcomes = true,
+        IngestsExternalOutcomes = true
+    }
+};
+
+if (OutcomeProviderValidator.Validate(invalidOutcomeProviderCapabilities).IsValid)
+{
+    throw new InvalidOperationException("Outcome Provider validator must reject generated and ingested outcome capability overlap.");
+}
+
+var forbiddenOutcomeProviderFields = outcomeProvider with
+{
+    EvidenceRequirements = new Dictionary<string, object?> { ["rtpControl"] = "forbidden" }
+};
+
+if (OutcomeProviderValidator.Validate(forbiddenOutcomeProviderFields).IsValid)
+{
+    throw new InvalidOperationException("Outcome Provider validator must reject math or financial fields.");
+}
+
+var providerBinding = new OutcomeProviderManifestBinding(
+    outcomeProvider.ProviderId,
+    outcomeProvider.ProviderVersion,
+    [OutcomePrimitiveType.UniqueNumberSet],
+    new Dictionary<string, object?> { ["healthEvidence"] = true },
+    PlayerVerificationReceiptRequired: false,
+    new Dictionary<string, object?> { ["silentFallbackAllowed"] = false },
+    CertificationRequired: false);
+
+if (!OutcomeProviderValidator.ValidateManifestBinding(providerBinding, outcomeProvider, productionMode: true).IsValid)
+{
+    throw new InvalidOperationException("Outcome Provider validator must accept a compatible manifest binding.");
+}
+
+var incompatibleBinding = providerBinding with
+{
+    ProviderCapabilityRequirements = [OutcomePrimitiveType.ShufflePermutation]
+};
+
+if (OutcomeProviderValidator.ValidateManifestBinding(incompatibleBinding, outcomeProvider, productionMode: true).IsValid)
+{
+    throw new InvalidOperationException("Outcome Provider validator must reject unsupported manifest primitive requirements.");
+}
+
+var entropyProvider = new EntropyProviderDefinitionV1(
+    Guid.NewGuid(),
+    "entropy-provider:os-csprng",
+    "1.0.0",
+    EntropyProviderType.OsCsprng,
+    "linux-kernel-getrandom",
+    new Dictionary<string, object?> { ["sourceReference"] = "os-csprng", ["rawMaterialPersisted"] = false },
+    MinimumEntropyBits: 256,
+    ["startup-health-test", "continuous-health-test"],
+    ProductionEligible: true,
+    CertifiedCsprngFailureMode.FailClosed,
+    "sha256:entropy-provider");
+
+if (!CertifiedCsprngProviderValidator.Validate(entropyProvider).IsValid)
+{
+    throw new InvalidOperationException("Certified CSPRNG validator must accept a valid OS entropy provider.");
+}
+
+var simulationEntropyProvider = entropyProvider with
+{
+    ProviderType = EntropyProviderType.TestSimulation,
+    ProductionEligible = true
+};
+
+if (CertifiedCsprngProviderValidator.Validate(simulationEntropyProvider).IsValid)
+{
+    throw new InvalidOperationException("Certified CSPRNG validator must reject production-eligible simulation entropy providers.");
+}
+
+var rawEntropyProvider = entropyProvider with
+{
+    EntropySourceMetadata = new Dictionary<string, object?> { ["rawEntropy"] = "forbidden" }
+};
+
+if (CertifiedCsprngProviderValidator.Validate(rawEntropyProvider).IsValid)
+{
+    throw new InvalidOperationException("Certified CSPRNG validator must reject raw entropy persistence.");
+}
+
+var certifiedCsprngProvider = new CertifiedCsprngProviderDefinitionV1(
+    Guid.NewGuid(),
+    "csprng-provider:hmac-drbg",
+    "1.0.0",
+    outcomeProvider.ProviderId,
+    outcomeProvider.ProviderVersion,
+    productionRngProvider.ProviderId,
+    productionRngProvider.ProviderVersion,
+    EntropyProviderType.OsCsprng,
+    CertifiedDrbgType.HmacDrbg,
+    CertifiedCsprngHashAlgorithm.Sha256,
+    SecurityStrengthBits: 256,
+    new Dictionary<string, object?> { ["intervalRequests"] = 1000000 },
+    new Dictionary<string, object?> { ["perDrawSession"] = true },
+    new Dictionary<string, object?> { ["zeroizeOnCompletion"] = true },
+    StartupSelfTestSupported: true,
+    KnownAnswerTestSupported: true,
+    ContinuousHealthTestSupported: true,
+    ProductionEligible: true,
+    CertifiedCsprngLifecycleState.Active,
+    CertifiedCsprngFailureMode.FailClosed,
+    [
+        CertifiedSamplingCapability.RejectionSampling,
+        CertifiedSamplingCapability.FisherYatesShuffle,
+        CertifiedSamplingCapability.UniqueNumberSelection,
+        CertifiedSamplingCapability.IntegerRationalWeightedSelection
+    ],
+    "sha256:csprng-provider",
+    CertificationBinding: null);
+
+if (!CertifiedCsprngProviderValidator.Validate(certifiedCsprngProvider).IsValid)
+{
+    throw new InvalidOperationException("Certified CSPRNG validator must accept a complete production-eligible HMAC-DRBG contract.");
+}
+
+var missingKatProvider = certifiedCsprngProvider with
+{
+    KnownAnswerTestSupported = false
+};
+
+if (CertifiedCsprngProviderValidator.Validate(missingKatProvider).IsValid)
+{
+    throw new InvalidOperationException("Certified CSPRNG validator must reject missing KAT support.");
+}
+
+var unsupportedSamplingProvider = certifiedCsprngProvider with
+{
+    SamplingCapabilities = [CertifiedSamplingCapability.FisherYatesShuffle]
+};
+
+if (CertifiedCsprngProviderValidator.Validate(unsupportedSamplingProvider).IsValid)
+{
+    throw new InvalidOperationException("Certified CSPRNG validator must reject missing unbiased sampling capabilities.");
+}
+
+var rawSeedPolicyProvider = certifiedCsprngProvider with
+{
+    ReseedPolicy = new Dictionary<string, object?> { ["seedMaterial"] = "forbidden" }
+};
+
+if (CertifiedCsprngProviderValidator.Validate(rawSeedPolicyProvider).IsValid)
+{
+    throw new InvalidOperationException("Certified CSPRNG validator must reject persisted raw seed material.");
+}
+
+var drbgEvidence = new DrbgSessionEvidence(
+    Guid.NewGuid(),
+    "draw:qa",
+    certifiedCsprngProvider.ProviderId,
+    certifiedCsprngProvider.ProviderVersion,
+    entropyProvider.ProviderId,
+    entropyProvider.ProviderVersion,
+    ReseedCounter: 1,
+    "sha256:personalization",
+    "sha256:nonce",
+    "sha256:seed-commitment",
+    DrbgEvidenceTestResult.Passed,
+    DrbgEvidenceTestResult.Passed,
+    DrbgEvidenceTestResult.Passed,
+    DateTimeOffset.UtcNow,
+    DateTimeOffset.UtcNow.AddSeconds(1),
+    "sha256:drbg-evidence",
+    signature);
+
+if (!CertifiedCsprngProviderValidator.Validate(drbgEvidence).IsValid)
+{
+    throw new InvalidOperationException("Certified CSPRNG validator must accept DRBG session evidence with hashes and health results.");
+}
+
+var failedDrbgEvidence = drbgEvidence with
+{
+    ContinuousTestResult = DrbgEvidenceTestResult.Failed
+};
+
+if (CertifiedCsprngProviderValidator.Validate(failedDrbgEvidence).IsValid)
+{
+    throw new InvalidOperationException("Certified CSPRNG validator must reject failed DRBG health evidence.");
+}
+
+var clientSeedPolicy = new ProvablyFairClientSeedPolicy(
+    Required: true,
+    MaximumLength: 128,
+    ProvablyFairEncoding.Utf8,
+    ["non-empty", "max-length"],
+    ["trim", "unicode-nfc"]);
+
+var provablyFairProvider = new ProvablyFairProviderDefinitionV1(
+    Guid.NewGuid(),
+    "provably-fair-provider:hmac",
+    "1.0.0",
+    outcomeProvider.ProviderId,
+    outcomeProvider.ProviderVersion,
+    ProvablyFairCommitAlgorithm.HashCommitment,
+    ProvablyFairVerificationAlgorithm.HmacSha256,
+    ProvablyFairHashAlgorithm.Sha256,
+    new Dictionary<string, object?> { ["generation"] = "external-governed", ["plaintextPersisted"] = false },
+    clientSeedPolicy,
+    new Dictionary<string, object?> { ["scopeType"] = "Wager", ["monotonicRequired"] = true },
+    new Dictionary<string, object?> { ["revealDelaySeconds"] = 60, ["revealWindowSeconds"] = 86400 },
+    TimeSpan.FromDays(1),
+    ReceiptSupport: true,
+    ProductionEligible: true,
+    ProvablyFairLifecycleState.Active,
+    "sha256:provably-fair-provider",
+    CertificationBinding: null);
+
+if (!ProvablyFairProviderValidator.Validate(provablyFairProvider).IsValid)
+{
+    throw new InvalidOperationException("Provably Fair validator must accept a valid provider contract.");
+}
+
+var receiptDisabledProvider = provablyFairProvider with
+{
+    ReceiptSupport = false
+};
+
+if (ProvablyFairProviderValidator.Validate(receiptDisabledProvider).IsValid)
+{
+    throw new InvalidOperationException("Provably Fair validator must reject providers without receipt support.");
+}
+
+var negativeRevealProvider = provablyFairProvider with
+{
+    RevealPolicy = new Dictionary<string, object?> { ["revealDelaySeconds"] = 0, ["revealWindowSeconds"] = -1 }
+};
+
+if (ProvablyFairProviderValidator.Validate(negativeRevealProvider).IsValid)
+{
+    throw new InvalidOperationException("Provably Fair validator must reject negative reveal windows.");
+}
+
+var rawSeedProvider = provablyFairProvider with
+{
+    ServerSeedPolicy = new Dictionary<string, object?> { ["plaintextSeed"] = "forbidden" }
+};
+
+if (ProvablyFairProviderValidator.Validate(rawSeedProvider).IsValid)
+{
+    throw new InvalidOperationException("Provably Fair validator must reject plaintext seed governance.");
+}
+
+var seedCommitment = new ProvablyFairServerSeedCommitment(
+    Guid.NewGuid(),
+    provablyFairProvider.ProviderId,
+    provablyFairProvider.ProviderVersion,
+    DateTimeOffset.UtcNow,
+    "sha256:server-commitment",
+    ProvablyFairSeedLifecycleState.Committed,
+    new Dictionary<string, object?> { ["rotateAfterWagers"] = 10000 },
+    DateTimeOffset.UtcNow.AddMinutes(1),
+    null,
+    "sha256:seed-commitment-record");
+
+if (!ProvablyFairProviderValidator.Validate(seedCommitment).IsValid)
+{
+    throw new InvalidOperationException("Provably Fair validator must accept hash-only seed commitments.");
+}
+
+var nonceSequence = new ProvablyFairNonceSequence(
+    Guid.NewGuid(),
+    provablyFairProvider.ProviderId,
+    provablyFairProvider.ProviderVersion,
+    "wager:qa",
+    ProvablyFairNonceScopeType.Wager,
+    Nonce: 1,
+    new Dictionary<string, object?> { ["monotonicRequired"] = true },
+    MonotonicRequired: true,
+    "provider-wager",
+    "sha256:nonce-sequence");
+
+if (!ProvablyFairProviderValidator.Validate(nonceSequence).IsValid)
+{
+    throw new InvalidOperationException("Provably Fair validator must accept valid nonce governance.");
+}
+
+var invalidNonceSequence = nonceSequence with { Nonce = -1 };
+if (ProvablyFairProviderValidator.Validate(invalidNonceSequence).IsValid)
+{
+    throw new InvalidOperationException("Provably Fair validator must reject negative nonces.");
+}
+
+var receipt = new ProvablyFairVerificationReceipt(
+    Guid.NewGuid(),
+    "wager:qa",
+    Guid.NewGuid(),
+    "sha256:outcome-certificate",
+    provablyFairProvider.ProviderId,
+    provablyFairProvider.ProviderVersion,
+    "sha256:server-commitment",
+    "client-seed",
+    Nonce: 1,
+    RevealedServerSeedPlaceholder: null,
+    ProvablyFairVerificationAlgorithm.HmacSha256,
+    new Dictionary<string, object?> { ["commitment"] = "hash-only" },
+    ProvablyFairVerificationStatus.PendingReveal,
+    "sha256:receipt",
+    signature,
+    new Dictionary<string, object?> { ["exportVersion"] = "v1" });
+
+if (!ProvablyFairProviderValidator.Validate(receipt).IsValid)
+{
+    throw new InvalidOperationException("Provably Fair validator must accept immutable verification receipt contracts.");
+}
+
+var seedLeakReceipt = receipt with
+{
+    RevealedServerSeedPlaceholder = "plaintext-serverSeed-forbidden"
+};
+
+if (ProvablyFairProviderValidator.Validate(seedLeakReceipt).IsValid)
+{
+    throw new InvalidOperationException("Provably Fair validator must reject receipt seed leakage.");
+}
+
 Console.WriteLine("GameEngine.Domain.Tests PASS");

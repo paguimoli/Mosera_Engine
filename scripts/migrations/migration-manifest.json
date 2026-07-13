@@ -304,6 +304,69 @@
       "reason": "Adds append-only lifecycle events, version supersession metadata, and lifecycle-aware platform resolution without update/delete endpoints."
     },
     {
+      "id": "033_add_outcome_provider_contracts",
+      "path": "scripts/migrations/local/033_add_outcome_provider_contracts.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only Outcome Provider contracts and immutable Game Manifest provider bindings without enabling production outcome authority."
+    },
+    {
+      "id": "034_add_certified_csprng_contracts",
+      "path": "scripts/migrations/local/034_add_certified_csprng_contracts.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only certified CSPRNG, entropy provider, and DRBG session evidence contracts without enabling production outcome generation."
+    },
+    {
+      "id": "035_add_provably_fair_contracts",
+      "path": "scripts/migrations/local/035_add_provably_fair_contracts.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only Provably Fair provider, commit-reveal governance, nonce, and player verification receipt contracts without enabling production gameplay."
+    },
+    {
+      "id": "036_add_outcome_provider_runtime_shell",
+      "path": "scripts/migrations/local/036_add_outcome_provider_runtime_shell.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only Outcome Provider runtime request and attempt evidence boundaries with advisory-lock support while production outcome generation remains disabled."
+    },
+    {
+      "id": "037_relax_outcome_runtime_fail_closed_provider_evidence",
+      "path": "scripts/migrations/local/037_relax_outcome_runtime_fail_closed_provider_evidence.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Allows durable fail-closed Outcome Provider runtime evidence when exact provider resolution fails, while preserving production generation disablement."
+    },
+    {
+      "id": "038_allow_certified_csprng_runtime_dry_run_attempts",
+      "path": "scripts/migrations/local/038_allow_certified_csprng_runtime_dry_run_attempts.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Allows accepted Certified CSPRNG dry-run/simulation runtime attempts while preserving production generation disablement and secret-material rejection."
+    },
+    {
+      "id": "039_add_provably_fair_runtime",
+      "path": "scripts/migrations/local/039_add_provably_fair_runtime.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only Provably Fair runtime receipt, reveal, verification evidence, and dry-run attempt support while production authority remains disabled."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

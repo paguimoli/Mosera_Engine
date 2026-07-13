@@ -1,6 +1,7 @@
 using System.Net.Sockets;
 using System.Text;
 using GameEngine.Api.Configuration;
+using GameEngine.Application.Services;
 
 namespace GameEngine.Api.Infrastructure;
 
@@ -8,13 +9,22 @@ public sealed class InfrastructureReadinessChecks
 {
     private static readonly byte[] RedisPingCommand = Encoding.ASCII.GetBytes("*1\r\n$4\r\nPING\r\n");
     private readonly ServiceConfiguration configuration;
+    private readonly IOutcomeRuntimeRequestRepository outcomeRuntimeRequests;
+    private readonly IOutcomeRuntimeLockManager outcomeRuntimeLocks;
+    private readonly ProvablyFairRuntimeService provablyFairRuntime;
     private readonly ILogger<InfrastructureReadinessChecks> logger;
 
     public InfrastructureReadinessChecks(
         ServiceConfiguration configuration,
+        IOutcomeRuntimeRequestRepository outcomeRuntimeRequests,
+        IOutcomeRuntimeLockManager outcomeRuntimeLocks,
+        ProvablyFairRuntimeService provablyFairRuntime,
         ILogger<InfrastructureReadinessChecks> logger)
     {
         this.configuration = configuration;
+        this.outcomeRuntimeRequests = outcomeRuntimeRequests;
+        this.outcomeRuntimeLocks = outcomeRuntimeLocks;
+        this.provablyFairRuntime = provablyFairRuntime;
         this.logger = logger;
     }
 
@@ -68,6 +78,56 @@ public sealed class InfrastructureReadinessChecks
         }
 
         return CheckTcpEndpointAsync("database", databaseUrl, 5432, cancellationToken);
+    }
+
+    public async Task<DependencyHealthResult> CheckOutcomeRuntimePersistenceAsync(CancellationToken cancellationToken)
+    {
+        var readiness = await outcomeRuntimeRequests.CheckReadinessAsync(cancellationToken);
+        var ready = readiness.DurablePersistenceConfigured &&
+            readiness.DurablePersistenceReachable &&
+            readiness.IdempotencyRepositoryReady &&
+            readiness.RuntimeAttemptsRepositoryReady &&
+            readiness.ProductionGenerationDisabled;
+
+        return ready
+            ? new DependencyHealthResult("outcome-runtime-persistence", true)
+            : new DependencyHealthResult(
+                "outcome-runtime-persistence",
+                false,
+                string.Join("; ", readiness.Blockers));
+    }
+
+    public async Task<DependencyHealthResult> CheckOutcomeRuntimeLockingAsync(CancellationToken cancellationToken)
+    {
+        var readiness = await outcomeRuntimeLocks.CheckReadinessAsync(cancellationToken);
+        var ready = readiness.AdvisoryLockingConfigured &&
+            readiness.AdvisoryLockingReachable &&
+            readiness.RedisLockDependencyAbsent;
+
+        return ready
+            ? new DependencyHealthResult("outcome-runtime-locking", true)
+            : new DependencyHealthResult(
+                "outcome-runtime-locking",
+                false,
+                string.Join("; ", readiness.Blockers));
+    }
+
+    public async Task<DependencyHealthResult> CheckProvablyFairRuntimeAsync(CancellationToken cancellationToken)
+    {
+        var readiness = await provablyFairRuntime.CheckReadinessAsync(cancellationToken);
+        var ready = readiness.CommitmentPublicationReady &&
+            readiness.NonceAllocatorDurable &&
+            readiness.HmacDerivationReady &&
+            readiness.ReceiptGenerationReady &&
+            readiness.RevealVerificationReady &&
+            readiness.ProductionGenerationDisabled;
+
+        return ready
+            ? new DependencyHealthResult("provably-fair-runtime", true)
+            : new DependencyHealthResult(
+                "provably-fair-runtime",
+                false,
+                string.Join("; ", readiness.Blockers));
     }
 
     private async Task<DependencyHealthResult> CheckTcpEndpointAsync(

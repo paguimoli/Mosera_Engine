@@ -11,7 +11,10 @@ public sealed record OutcomeAuthorityReadinessMarkers(
     bool CertificationPackReady,
     bool CertificateSigningFrameworkReady,
     bool StatisticalValidationReady,
-    bool OperationalControlsReady);
+    bool OperationalControlsReady,
+    bool OutcomeProviderRuntimeReady = true,
+    bool OutcomeRuntimeIdempotencyReady = true,
+    bool OutcomeRuntimeAdvisoryLockingReady = true);
 
 public sealed record OutcomeAuthorityActivationRequest(
     OutcomeAuthorityReadinessMarkers ReadinessMarkers,
@@ -24,7 +27,28 @@ public sealed record OutcomeAuthorityActivationRequest(
     bool ManifestRequiresCertification,
     bool CertificationOmitted,
     bool HasFailedOrInconclusiveStatisticalValidation,
-    bool HasActiveEmergencyDisable);
+    bool HasActiveEmergencyDisable,
+    bool HasExactOutcomeProviderBinding = true,
+    bool OutcomeProviderActiveAndEligible = true,
+    bool OutcomeProviderCapabilitiesSatisfied = true,
+    bool SilentFallbackConfigured = false,
+    bool UsesSimulationOrTestOutcomeProvider = false,
+    bool CertifiedCsprngProviderRequirementsSatisfied = true,
+    bool EntropyProviderProductionEligible = true,
+    bool DrbgHealthEvidenceSatisfied = true,
+    bool UnbiasedSamplingCapabilitiesSatisfied = true,
+    bool NoRawSecretMaterialPersisted = true,
+    bool ProvablyFairProviderRequirementsSatisfied = true,
+    bool ProvablyFairCommitAlgorithmDefined = true,
+    bool ProvablyFairVerificationAlgorithmDefined = true,
+    bool ProvablyFairReceiptSupportAvailable = true,
+    bool ProvablyFairNoncePolicyValid = true,
+    bool ProvablyFairCommitmentPolicyValid = true,
+    bool ProvablyFairNoSeedLeakage = true,
+    bool OutcomeProviderRuntimeReady = true,
+    bool OutcomeRuntimeIdempotencyConfigured = true,
+    bool OutcomeRuntimeAdvisoryLockingConfigured = true,
+    bool ProductionOutcomeGenerationDisabled = true);
 
 public sealed record OutcomeAuthorityActivationGuardrailResult(
     bool Allowed,

@@ -25,12 +25,24 @@ builder.Services.AddSingleton<InfrastructureReadinessChecks>();
 builder.Services.AddSingleton<GameModuleRegistry>();
 builder.Services.AddSingleton<DrawAuthorityRegistry>();
 builder.Services.AddSingleton<RandomnessRegistry>();
+builder.Services.AddSingleton<IOsEntropyProvider, AutoOsEntropyProvider>();
+builder.Services.AddSingleton<IHmacDrbgRuntime, HmacDrbgRuntime>();
+builder.Services.AddSingleton<ICertifiedCsprngSampler, CertifiedCsprngSampler>();
+builder.Services.AddSingleton<IProvablyFairClientSeedService, ProvablyFairClientSeedService>();
 builder.Services.AddSingleton<ValidationSuite>();
 builder.Services.AddSingleton<CertificationSuite>();
 builder.Services.AddSingleton<DrawGenerationFramework>();
 builder.Services.AddSingleton<DrawSchedulerService>();
 builder.Services.AddSingleton<EvaluationOrchestrator>();
 builder.Services.AddSingleton<EvaluationRabbitMqDiagnostics>();
+builder.Services.AddSingleton<IOutcomeProviderResolver, OutcomeProviderResolver>();
+builder.Services.AddSingleton<IOutcomeProviderRuntime, CertifiedCsprngOutcomeProviderRuntime>();
+builder.Services.AddSingleton<IOutcomeProviderRuntime, ProvablyFairOutcomeProviderRuntime>();
+builder.Services.AddSingleton<IOutcomeProviderRuntime, ExternalOfficialResultOutcomeProviderRuntime>();
+builder.Services.AddSingleton<IOutcomeProviderRuntime, PhysicalDrawResultOutcomeProviderRuntime>();
+builder.Services.AddSingleton<IOutcomeProviderRuntime, SimulationTestOutcomeProviderRuntime>();
+builder.Services.AddSingleton<ProvablyFairRuntimeService>();
+builder.Services.AddSingleton<OutcomeProviderOrchestrationService>();
 if (string.IsNullOrWhiteSpace(databaseUrl))
 {
     builder.Services.AddSingleton<IDrawScheduleRepository, InMemoryDrawScheduleRepository>();
@@ -45,6 +57,12 @@ if (string.IsNullOrWhiteSpace(databaseUrl))
     builder.Services.AddSingleton<IEvaluationBatchRepository, InMemoryEvaluationBatchRepository>();
     builder.Services.AddSingleton<IEvaluationRecordRepository, InMemoryEvaluationRecordRepository>();
     builder.Services.AddSingleton<IEvaluationCheckpointRepository, InMemoryEvaluationCheckpointRepository>();
+    builder.Services.AddSingleton<IOutcomeRuntimeRequestRepository, InMemoryOutcomeRuntimeRequestRepository>();
+    builder.Services.AddSingleton<IOutcomeRuntimeLockManager, InMemoryOutcomeRuntimeLockManager>();
+    builder.Services.AddSingleton<ICertifiedCsprngEvidenceRepository, InMemoryCertifiedCsprngEvidenceRepository>();
+    builder.Services.AddSingleton<IProvablyFairSeedCustodyRepository, InMemoryProvablyFairSeedCustodyRepository>();
+    builder.Services.AddSingleton<IProvablyFairNonceAllocator, InMemoryProvablyFairNonceAllocator>();
+    builder.Services.AddSingleton<IProvablyFairRuntimeEvidenceRepository, InMemoryProvablyFairRuntimeEvidenceRepository>();
 }
 else
 {
@@ -60,6 +78,12 @@ else
     builder.Services.AddSingleton<IEvaluationBatchRepository>(_ => new PostgresEvaluationBatchRepository(databaseUrl));
     builder.Services.AddSingleton<IEvaluationRecordRepository>(_ => new PostgresEvaluationRecordRepository(databaseUrl));
     builder.Services.AddSingleton<IEvaluationCheckpointRepository>(_ => new PostgresEvaluationCheckpointRepository(databaseUrl));
+    builder.Services.AddSingleton<IOutcomeRuntimeRequestRepository>(_ => new PostgresOutcomeRuntimeRequestRepository(databaseUrl));
+    builder.Services.AddSingleton<IOutcomeRuntimeLockManager>(_ => new PostgresOutcomeRuntimeLockManager(databaseUrl));
+    builder.Services.AddSingleton<ICertifiedCsprngEvidenceRepository>(_ => new PostgresCertifiedCsprngEvidenceRepository(databaseUrl));
+    builder.Services.AddSingleton<IProvablyFairSeedCustodyRepository, InMemoryProvablyFairSeedCustodyRepository>();
+    builder.Services.AddSingleton<IProvablyFairNonceAllocator>(_ => new PostgresProvablyFairNonceAllocator(databaseUrl));
+    builder.Services.AddSingleton<IProvablyFairRuntimeEvidenceRepository>(_ => new PostgresProvablyFairRuntimeEvidenceRepository(databaseUrl));
 }
 
 builder.Services.AddSingleton<ITicketReader, DatabaseTicketReader>();

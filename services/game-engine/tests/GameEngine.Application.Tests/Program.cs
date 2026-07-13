@@ -2,6 +2,8 @@ using GameEngine.Application.Services;
 using GameEngine.Domain.Model;
 using GameEngine.Domain.Randomness;
 using GameEngine.Infrastructure.Persistence;
+using System.Security.Cryptography;
+using System.Text;
 
 var registry = new GameModuleRegistry();
 var drawAuthorityRegistry = new DrawAuthorityRegistry();
@@ -32,6 +34,427 @@ if (modules.Count != 3)
 if (modules.Any(module => module.Manifest.SupportedWagerTypes.Count == 0))
 {
     throw new InvalidOperationException("Module status must expose supported wager types.");
+}
+
+static OutcomeProviderDefinitionV1 RuntimeProvider(
+    string providerId,
+    string providerVersion,
+    OutcomeProviderType providerType,
+    OutcomeProviderLifecycleState lifecycleState = OutcomeProviderLifecycleState.Active,
+    bool productionEligible = true,
+    bool supportsReceipt = false,
+    IReadOnlyCollection<OutcomePrimitiveType>? primitives = null)
+{
+    return new OutcomeProviderDefinitionV1(
+        Guid.NewGuid(),
+        providerId,
+        providerVersion,
+        providerType,
+        lifecycleState,
+        productionEligible,
+        primitives ?? [OutcomePrimitiveType.UniqueNumberSet],
+        new Dictionary<string, object?> { ["runtimeEvidence"] = true },
+        ["runtime-shell-ready"],
+        providerType == OutcomeProviderType.ProvablyFair
+            ? OutcomeProviderIdempotencyModel.PerWager
+            : OutcomeProviderIdempotencyModel.PerDraw,
+        [OutcomeProviderCustodyState.Requested, OutcomeProviderCustodyState.Generated],
+        new Dictionary<string, object?> { ["signatureRequired"] = true },
+        ReplayabilitySupport: true,
+        OutcomeProviderFailureMode.FailClosed,
+        new OutcomeProviderCapabilityMarkers(
+            GeneratesOutcomes: providerType is OutcomeProviderType.CertifiedCsprng or OutcomeProviderType.ProvablyFair or OutcomeProviderType.SimulationTest,
+            IngestsExternalOutcomes: providerType is OutcomeProviderType.ExternalOfficialResult or OutcomeProviderType.PhysicalDrawResult,
+            SupportsPlayerVerificationReceipt: supportsReceipt,
+            SupportsDeterministicReplay: true,
+            SupportsProviderHealthEvidence: true,
+            SupportsDisputeHandling: true,
+            SupportsExternalSourceEvidence: providerType == OutcomeProviderType.ExternalOfficialResult,
+            SupportsPhysicalDrawEvidence: providerType == OutcomeProviderType.PhysicalDrawResult),
+        $"sha256:runtime-provider:{providerId}:{providerVersion}",
+        CertificationBinding: null);
+}
+
+static OutcomeProviderRuntimeRequest RuntimeRequest(
+    string idempotencyKey,
+    string scope,
+    string providerId,
+    string providerVersion,
+    OutcomeProviderType expectedType,
+    OutcomeRuntimeExecutionMode mode = OutcomeRuntimeExecutionMode.DryRun,
+    string canonicalHash = "sha256:runtime-request")
+{
+    return new OutcomeProviderRuntimeRequest(
+        Guid.NewGuid(),
+        idempotencyKey,
+        scope,
+        "game-manifest:runtime-test",
+        "1.0.0",
+        new OutcomeProviderManifestBinding(
+            providerId,
+            providerVersion,
+            [OutcomePrimitiveType.UniqueNumberSet],
+            new Dictionary<string, object?> { ["runtimeEvidence"] = true },
+            PlayerVerificationReceiptRequired: expectedType == OutcomeProviderType.ProvablyFair,
+            new Dictionary<string, object?> { ["failClosed"] = true },
+            CertificationRequired: false),
+        expectedType,
+        mode,
+        [OutcomePrimitiveType.UniqueNumberSet],
+        canonicalHash);
+}
+
+var runtimeResolver = new OutcomeProviderResolver();
+var runtimeProvider = RuntimeProvider(
+    "outcome-provider:runtime:certified-csprng",
+    "1.0.0",
+    OutcomeProviderType.CertifiedCsprng);
+var runtimeRequest = RuntimeRequest(
+    "runtime-idempotency-1",
+    "draw:runtime-1",
+    runtimeProvider.ProviderId,
+    runtimeProvider.ProviderVersion,
+    OutcomeProviderType.CertifiedCsprng);
+var resolvedRuntimeProvider = await runtimeResolver.ResolveAsync(runtimeRequest, [runtimeProvider], CancellationToken.None);
+if (resolvedRuntimeProvider.ProviderId != runtimeProvider.ProviderId)
+{
+    throw new InvalidOperationException("Outcome Provider runtime resolver must select the exact manifest-bound provider.");
+}
+
+var autoEntropy = new AutoOsEntropyProvider();
+var entropyReadiness = autoEntropy.CheckReadiness();
+if (!entropyReadiness.Ready)
+{
+    throw new InvalidOperationException("Supported OS entropy provider must be ready for CSPRNG runtime tests.");
+}
+
+var entropyProbe = new byte[32];
+autoEntropy.Fill(entropyProbe);
+if (entropyProbe.All(value => value == 0))
+{
+    throw new InvalidOperationException("OS entropy provider returned an all-zero probe.");
+}
+
+CryptographicOperations.ZeroMemory(entropyProbe);
+
+var drbgRuntime = new HmacDrbgRuntime();
+var drbgReadiness = drbgRuntime.RunHealthChecks();
+if (!drbgReadiness.IsReady ||
+    drbgReadiness.KnownAnswerResults.Count != 3 ||
+    drbgReadiness.KnownAnswerResults.Any(result => !result.Passed))
+{
+    throw new InvalidOperationException("HMAC-DRBG startup, KAT, and continuous health checks must pass.");
+}
+
+foreach (var hashAlgorithm in Enum.GetValues<CertifiedCsprngHashAlgorithm>())
+{
+    var entropy = Enumerable.Range(0, 48).Select(index => (byte)(index + 1)).ToArray();
+    var nonce = Enumerable.Range(0, 16).Select(index => (byte)(0x80 + index)).ToArray();
+    var personalization = Encoding.UTF8.GetBytes($"application-test-{hashAlgorithm}");
+    HmacDrbgSession? firstSession = null;
+    HmacDrbgSession? secondSession = null;
+    byte[]? firstOutput = null;
+    byte[]? secondOutput = null;
+    try
+    {
+        firstSession = drbgRuntime.Instantiate(hashAlgorithm, entropy, nonce, personalization, 256);
+        secondSession = drbgRuntime.Instantiate(hashAlgorithm, entropy, nonce, personalization, 256);
+        firstOutput = drbgRuntime.Generate(firstSession, 96);
+        secondOutput = drbgRuntime.Generate(secondSession, 96);
+        if (!CryptographicOperations.FixedTimeEquals(firstOutput, secondOutput))
+        {
+            throw new InvalidOperationException($"{hashAlgorithm} deterministic test vector must be reproducible.");
+        }
+
+        drbgRuntime.Reseed(firstSession, entropy, Encoding.UTF8.GetBytes("reseed"));
+        var reseeded = drbgRuntime.Generate(firstSession, 32);
+        if (CryptographicOperations.FixedTimeEquals(firstOutput.AsSpan(0, 32), reseeded))
+        {
+            throw new InvalidOperationException($"{hashAlgorithm} reseed should change generated output.");
+        }
+
+        CryptographicOperations.ZeroMemory(reseeded);
+        drbgRuntime.Destroy(firstSession);
+        var destroyedFailed = false;
+        try
+        {
+            drbgRuntime.Generate(firstSession, 16);
+        }
+        catch (ObjectDisposedException)
+        {
+            destroyedFailed = true;
+        }
+
+        if (!destroyedFailed)
+        {
+            throw new InvalidOperationException("Destroyed HMAC-DRBG session must fail closed.");
+        }
+    }
+    finally
+    {
+        if (firstSession is not null)
+        {
+            drbgRuntime.Destroy(firstSession);
+        }
+
+        if (secondSession is not null)
+        {
+            drbgRuntime.Destroy(secondSession);
+        }
+
+        CryptographicOperations.ZeroMemory(entropy);
+        CryptographicOperations.ZeroMemory(nonce);
+        CryptographicOperations.ZeroMemory(personalization);
+        if (firstOutput is not null)
+        {
+            CryptographicOperations.ZeroMemory(firstOutput);
+        }
+
+        if (secondOutput is not null)
+        {
+            CryptographicOperations.ZeroMemory(secondOutput);
+        }
+    }
+}
+
+var samplerEntropy = Enumerable.Range(0, 48).Select(index => (byte)(index + 3)).ToArray();
+var samplerNonce = Enumerable.Range(0, 16).Select(index => (byte)(0x40 + index)).ToArray();
+var samplerPersonalization = Encoding.UTF8.GetBytes("sampler-test");
+var sampler = new CertifiedCsprngSampler(drbgRuntime);
+HmacDrbgSession? samplerSession = null;
+try
+{
+    samplerSession = drbgRuntime.Instantiate(CertifiedCsprngHashAlgorithm.Sha256, samplerEntropy, samplerNonce, samplerPersonalization, 256);
+    var bounded = sampler.NextInt32(samplerSession, 7, 13);
+    if (bounded is < 7 or > 13)
+    {
+        throw new InvalidOperationException("Rejection-sampled bounded integer must stay within range.");
+    }
+
+    var shuffled = sampler.FisherYatesShuffle(samplerSession, [1, 2, 3, 4, 5]);
+    if (shuffled.Order().SequenceEqual([1, 2, 3, 4, 5]) is false)
+    {
+        throw new InvalidOperationException("Fisher-Yates shuffle must preserve the original set.");
+    }
+
+    var unique = sampler.UniqueNumbers(samplerSession, 1, 40, 6);
+    if (unique.Count != 6 || unique.Distinct().Count() != 6 || unique.Any(value => value is < 1 or > 40))
+    {
+        throw new InvalidOperationException("Unique-number selection must return unique values inside the configured range.");
+    }
+
+    var weighted = sampler.WeightedSelection(samplerSession, new Dictionary<string, long>
+    {
+        ["A"] = 1,
+        ["B"] = 2,
+        ["C"] = 3
+    });
+    if (weighted is not ("A" or "B" or "C"))
+    {
+        throw new InvalidOperationException("Integer/rational weighted selection must return a configured key.");
+    }
+}
+finally
+{
+    if (samplerSession is not null)
+    {
+        drbgRuntime.Destroy(samplerSession);
+    }
+
+    CryptographicOperations.ZeroMemory(samplerEntropy);
+    CryptographicOperations.ZeroMemory(samplerNonce);
+    CryptographicOperations.ZeroMemory(samplerPersonalization);
+}
+
+var missingProviderFailed = false;
+try
+{
+    await runtimeResolver.ResolveAsync(runtimeRequest, [], CancellationToken.None);
+}
+catch (InvalidOperationException)
+{
+    missingProviderFailed = true;
+}
+
+if (!missingProviderFailed)
+{
+    throw new InvalidOperationException("Missing Outcome Provider must fail closed.");
+}
+
+var typeMismatchFailed = false;
+try
+{
+    await runtimeResolver.ResolveAsync(
+        runtimeRequest,
+        [runtimeProvider with { ProviderType = OutcomeProviderType.ProvablyFair }],
+        CancellationToken.None);
+}
+catch (InvalidOperationException)
+{
+    typeMismatchFailed = true;
+}
+
+if (!typeMismatchFailed)
+{
+    throw new InvalidOperationException("Outcome Provider type mismatch must fail closed.");
+}
+
+var inactiveProviderFailed = false;
+try
+{
+    await runtimeResolver.ResolveAsync(
+        runtimeRequest,
+        [runtimeProvider with { LifecycleState = OutcomeProviderLifecycleState.Suspended }],
+        CancellationToken.None);
+}
+catch (InvalidOperationException)
+{
+    inactiveProviderFailed = true;
+}
+
+if (!inactiveProviderFailed)
+{
+    throw new InvalidOperationException("Inactive Outcome Provider must fail closed.");
+}
+
+var fallbackFailed = false;
+try
+{
+    await runtimeResolver.ResolveAsync(
+        runtimeRequest with { SilentFallbackConfigured = true },
+        [runtimeProvider],
+        CancellationToken.None);
+}
+catch (InvalidOperationException)
+{
+    fallbackFailed = true;
+}
+
+if (!fallbackFailed)
+{
+    throw new InvalidOperationException("Silent fallback Outcome Provider must fail closed.");
+}
+
+var simulationProductionFailed = false;
+try
+{
+    var simulationProvider = RuntimeProvider(
+        "outcome-provider:runtime:simulation",
+        "1.0.0",
+        OutcomeProviderType.SimulationTest);
+    await runtimeResolver.ResolveAsync(
+        RuntimeRequest(
+            "runtime-idempotency-simulation",
+            "draw:runtime-simulation",
+            simulationProvider.ProviderId,
+            simulationProvider.ProviderVersion,
+            OutcomeProviderType.SimulationTest,
+            OutcomeRuntimeExecutionMode.Production),
+        [simulationProvider],
+        CancellationToken.None);
+}
+catch (InvalidOperationException)
+{
+    simulationProductionFailed = true;
+}
+
+if (!simulationProductionFailed)
+{
+    throw new InvalidOperationException("Simulation/test provider must be rejected for production mode.");
+}
+
+var runtimeRepository = new InMemoryOutcomeRuntimeRequestRepository();
+var runtimeLockManager = new InMemoryOutcomeRuntimeLockManager();
+var runtimeOrchestrator = new OutcomeProviderOrchestrationService(
+    runtimeResolver,
+    runtimeRepository,
+    runtimeLockManager,
+    [
+        new CertifiedCsprngOutcomeProviderRuntime(),
+        new ProvablyFairOutcomeProviderRuntime(),
+        new ExternalOfficialResultOutcomeProviderRuntime(),
+        new PhysicalDrawResultOutcomeProviderRuntime(),
+        new SimulationTestOutcomeProviderRuntime()
+    ]);
+var runtimeResult = await runtimeOrchestrator.ExecuteAsync(runtimeRequest, [runtimeProvider], CancellationToken.None);
+if (runtimeResult.Status != OutcomeRuntimeStatus.Accepted ||
+    runtimeResult.FailureCode != OutcomeRuntimeFailureCode.None ||
+    runtimeResult.EvidenceReference is null ||
+    runtimeResult.ResultReference is not null)
+{
+    throw new InvalidOperationException("Certified CSPRNG dry-run runtime must persist evidence without creating production outcome references.");
+}
+
+if (runtimeRepository.Requests.Count != 1 || runtimeRepository.Attempts.Count != 1)
+{
+    throw new InvalidOperationException("Outcome Provider runtime attempt evidence must persist in the repository boundary.");
+}
+
+var duplicateRuntimeResult = await runtimeOrchestrator.ExecuteAsync(runtimeRequest, [runtimeProvider], CancellationToken.None);
+if (duplicateRuntimeResult.Status != OutcomeRuntimeStatus.DuplicateReturned ||
+    duplicateRuntimeResult.RuntimeRequestId != runtimeResult.RuntimeRequestId)
+{
+    throw new InvalidOperationException("Duplicate runtime idempotency request must return existing deterministic state.");
+}
+
+var conflictFailed = false;
+try
+{
+    await runtimeOrchestrator.ExecuteAsync(
+        runtimeRequest with
+        {
+            RuntimeRequestId = Guid.NewGuid(),
+            CanonicalRequestHash = "sha256:conflicting-runtime-request"
+        },
+        [runtimeProvider],
+        CancellationToken.None);
+}
+catch (InvalidOperationException)
+{
+    conflictFailed = true;
+}
+
+if (!conflictFailed)
+{
+    throw new InvalidOperationException("Conflicting duplicate runtime idempotency payload must be rejected.");
+}
+
+var lockedRepository = new InMemoryOutcomeRuntimeRequestRepository();
+var lockedLockManager = new InMemoryOutcomeRuntimeLockManager();
+var lockedRequest = RuntimeRequest(
+    "runtime-idempotency-lock",
+    "draw:runtime-lock",
+    runtimeProvider.ProviderId,
+    runtimeProvider.ProviderVersion,
+    OutcomeProviderType.CertifiedCsprng,
+    canonicalHash: "sha256:runtime-lock");
+lockedLockManager.Hold(OutcomeProviderOrchestrationService.BuildLockScope(lockedRequest));
+var lockedOrchestrator = new OutcomeProviderOrchestrationService(
+    runtimeResolver,
+    lockedRepository,
+    lockedLockManager,
+    [new CertifiedCsprngOutcomeProviderRuntime()]);
+var lockedResult = await lockedOrchestrator.ExecuteAsync(lockedRequest, [runtimeProvider], CancellationToken.None);
+if (lockedResult.Status != OutcomeRuntimeStatus.FailedClosed ||
+    lockedResult.FailureCode != OutcomeRuntimeFailureCode.LockUnavailable)
+{
+    throw new InvalidOperationException("Concurrent same-scope requests must fail closed when the advisory lock is unavailable.");
+}
+
+var inMemoryRuntimeReadiness = await runtimeRepository.CheckReadinessAsync(CancellationToken.None);
+if (inMemoryRuntimeReadiness.DurablePersistenceConfigured ||
+    inMemoryRuntimeReadiness.ProductionGenerationDisabled is false ||
+    inMemoryRuntimeReadiness.Blockers.Count == 0)
+{
+    throw new InvalidOperationException("In-memory runtime persistence must remain explicit non-production fallback.");
+}
+
+var inMemoryLockingReadiness = await runtimeLockManager.CheckReadinessAsync(CancellationToken.None);
+if (inMemoryLockingReadiness.AdvisoryLockingConfigured ||
+    !inMemoryLockingReadiness.RedisLockDependencyAbsent ||
+    inMemoryLockingReadiness.Blockers.Count == 0)
+{
+    throw new InvalidOperationException("In-memory runtime locking must remain explicit non-production fallback.");
 }
 
 var registryStatus = registry.GetRegistryStatus();
@@ -1336,6 +1759,428 @@ AssertThrows(
     () => outcomePipeline.Execute(outcomeRequest with { IdempotencyKey = "outcome-invalid-provider" }, outcomeStrategy, invalidProviderReference, dryRunEvidence),
     "Outcome pipeline must reject invalid provider references.");
 
+var outcomeAuthorityGuardrails = new OutcomeAuthorityActivationGuardrailService();
+var readyMarkers = new OutcomeAuthorityReadinessMarkers(
+    GameManifestSchemaReady: true,
+    AuthorityCertificateChainReady: true,
+    OutcomeDslReady: true,
+    MathRtpGovernanceReady: true,
+    RngProviderGovernanceReady: true,
+    OutcomeDryRunPipelineReady: true,
+    MathEvaluationDryRunReady: true,
+    CertificationPackReady: true,
+    CertificateSigningFrameworkReady: true,
+    StatisticalValidationReady: true,
+    OperationalControlsReady: true);
+
+var missingProviderBinding = outcomeAuthorityGuardrails.Evaluate(new OutcomeAuthorityActivationRequest(
+    readyMarkers,
+    ProductionOutcomeAuthorityEnabled: true,
+    ProductionRngProviderEligible: true,
+    SigningProviderProductionEligible: true,
+    CertificationPackReady: true,
+    UsesSimulationOrTestProvider: false,
+    JurisdictionOmitted: true,
+    ManifestRequiresCertification: false,
+    CertificationOmitted: true,
+    HasFailedOrInconclusiveStatisticalValidation: false,
+    HasActiveEmergencyDisable: false,
+    HasExactOutcomeProviderBinding: false));
+
+if (missingProviderBinding.Allowed ||
+    !missingProviderBinding.Blockers.Contains("Game Manifest must bind exactly one Outcome Provider version."))
+{
+    throw new InvalidOperationException("Outcome Authority guardrails must fail closed when manifest provider binding is missing.");
+}
+
+var providerCapabilityMismatch = outcomeAuthorityGuardrails.Evaluate(new OutcomeAuthorityActivationRequest(
+    readyMarkers,
+    ProductionOutcomeAuthorityEnabled: true,
+    ProductionRngProviderEligible: true,
+    SigningProviderProductionEligible: true,
+    CertificationPackReady: true,
+    UsesSimulationOrTestProvider: false,
+    JurisdictionOmitted: true,
+    ManifestRequiresCertification: false,
+    CertificationOmitted: true,
+    HasFailedOrInconclusiveStatisticalValidation: false,
+    HasActiveEmergencyDisable: false,
+    OutcomeProviderCapabilitiesSatisfied: false));
+
+if (providerCapabilityMismatch.Allowed ||
+    !providerCapabilityMismatch.Blockers.Contains("Outcome Provider capabilities must satisfy the Game Manifest requirements."))
+{
+    throw new InvalidOperationException("Outcome Authority guardrails must fail closed on provider capability mismatch.");
+}
+
+var silentFallbackProvider = outcomeAuthorityGuardrails.Evaluate(new OutcomeAuthorityActivationRequest(
+    readyMarkers,
+    ProductionOutcomeAuthorityEnabled: true,
+    ProductionRngProviderEligible: true,
+    SigningProviderProductionEligible: true,
+    CertificationPackReady: true,
+    UsesSimulationOrTestProvider: false,
+    JurisdictionOmitted: true,
+    ManifestRequiresCertification: false,
+    CertificationOmitted: true,
+    HasFailedOrInconclusiveStatisticalValidation: false,
+    HasActiveEmergencyDisable: false,
+    SilentFallbackConfigured: true));
+
+if (silentFallbackProvider.Allowed ||
+    !silentFallbackProvider.Blockers.Contains("Silent fallback Outcome Providers are not allowed."))
+{
+    throw new InvalidOperationException("Outcome Authority guardrails must fail closed on silent fallback providers.");
+}
+
+var missingCertifiedCsprngRequirements = outcomeAuthorityGuardrails.Evaluate(new OutcomeAuthorityActivationRequest(
+    readyMarkers,
+    ProductionOutcomeAuthorityEnabled: true,
+    ProductionRngProviderEligible: true,
+    SigningProviderProductionEligible: true,
+    CertificationPackReady: true,
+    UsesSimulationOrTestProvider: false,
+    JurisdictionOmitted: true,
+    ManifestRequiresCertification: false,
+    CertificationOmitted: true,
+    HasFailedOrInconclusiveStatisticalValidation: false,
+    HasActiveEmergencyDisable: false,
+    CertifiedCsprngProviderRequirementsSatisfied: false));
+
+if (missingCertifiedCsprngRequirements.Allowed ||
+    !missingCertifiedCsprngRequirements.Blockers.Contains("Certified CSPRNG provider requirements must be satisfied."))
+{
+    throw new InvalidOperationException("Outcome Authority guardrails must fail closed when Certified CSPRNG requirements are missing.");
+}
+
+var missingEntropyEligibility = outcomeAuthorityGuardrails.Evaluate(new OutcomeAuthorityActivationRequest(
+    readyMarkers,
+    ProductionOutcomeAuthorityEnabled: true,
+    ProductionRngProviderEligible: true,
+    SigningProviderProductionEligible: true,
+    CertificationPackReady: true,
+    UsesSimulationOrTestProvider: false,
+    JurisdictionOmitted: true,
+    ManifestRequiresCertification: false,
+    CertificationOmitted: true,
+    HasFailedOrInconclusiveStatisticalValidation: false,
+    HasActiveEmergencyDisable: false,
+    EntropyProviderProductionEligible: false));
+
+if (missingEntropyEligibility.Allowed ||
+    !missingEntropyEligibility.Blockers.Contains("Entropy provider must be production eligible."))
+{
+    throw new InvalidOperationException("Outcome Authority guardrails must fail closed when entropy provider eligibility is missing.");
+}
+
+var missingDrbgEvidence = outcomeAuthorityGuardrails.Evaluate(new OutcomeAuthorityActivationRequest(
+    readyMarkers,
+    ProductionOutcomeAuthorityEnabled: true,
+    ProductionRngProviderEligible: true,
+    SigningProviderProductionEligible: true,
+    CertificationPackReady: true,
+    UsesSimulationOrTestProvider: false,
+    JurisdictionOmitted: true,
+    ManifestRequiresCertification: false,
+    CertificationOmitted: true,
+    HasFailedOrInconclusiveStatisticalValidation: false,
+    HasActiveEmergencyDisable: false,
+    DrbgHealthEvidenceSatisfied: false));
+
+if (missingDrbgEvidence.Allowed ||
+    !missingDrbgEvidence.Blockers.Contains("Certified CSPRNG startup, KAT, and continuous health evidence must be present."))
+{
+    throw new InvalidOperationException("Outcome Authority guardrails must fail closed when DRBG health evidence is missing.");
+}
+
+var missingSamplingCapabilities = outcomeAuthorityGuardrails.Evaluate(new OutcomeAuthorityActivationRequest(
+    readyMarkers,
+    ProductionOutcomeAuthorityEnabled: true,
+    ProductionRngProviderEligible: true,
+    SigningProviderProductionEligible: true,
+    CertificationPackReady: true,
+    UsesSimulationOrTestProvider: false,
+    JurisdictionOmitted: true,
+    ManifestRequiresCertification: false,
+    CertificationOmitted: true,
+    HasFailedOrInconclusiveStatisticalValidation: false,
+    HasActiveEmergencyDisable: false,
+    UnbiasedSamplingCapabilitiesSatisfied: false));
+
+if (missingSamplingCapabilities.Allowed ||
+    !missingSamplingCapabilities.Blockers.Contains("Certified CSPRNG provider requires unbiased sampling capabilities."))
+{
+    throw new InvalidOperationException("Outcome Authority guardrails must fail closed when unbiased sampling capabilities are missing.");
+}
+
+var rawSecretMaterialPersisted = outcomeAuthorityGuardrails.Evaluate(new OutcomeAuthorityActivationRequest(
+    readyMarkers,
+    ProductionOutcomeAuthorityEnabled: true,
+    ProductionRngProviderEligible: true,
+    SigningProviderProductionEligible: true,
+    CertificationPackReady: true,
+    UsesSimulationOrTestProvider: false,
+    JurisdictionOmitted: true,
+    ManifestRequiresCertification: false,
+    CertificationOmitted: true,
+    HasFailedOrInconclusiveStatisticalValidation: false,
+    HasActiveEmergencyDisable: false,
+    NoRawSecretMaterialPersisted: false));
+
+if (rawSecretMaterialPersisted.Allowed ||
+    !rawSecretMaterialPersisted.Blockers.Contains("Raw entropy, seed material, and DRBG state must never be persisted."))
+{
+    throw new InvalidOperationException("Outcome Authority guardrails must fail closed when raw secret material is persisted.");
+}
+
+var missingProvablyFairRequirements = outcomeAuthorityGuardrails.Evaluate(new OutcomeAuthorityActivationRequest(
+    readyMarkers,
+    ProductionOutcomeAuthorityEnabled: true,
+    ProductionRngProviderEligible: true,
+    SigningProviderProductionEligible: true,
+    CertificationPackReady: true,
+    UsesSimulationOrTestProvider: false,
+    JurisdictionOmitted: true,
+    ManifestRequiresCertification: false,
+    CertificationOmitted: true,
+    HasFailedOrInconclusiveStatisticalValidation: false,
+    HasActiveEmergencyDisable: false,
+    ProvablyFairProviderRequirementsSatisfied: false));
+
+if (missingProvablyFairRequirements.Allowed ||
+    !missingProvablyFairRequirements.Blockers.Contains("Provably Fair provider requirements must be satisfied."))
+{
+    throw new InvalidOperationException("Outcome Authority guardrails must fail closed when Provably Fair requirements are missing.");
+}
+
+var missingProvablyFairReceiptSupport = outcomeAuthorityGuardrails.Evaluate(new OutcomeAuthorityActivationRequest(
+    readyMarkers,
+    ProductionOutcomeAuthorityEnabled: true,
+    ProductionRngProviderEligible: true,
+    SigningProviderProductionEligible: true,
+    CertificationPackReady: true,
+    UsesSimulationOrTestProvider: false,
+    JurisdictionOmitted: true,
+    ManifestRequiresCertification: false,
+    CertificationOmitted: true,
+    HasFailedOrInconclusiveStatisticalValidation: false,
+    HasActiveEmergencyDisable: false,
+    ProvablyFairReceiptSupportAvailable: false));
+
+if (missingProvablyFairReceiptSupport.Allowed ||
+    !missingProvablyFairReceiptSupport.Blockers.Contains("Provably Fair receipt support must be available."))
+{
+    throw new InvalidOperationException("Outcome Authority guardrails must fail closed when Provably Fair receipt support is missing.");
+}
+
+var invalidProvablyFairNoncePolicy = outcomeAuthorityGuardrails.Evaluate(new OutcomeAuthorityActivationRequest(
+    readyMarkers,
+    ProductionOutcomeAuthorityEnabled: true,
+    ProductionRngProviderEligible: true,
+    SigningProviderProductionEligible: true,
+    CertificationPackReady: true,
+    UsesSimulationOrTestProvider: false,
+    JurisdictionOmitted: true,
+    ManifestRequiresCertification: false,
+    CertificationOmitted: true,
+    HasFailedOrInconclusiveStatisticalValidation: false,
+    HasActiveEmergencyDisable: false,
+    ProvablyFairNoncePolicyValid: false));
+
+if (invalidProvablyFairNoncePolicy.Allowed ||
+    !invalidProvablyFairNoncePolicy.Blockers.Contains("Provably Fair nonce policy must be valid."))
+{
+    throw new InvalidOperationException("Outcome Authority guardrails must fail closed when Provably Fair nonce policy is invalid.");
+}
+
+var provablyFairSeedLeakage = outcomeAuthorityGuardrails.Evaluate(new OutcomeAuthorityActivationRequest(
+    readyMarkers,
+    ProductionOutcomeAuthorityEnabled: true,
+    ProductionRngProviderEligible: true,
+    SigningProviderProductionEligible: true,
+    CertificationPackReady: true,
+    UsesSimulationOrTestProvider: false,
+    JurisdictionOmitted: true,
+    ManifestRequiresCertification: false,
+    CertificationOmitted: true,
+    HasFailedOrInconclusiveStatisticalValidation: false,
+    HasActiveEmergencyDisable: false,
+    ProvablyFairNoSeedLeakage: false));
+
+if (provablyFairSeedLeakage.Allowed ||
+    !provablyFairSeedLeakage.Blockers.Contains("Provably Fair governance must not leak server seed material."))
+{
+    throw new InvalidOperationException("Outcome Authority guardrails must fail closed when Provably Fair seed material leaks.");
+}
+
+var clientSeedService = new ProvablyFairClientSeedService();
+var canonicalClientSeed = clientSeedService.Canonicalize(
+    "  PLAYER-SEED-001  ",
+    new ProvablyFairClientSeedPolicy(
+        Required: true,
+        MaximumLength: 32,
+        ProvablyFairEncoding.Utf8,
+        ["non-empty"],
+        ["trim"]));
+if (canonicalClientSeed != "PLAYER-SEED-001")
+{
+    throw new InvalidOperationException("Provably Fair client seed canonicalization must be deterministic.");
+}
+
+AssertThrows(
+    () => clientSeedService.Canonicalize(
+        string.Empty,
+        new ProvablyFairClientSeedPolicy(true, 32, ProvablyFairEncoding.Utf8, ["non-empty"], ["trim"])),
+    "Provably Fair client seed policy must reject missing required seeds.");
+
+var fixedSeedMaterial = Enumerable.Range(1, 32).Select(value => (byte)value).ToArray();
+var fixedSeedCustody = new InMemoryProvablyFairSeedCustodyRepository(new FixedEntropyProvider(fixedSeedMaterial));
+var committedSeed = await fixedSeedCustody.GetOrCreateActiveSeedAsync(
+    "provably-fair:test",
+    "1.0.0",
+    "wager:commitment",
+    ProvablyFairHashAlgorithm.Sha256,
+    CancellationToken.None);
+var repeatedCommittedSeed = await fixedSeedCustody.GetOrCreateActiveSeedAsync(
+    "provably-fair:test",
+    "1.0.0",
+    "wager:commitment",
+    ProvablyFairHashAlgorithm.Sha256,
+    CancellationToken.None);
+if (committedSeed.CommitmentHash != repeatedCommittedSeed.CommitmentHash)
+{
+    throw new InvalidOperationException("Provably Fair commitment must be deterministic for an existing seed scope.");
+}
+
+var differentSeed = await new InMemoryProvablyFairSeedCustodyRepository(new FixedEntropyProvider([.. fixedSeedMaterial.Select(value => (byte)(value + 1))]))
+    .GetOrCreateActiveSeedAsync(
+        "provably-fair:test",
+        "1.0.0",
+        "wager:commitment",
+        ProvablyFairHashAlgorithm.Sha256,
+        CancellationToken.None);
+if (differentSeed.CommitmentHash == committedSeed.CommitmentHash)
+{
+    throw new InvalidOperationException("Different Provably Fair server seeds must produce different commitments.");
+}
+
+var nonceAllocator = new InMemoryProvablyFairNonceAllocator();
+var firstNonce = await nonceAllocator.AllocateAsync(
+    "provably-fair:test",
+    "1.0.0",
+    "wager:nonce",
+    ProvablyFairNonceScopeType.Wager,
+    "provider-wager",
+    CancellationToken.None);
+var secondNonce = await nonceAllocator.AllocateAsync(
+    "provably-fair:test",
+    "1.0.0",
+    "wager:nonce",
+    ProvablyFairNonceScopeType.Wager,
+    "provider-wager",
+    CancellationToken.None);
+if (firstNonce.Nonce != 1 || secondNonce.Nonce != 2)
+{
+    throw new InvalidOperationException("Provably Fair nonce allocation must be monotonic per scope.");
+}
+
+var provablyFairEvidence = new InMemoryProvablyFairRuntimeEvidenceRepository();
+var provablyFairRuntimeService = new ProvablyFairRuntimeService(
+    fixedSeedCustody,
+    nonceAllocator,
+    provablyFairEvidence,
+    clientSeedService);
+var provablyFairProvider = RuntimeProvider(
+    "provably-fair:test",
+    "1.0.0",
+    OutcomeProviderType.ProvablyFair,
+    supportsReceipt: true);
+var provablyFairRequest = RuntimeRequest(
+    "provably-fair-runtime-idempotency",
+    "wager:runtime",
+    provablyFairProvider.ProviderId,
+    provablyFairProvider.ProviderVersion,
+    OutcomeProviderType.ProvablyFair,
+    canonicalHash: "sha256:provably-fair-runtime-request");
+var provablyFairContext = new OutcomeProviderRuntimeContext(provablyFairRequest, provablyFairProvider);
+var provablyFairGenerated = await provablyFairRuntimeService.GenerateAsync(provablyFairContext, CancellationToken.None);
+if (provablyFairGenerated.Receipt.ReceiptHash.Contains("serverseed", StringComparison.OrdinalIgnoreCase) ||
+    provablyFairGenerated.Receipt.CanonicalVerificationPayload.Contains("serverSeed", StringComparison.OrdinalIgnoreCase))
+{
+    throw new InvalidOperationException("Provably Fair receipt must not expose unrevealed server seed material.");
+}
+
+var revealVerification = await provablyFairRuntimeService.VerifyRevealedReceiptAsync(
+    provablyFairGenerated.Receipt,
+    committedSeed.ProtectedSeedMaterial,
+    CancellationToken.None);
+if (revealVerification.Status != ProvablyFairRuntimeRevealStatus.Verified)
+{
+    throw new InvalidOperationException("Provably Fair post-reveal verification must recompute the commitment successfully.");
+}
+
+var tamperedSeed = Enumerable.Range(50, 32).Select(value => (byte)value).ToArray();
+var tamperedVerification = await provablyFairRuntimeService.VerifyRevealedReceiptAsync(
+    provablyFairGenerated.Receipt,
+    tamperedSeed,
+    CancellationToken.None);
+if (tamperedVerification.Status != ProvablyFairRuntimeRevealStatus.Failed)
+{
+    throw new InvalidOperationException("Provably Fair verification must fail for tampered reveal material.");
+}
+
+var provablyFairRuntime = new ProvablyFairOutcomeProviderRuntime(provablyFairRuntimeService);
+var productionProvablyFair = await provablyFairRuntime.CreateOutcomeAsync(
+    new OutcomeProviderRuntimeContext(
+        RuntimeRequest(
+            "provably-fair-production-disabled",
+            "wager:production-disabled",
+            provablyFairProvider.ProviderId,
+            provablyFairProvider.ProviderVersion,
+            OutcomeProviderType.ProvablyFair,
+            OutcomeRuntimeExecutionMode.Production,
+            "sha256:provably-fair-production-disabled"),
+        provablyFairProvider),
+    CancellationToken.None);
+if (productionProvablyFair.Status != OutcomeRuntimeStatus.ProductionDisabled)
+{
+    throw new InvalidOperationException("Provably Fair runtime must reject production mode.");
+}
+
+var provablyFairRepository = new InMemoryOutcomeRuntimeRequestRepository();
+var provablyFairOrchestration = new OutcomeProviderOrchestrationService(
+    runtimeResolver,
+    provablyFairRepository,
+    new InMemoryOutcomeRuntimeLockManager(),
+    [provablyFairRuntime]);
+var orchestratedProvablyFair = await provablyFairOrchestration.ExecuteAsync(
+    provablyFairRequest,
+    [provablyFairProvider],
+    CancellationToken.None);
+if (orchestratedProvablyFair.Status != OutcomeRuntimeStatus.Accepted ||
+    orchestratedProvablyFair.EvidenceReference is null ||
+    !orchestratedProvablyFair.EvidenceReference.StartsWith("placeholder:provably-fair-receipt:", StringComparison.Ordinal))
+{
+    throw new InvalidOperationException("Provably Fair runtime must generate an internal dry-run receipt reference.");
+}
+
+var duplicateProvablyFair = await provablyFairOrchestration.ExecuteAsync(
+    provablyFairRequest,
+    [provablyFairProvider],
+    CancellationToken.None);
+if (duplicateProvablyFair.Status != OutcomeRuntimeStatus.DuplicateReturned ||
+    duplicateProvablyFair.EvidenceReference != orchestratedProvablyFair.EvidenceReference)
+{
+    throw new InvalidOperationException("Provably Fair duplicate idempotent request must return the same receipt reference.");
+}
+
+AssertThrows(
+    () => provablyFairOrchestration.ExecuteAsync(
+        provablyFairRequest with { CanonicalRequestHash = "sha256:provably-fair-conflict" },
+        [provablyFairProvider],
+        CancellationToken.None).GetAwaiter().GetResult(),
+    "Provably Fair conflicting duplicate request must fail closed.");
+
 Console.WriteLine("GameEngine.Application.Tests PASS");
 
 static void AssertThrows(Action action, string message)
@@ -1350,4 +2195,24 @@ static void AssertThrows(Action action, string message)
     }
 
     throw new InvalidOperationException(message);
+}
+
+sealed class FixedEntropyProvider(byte[] fixedBytes) : IOsEntropyProvider
+{
+    public OsEntropyPlatform Platform => OsEntropyPlatform.Unsupported;
+
+    public bool IsSupported => true;
+
+    public void Fill(byte[] buffer)
+    {
+        for (var index = 0; index < buffer.Length; index++)
+        {
+            buffer[index] = fixedBytes[index % fixedBytes.Length];
+        }
+    }
+
+    public OsEntropyReadiness CheckReadiness()
+    {
+        return new OsEntropyReadiness(Platform, Supported: true, Ready: true, []);
+    }
 }

@@ -77,7 +77,8 @@ public sealed record GameManifestV1(
     DateTimeOffset? EffectiveTo,
     string SemanticVersion,
     string ContentHash,
-    SignatureMetadata SignatureMetadata);
+    SignatureMetadata SignatureMetadata,
+    OutcomeProviderManifestBinding? OutcomeProviderBinding = null);
 
 public sealed record CertificateReference(
     Guid? CertificateId,

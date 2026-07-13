@@ -40,6 +40,17 @@ function allMarkers(overrides = {}) {
     certificateSigningFrameworkReady: existsRegclass("game_engine.signing_providers") && existsRegclass("game_engine.certificate_signatures"),
     statisticalValidationReady: existsRegclass("game_engine.statistical_validation_results") && existsRegclass("game_engine.simulation_evidence"),
     operationalControlsReady: existsRegclass("game_engine.outcome_operational_controls") && existsRegclass("game_engine.outcome_custody_events"),
+    outcomeProviderRuntimeReady: existsRegclass("game_engine.outcome_runtime_requests") && existsRegclass("game_engine.outcome_runtime_attempts"),
+    outcomeRuntimeIdempotencyReady: existsRegclass("game_engine.outcome_runtime_requests"),
+    outcomeRuntimeAdvisoryLockingReady: queryScalar(`
+select exists (
+  select 1
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'game_engine'
+    and p.proname = 'try_outcome_runtime_advisory_lock'
+);
+`) === "t",
     ...overrides,
   };
 }
@@ -59,6 +70,9 @@ function evaluateActivation(request) {
     certificateSigningFrameworkReady: "Certificate signing framework marker is missing.",
     statisticalValidationReady: "Statistical validation marker is missing.",
     operationalControlsReady: "Operational controls marker is missing.",
+    outcomeProviderRuntimeReady: "Outcome Provider runtime marker is missing.",
+    outcomeRuntimeIdempotencyReady: "Outcome runtime idempotency marker is missing.",
+    outcomeRuntimeAdvisoryLockingReady: "Outcome runtime advisory locking marker is missing.",
   };
 
   for (const [marker, message] of Object.entries(markerLabels)) {
@@ -81,6 +95,90 @@ function evaluateActivation(request) {
 
   if (!request.certificationPackReady) {
     blockers.push("Certification pack must be certification-ready.");
+  }
+
+  if (!request.hasExactOutcomeProviderBinding) {
+    blockers.push("Game Manifest must bind exactly one Outcome Provider version.");
+  }
+
+  if (!request.outcomeProviderActiveAndEligible) {
+    blockers.push("Manifest-bound Outcome Provider must be active and eligible.");
+  }
+
+  if (!request.outcomeProviderCapabilitiesSatisfied) {
+    blockers.push("Outcome Provider capabilities must satisfy the Game Manifest requirements.");
+  }
+
+  if (request.silentFallbackConfigured) {
+    blockers.push("Silent fallback Outcome Providers are not allowed.");
+  }
+
+  if (request.usesSimulationOrTestOutcomeProvider) {
+    blockers.push("Simulation/test Outcome Providers cannot be production authority.");
+  }
+
+  if (!request.certifiedCsprngProviderRequirementsSatisfied) {
+    blockers.push("Certified CSPRNG provider requirements must be satisfied.");
+  }
+
+  if (!request.entropyProviderProductionEligible) {
+    blockers.push("Entropy provider must be production eligible.");
+  }
+
+  if (!request.drbgHealthEvidenceSatisfied) {
+    blockers.push("Certified CSPRNG startup, KAT, and continuous health evidence must be present.");
+  }
+
+  if (!request.unbiasedSamplingCapabilitiesSatisfied) {
+    blockers.push("Certified CSPRNG provider requires unbiased sampling capabilities.");
+  }
+
+  if (!request.noRawSecretMaterialPersisted) {
+    blockers.push("Raw entropy, seed material, and DRBG state must never be persisted.");
+  }
+
+  if (!request.provablyFairProviderRequirementsSatisfied) {
+    blockers.push("Provably Fair provider requirements must be satisfied.");
+  }
+
+  if (!request.provablyFairCommitAlgorithmDefined) {
+    blockers.push("Provably Fair commit algorithm must be defined.");
+  }
+
+  if (!request.provablyFairVerificationAlgorithmDefined) {
+    blockers.push("Provably Fair verification algorithm must be defined.");
+  }
+
+  if (!request.provablyFairReceiptSupportAvailable) {
+    blockers.push("Provably Fair receipt support must be available.");
+  }
+
+  if (!request.provablyFairNoncePolicyValid) {
+    blockers.push("Provably Fair nonce policy must be valid.");
+  }
+
+  if (!request.provablyFairCommitmentPolicyValid) {
+    blockers.push("Provably Fair commitment policy must be valid.");
+  }
+
+  if (!request.provablyFairNoSeedLeakage) {
+    blockers.push("Provably Fair governance must not leak server seed material.");
+  }
+
+  if (!request.outcomeProviderRuntimeReady) {
+    blockers.push("Outcome Provider runtime must be ready.");
+  }
+
+  if (!request.outcomeRuntimeIdempotencyConfigured) {
+    blockers.push("Outcome runtime durable idempotency must be configured.");
+  }
+
+  if (!request.outcomeRuntimeAdvisoryLockingConfigured) {
+    blockers.push("Outcome runtime advisory locking must be configured.");
+  }
+
+  if (!request.productionOutcomeGenerationDisabled) {
+    blockers.push("Production outcome generation must remain disabled until activation is explicitly approved.");
   }
 
   if (request.usesSimulationOrTestProvider) {
@@ -123,6 +221,27 @@ function baseRequest(overrides = {}) {
     certificationOmitted: true,
     hasFailedOrInconclusiveStatisticalValidation: false,
     hasActiveEmergencyDisable: false,
+    hasExactOutcomeProviderBinding: true,
+    outcomeProviderActiveAndEligible: true,
+    outcomeProviderCapabilitiesSatisfied: true,
+    silentFallbackConfigured: false,
+    usesSimulationOrTestOutcomeProvider: false,
+    certifiedCsprngProviderRequirementsSatisfied: true,
+    entropyProviderProductionEligible: true,
+    drbgHealthEvidenceSatisfied: true,
+    unbiasedSamplingCapabilitiesSatisfied: true,
+    noRawSecretMaterialPersisted: true,
+    provablyFairProviderRequirementsSatisfied: true,
+    provablyFairCommitAlgorithmDefined: true,
+    provablyFairVerificationAlgorithmDefined: true,
+    provablyFairReceiptSupportAvailable: true,
+    provablyFairNoncePolicyValid: true,
+    provablyFairCommitmentPolicyValid: true,
+    provablyFairNoSeedLeakage: true,
+    outcomeProviderRuntimeReady: true,
+    outcomeRuntimeIdempotencyConfigured: true,
+    outcomeRuntimeAdvisoryLockingConfigured: true,
+    productionOutcomeGenerationDisabled: true,
     ...overrides,
   };
 }
@@ -179,6 +298,150 @@ const failedStatistics = evaluateActivation(baseRequest({
   hasFailedOrInconclusiveStatisticalValidation: true,
 }));
 addCheck("failed statistical validation fails closed", !failedStatistics.allowed, { blockers: failedStatistics.blockers });
+
+const missingProviderBinding = evaluateActivation(baseRequest({
+  hasExactOutcomeProviderBinding: false,
+}));
+addCheck("missing provider binding fails closed", !missingProviderBinding.allowed, { blockers: missingProviderBinding.blockers });
+
+const inactiveProvider = evaluateActivation(baseRequest({
+  outcomeProviderActiveAndEligible: false,
+}));
+addCheck("inactive or ineligible provider fails closed", !inactiveProvider.allowed, { blockers: inactiveProvider.blockers });
+
+const unsatisfiedProviderCapabilities = evaluateActivation(baseRequest({
+  outcomeProviderCapabilitiesSatisfied: false,
+}));
+addCheck("provider capability mismatch fails closed", !unsatisfiedProviderCapabilities.allowed, { blockers: unsatisfiedProviderCapabilities.blockers });
+
+const silentFallback = evaluateActivation(baseRequest({
+  silentFallbackConfigured: true,
+}));
+addCheck("silent fallback provider fails closed", !silentFallback.allowed, { blockers: silentFallback.blockers });
+
+const simulationOutcomeProvider = evaluateActivation(baseRequest({
+  usesSimulationOrTestOutcomeProvider: true,
+}));
+addCheck("simulation/test outcome provider fails closed", !simulationOutcomeProvider.allowed, { blockers: simulationOutcomeProvider.blockers });
+
+const missingCertifiedCsprngRequirements = evaluateActivation(baseRequest({
+  certifiedCsprngProviderRequirementsSatisfied: false,
+}));
+addCheck("missing Certified CSPRNG requirements fail closed", !missingCertifiedCsprngRequirements.allowed, {
+  blockers: missingCertifiedCsprngRequirements.blockers,
+});
+
+const missingEntropyEligibility = evaluateActivation(baseRequest({
+  entropyProviderProductionEligible: false,
+}));
+addCheck("missing entropy provider eligibility fails closed", !missingEntropyEligibility.allowed, {
+  blockers: missingEntropyEligibility.blockers,
+});
+
+const missingDrbgHealthEvidence = evaluateActivation(baseRequest({
+  drbgHealthEvidenceSatisfied: false,
+}));
+addCheck("missing DRBG health evidence fails closed", !missingDrbgHealthEvidence.allowed, {
+  blockers: missingDrbgHealthEvidence.blockers,
+});
+
+const missingSamplingCapabilities = evaluateActivation(baseRequest({
+  unbiasedSamplingCapabilitiesSatisfied: false,
+}));
+addCheck("missing unbiased sampling capabilities fail closed", !missingSamplingCapabilities.allowed, {
+  blockers: missingSamplingCapabilities.blockers,
+});
+
+const rawSecretPersisted = evaluateActivation(baseRequest({
+  noRawSecretMaterialPersisted: false,
+}));
+addCheck("raw secret material persistence fails closed", !rawSecretPersisted.allowed, {
+  blockers: rawSecretPersisted.blockers,
+});
+
+const missingProvablyFairRequirements = evaluateActivation(baseRequest({
+  provablyFairProviderRequirementsSatisfied: false,
+}));
+addCheck("missing Provably Fair requirements fail closed", !missingProvablyFairRequirements.allowed, {
+  blockers: missingProvablyFairRequirements.blockers,
+});
+
+const missingCommitAlgorithm = evaluateActivation(baseRequest({
+  provablyFairCommitAlgorithmDefined: false,
+}));
+addCheck("missing Provably Fair commit algorithm fails closed", !missingCommitAlgorithm.allowed, {
+  blockers: missingCommitAlgorithm.blockers,
+});
+
+const missingVerificationAlgorithm = evaluateActivation(baseRequest({
+  provablyFairVerificationAlgorithmDefined: false,
+}));
+addCheck("missing Provably Fair verification algorithm fails closed", !missingVerificationAlgorithm.allowed, {
+  blockers: missingVerificationAlgorithm.blockers,
+});
+
+const missingReceiptSupport = evaluateActivation(baseRequest({
+  provablyFairReceiptSupportAvailable: false,
+}));
+addCheck("missing Provably Fair receipt support fails closed", !missingReceiptSupport.allowed, {
+  blockers: missingReceiptSupport.blockers,
+});
+
+const invalidNoncePolicy = evaluateActivation(baseRequest({
+  provablyFairNoncePolicyValid: false,
+}));
+addCheck("invalid Provably Fair nonce policy fails closed", !invalidNoncePolicy.allowed, {
+  blockers: invalidNoncePolicy.blockers,
+});
+
+const invalidCommitmentPolicy = evaluateActivation(baseRequest({
+  provablyFairCommitmentPolicyValid: false,
+}));
+addCheck("invalid Provably Fair commitment policy fails closed", !invalidCommitmentPolicy.allowed, {
+  blockers: invalidCommitmentPolicy.blockers,
+});
+
+const provablyFairSeedLeakage = evaluateActivation(baseRequest({
+  provablyFairNoSeedLeakage: false,
+}));
+addCheck("Provably Fair seed leakage fails closed", !provablyFairSeedLeakage.allowed, {
+  blockers: provablyFairSeedLeakage.blockers,
+});
+
+const missingRuntimeMarker = evaluateActivation(baseRequest({
+  markers: allMarkers({ outcomeProviderRuntimeReady: false }),
+}));
+addCheck("missing Outcome Provider runtime marker fails closed", !missingRuntimeMarker.allowed, {
+  blockers: missingRuntimeMarker.blockers,
+});
+
+const missingRuntimeReady = evaluateActivation(baseRequest({
+  outcomeProviderRuntimeReady: false,
+}));
+addCheck("missing Outcome Provider runtime readiness fails closed", !missingRuntimeReady.allowed, {
+  blockers: missingRuntimeReady.blockers,
+});
+
+const missingRuntimeIdempotency = evaluateActivation(baseRequest({
+  outcomeRuntimeIdempotencyConfigured: false,
+}));
+addCheck("missing outcome runtime idempotency fails closed", !missingRuntimeIdempotency.allowed, {
+  blockers: missingRuntimeIdempotency.blockers,
+});
+
+const missingRuntimeLocking = evaluateActivation(baseRequest({
+  outcomeRuntimeAdvisoryLockingConfigured: false,
+}));
+addCheck("missing outcome runtime advisory locking fails closed", !missingRuntimeLocking.allowed, {
+  blockers: missingRuntimeLocking.blockers,
+});
+
+const productionGenerationEnabled = evaluateActivation(baseRequest({
+  productionOutcomeGenerationDisabled: false,
+}));
+addCheck("production outcome generation enabled fails closed", !productionGenerationEnabled.allowed, {
+  blockers: productionGenerationEnabled.blockers,
+});
 
 const emergencyControlId = randomUUID();
 const emergencyTarget = randomUUID();

@@ -31,6 +31,111 @@ public sealed class OutcomeAuthorityActivationGuardrailService
             blockers.Add("Certification pack must be certification-ready.");
         }
 
+        if (!request.HasExactOutcomeProviderBinding)
+        {
+            blockers.Add("Game Manifest must bind exactly one Outcome Provider version.");
+        }
+
+        if (!request.OutcomeProviderActiveAndEligible)
+        {
+            blockers.Add("Manifest-bound Outcome Provider must be active and eligible.");
+        }
+
+        if (!request.OutcomeProviderCapabilitiesSatisfied)
+        {
+            blockers.Add("Outcome Provider capabilities must satisfy the Game Manifest requirements.");
+        }
+
+        if (request.SilentFallbackConfigured)
+        {
+            blockers.Add("Silent fallback Outcome Providers are not allowed.");
+        }
+
+        if (request.UsesSimulationOrTestOutcomeProvider)
+        {
+            blockers.Add("Simulation/test Outcome Providers cannot be production authority.");
+        }
+
+        if (!request.CertifiedCsprngProviderRequirementsSatisfied)
+        {
+            blockers.Add("Certified CSPRNG provider requirements must be satisfied.");
+        }
+
+        if (!request.EntropyProviderProductionEligible)
+        {
+            blockers.Add("Entropy provider must be production eligible.");
+        }
+
+        if (!request.DrbgHealthEvidenceSatisfied)
+        {
+            blockers.Add("Certified CSPRNG startup, KAT, and continuous health evidence must be present.");
+        }
+
+        if (!request.UnbiasedSamplingCapabilitiesSatisfied)
+        {
+            blockers.Add("Certified CSPRNG provider requires unbiased sampling capabilities.");
+        }
+
+        if (!request.NoRawSecretMaterialPersisted)
+        {
+            blockers.Add("Raw entropy, seed material, and DRBG state must never be persisted.");
+        }
+
+        if (!request.ProvablyFairProviderRequirementsSatisfied)
+        {
+            blockers.Add("Provably Fair provider requirements must be satisfied.");
+        }
+
+        if (!request.ProvablyFairCommitAlgorithmDefined)
+        {
+            blockers.Add("Provably Fair commit algorithm must be defined.");
+        }
+
+        if (!request.ProvablyFairVerificationAlgorithmDefined)
+        {
+            blockers.Add("Provably Fair verification algorithm must be defined.");
+        }
+
+        if (!request.ProvablyFairReceiptSupportAvailable)
+        {
+            blockers.Add("Provably Fair receipt support must be available.");
+        }
+
+        if (!request.ProvablyFairNoncePolicyValid)
+        {
+            blockers.Add("Provably Fair nonce policy must be valid.");
+        }
+
+        if (!request.ProvablyFairCommitmentPolicyValid)
+        {
+            blockers.Add("Provably Fair commitment policy must be valid.");
+        }
+
+        if (!request.ProvablyFairNoSeedLeakage)
+        {
+            blockers.Add("Provably Fair governance must not leak server seed material.");
+        }
+
+        if (!request.OutcomeProviderRuntimeReady)
+        {
+            blockers.Add("Outcome Provider runtime must be ready.");
+        }
+
+        if (!request.OutcomeRuntimeIdempotencyConfigured)
+        {
+            blockers.Add("Outcome runtime durable idempotency must be configured.");
+        }
+
+        if (!request.OutcomeRuntimeAdvisoryLockingConfigured)
+        {
+            blockers.Add("Outcome runtime advisory locking must be configured.");
+        }
+
+        if (!request.ProductionOutcomeGenerationDisabled)
+        {
+            blockers.Add("Production outcome generation must remain disabled until activation is explicitly approved.");
+        }
+
         if (request.UsesSimulationOrTestProvider)
         {
             blockers.Add("Simulation and test providers cannot be production authority.");
@@ -119,6 +224,21 @@ public sealed class OutcomeAuthorityActivationGuardrailService
         if (!markers.OperationalControlsReady)
         {
             blockers.Add("Operational controls marker is missing.");
+        }
+
+        if (!markers.OutcomeProviderRuntimeReady)
+        {
+            blockers.Add("Outcome Provider runtime marker is missing.");
+        }
+
+        if (!markers.OutcomeRuntimeIdempotencyReady)
+        {
+            blockers.Add("Outcome runtime idempotency marker is missing.");
+        }
+
+        if (!markers.OutcomeRuntimeAdvisoryLockingReady)
+        {
+            blockers.Add("Outcome runtime advisory locking marker is missing.");
         }
     }
 }
