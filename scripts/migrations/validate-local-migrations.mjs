@@ -197,6 +197,19 @@ const requiredTables = [
   "settlement_service.settlement_runs",
   "settlement_service.settlement_records",
   "settlement_service.settlement_ledger_effects",
+  "settlement_service.settlement_requests",
+  "settlement_service.settlement_request_attempts",
+  "settlement_service.authoritative_settlement_records",
+  "settlement_service.settlement_execution_attempts",
+  "settlement_service.financial_instructions",
+  "settlement_service.financial_instruction_attempts",
+  "settlement_service.financial_instruction_execution_attempts",
+  "settlement_service.recovery_events",
+  "settlement_service.reconciliation_events",
+  "settlement_service.resettlement_requests",
+  "settlement_service.resettlement_records",
+  "settlement_service.resettlement_events",
+  "settlement_service.settlement_promotion_rehearsals",
   "platform.organizations",
   "platform.tenants",
   "platform.brands",
@@ -664,6 +677,38 @@ addCheck("settlement_ledger_effects_idempotency_unique", uniqueIndexExists("sett
 addCheck("settlement_ledger_effects_run_id_index", indexExists("settlement_service", "settlement_ledger_effects", "idx_settlement_ledger_effects_run_id"));
 addCheck("settlement_ledger_effects_record_id_index", indexExists("settlement_service", "settlement_ledger_effects", "idx_settlement_ledger_effects_record_id"));
 addCheck("settlement_ledger_effects_ticket_draw_index", indexExists("settlement_service", "settlement_ledger_effects", "idx_settlement_ledger_effects_ticket_draw"));
+addCheck("settlement_requests_idempotency_unique", uniqueIndexExists("settlement_service", "settlement_requests", "idempotency_key"));
+addCheck("settlement_requests_input_index", indexExists("settlement_service", "settlement_requests", "idx_settlement_requests_input"));
+addCheck("settlement_requests_math_certificate_index", indexExists("settlement_service", "settlement_requests", "idx_settlement_requests_math_certificate"));
+addCheck("settlement_requests_ticket_line_index", indexExists("settlement_service", "settlement_requests", "idx_settlement_requests_ticket_line"));
+addCheck("settlement_requests_context_reference_index", indexExists("settlement_service", "settlement_requests", "idx_settlement_requests_context_reference"));
+addCheck("settlement_request_attempts_request_index", indexExists("settlement_service", "settlement_request_attempts", "idx_settlement_request_attempts_request"));
+addCheck("authoritative_settlement_records_request_unique", uniqueIndexExists("settlement_service", "authoritative_settlement_records", "settlement_request_id"));
+addCheck("authoritative_settlement_records_hash_unique", uniqueIndexExists("settlement_service", "authoritative_settlement_records", "canonical_settlement_hash"));
+addCheck("authoritative_settlement_records_idempotency_unique", uniqueIndexExists("settlement_service", "authoritative_settlement_records", "idempotency_key"));
+addCheck("authoritative_settlement_records_input_index", indexExists("settlement_service", "authoritative_settlement_records", "idx_authoritative_settlement_records_input"));
+addCheck("authoritative_settlement_records_math_certificate_index", indexExists("settlement_service", "authoritative_settlement_records", "idx_authoritative_settlement_records_math_certificate"));
+addCheck("authoritative_settlement_records_outcome_certificate_index", indexExists("settlement_service", "authoritative_settlement_records", "idx_authoritative_settlement_records_outcome_certificate"));
+addCheck("authoritative_settlement_records_ticket_line_index", indexExists("settlement_service", "authoritative_settlement_records", "idx_authoritative_settlement_records_ticket_line"));
+addCheck("settlement_execution_attempts_request_index", indexExists("settlement_service", "settlement_execution_attempts", "idx_settlement_execution_attempts_request"));
+addCheck("financial_instructions_payload_hash_unique", uniqueIndexExists("settlement_service", "financial_instructions", "canonical_payload_hash"));
+addCheck("financial_instructions_idempotency_unique", uniqueIndexExists("settlement_service", "financial_instructions", "idempotency_key"));
+addCheck("financial_instructions_settlement_index", indexExists("settlement_service", "financial_instructions", "idx_financial_instructions_settlement"));
+addCheck("financial_instructions_request_index", indexExists("settlement_service", "financial_instructions", "idx_financial_instructions_request"));
+addCheck("financial_instructions_type_status_index", indexExists("settlement_service", "financial_instructions", "idx_financial_instructions_type_status"));
+addCheck("financial_instructions_target_service_index", indexExists("settlement_service", "financial_instructions", "idx_financial_instructions_target_service"));
+addCheck("financial_instruction_attempts_settlement_index", indexExists("settlement_service", "financial_instruction_attempts", "idx_financial_instruction_attempts_settlement"));
+addCheck("financial_instruction_execution_terminal_unique", indexExists("settlement_service", "financial_instruction_execution_attempts", "idx_financial_instruction_execution_terminal"));
+addCheck("financial_instruction_execution_target_idempotency_unique", indexExists("settlement_service", "financial_instruction_execution_attempts", "idx_financial_instruction_execution_target_idempotency"));
+addCheck("financial_instruction_execution_settlement_index", indexExists("settlement_service", "financial_instruction_execution_attempts", "idx_financial_instruction_execution_settlement"));
+addCheck("financial_instruction_execution_status_index", indexExists("settlement_service", "financial_instruction_execution_attempts", "idx_financial_instruction_execution_status"));
+addCheck("recovery_events_settlement_index", indexExists("settlement_service", "recovery_events", "idx_recovery_events_settlement"));
+addCheck("recovery_events_instruction_index", indexExists("settlement_service", "recovery_events", "idx_recovery_events_instruction"));
+addCheck("recovery_events_state_index", indexExists("settlement_service", "recovery_events", "idx_recovery_events_state"));
+addCheck("reconciliation_events_settlement_index", indexExists("settlement_service", "reconciliation_events", "idx_reconciliation_events_settlement"));
+addCheck("reconciliation_events_instruction_index", indexExists("settlement_service", "reconciliation_events", "idx_reconciliation_events_instruction"));
+addCheck("reconciliation_events_status_index", indexExists("settlement_service", "reconciliation_events", "idx_reconciliation_events_status"));
+addCheck("reconciliation_events_target_idempotency_index", indexExists("settlement_service", "reconciliation_events", "idx_reconciliation_events_target_idempotency"));
 addCheck("cashier_transactions_status_index", indexExists("public", "cashier_transactions", "cashier_transactions_status_idx"));
 addCheck("financial_ledger_entries_idempotency_unique", uniqueIndexExists("public", "financial_ledger_entries", "idempotency_key"));
 addCheck("outbox_events_aggregate_index", indexExists("public", "outbox_events", "outbox_events_aggregate_idx"));
@@ -989,6 +1034,45 @@ addCheck("settlement_records_update_trigger", triggerExists("settlement_service"
 addCheck("settlement_records_delete_trigger", triggerExists("settlement_service", "settlement_records", "trg_prevent_settlement_record_delete"));
 addCheck("settlement_ledger_effects_update_trigger", triggerExists("settlement_service", "settlement_ledger_effects", "trg_prevent_settlement_ledger_effect_update"));
 addCheck("settlement_ledger_effects_delete_trigger", triggerExists("settlement_service", "settlement_ledger_effects", "trg_prevent_settlement_ledger_effect_delete"));
+addCheck("settlement_requests_update_trigger", triggerExists("settlement_service", "settlement_requests", "trg_prevent_settlement_request_update"));
+addCheck("settlement_requests_delete_trigger", triggerExists("settlement_service", "settlement_requests", "trg_prevent_settlement_request_delete"));
+addCheck("settlement_request_attempts_update_trigger", triggerExists("settlement_service", "settlement_request_attempts", "trg_prevent_settlement_request_attempt_update"));
+addCheck("settlement_request_attempts_delete_trigger", triggerExists("settlement_service", "settlement_request_attempts", "trg_prevent_settlement_request_attempt_delete"));
+addCheck("authoritative_settlement_records_update_trigger", triggerExists("settlement_service", "authoritative_settlement_records", "trg_prevent_authoritative_settlement_record_update"));
+addCheck("authoritative_settlement_records_delete_trigger", triggerExists("settlement_service", "authoritative_settlement_records", "trg_prevent_authoritative_settlement_record_delete"));
+addCheck("settlement_execution_attempts_update_trigger", triggerExists("settlement_service", "settlement_execution_attempts", "trg_prevent_settlement_execution_attempt_update"));
+addCheck("settlement_execution_attempts_delete_trigger", triggerExists("settlement_service", "settlement_execution_attempts", "trg_prevent_settlement_execution_attempt_delete"));
+addCheck("financial_instructions_update_trigger", triggerExists("settlement_service", "financial_instructions", "trg_prevent_financial_instruction_update"));
+addCheck("financial_instructions_delete_trigger", triggerExists("settlement_service", "financial_instructions", "trg_prevent_financial_instruction_delete"));
+addCheck("financial_instruction_attempts_update_trigger", triggerExists("settlement_service", "financial_instruction_attempts", "trg_prevent_financial_instruction_attempt_update"));
+addCheck("financial_instruction_attempts_delete_trigger", triggerExists("settlement_service", "financial_instruction_attempts", "trg_prevent_financial_instruction_attempt_delete"));
+addCheck("financial_instruction_execution_attempts_update_trigger", triggerExists("settlement_service", "financial_instruction_execution_attempts", "trg_prevent_financial_instruction_execution_attempt_update"));
+addCheck("financial_instruction_execution_attempts_delete_trigger", triggerExists("settlement_service", "financial_instruction_execution_attempts", "trg_prevent_financial_instruction_execution_attempt_delete"));
+addCheck("recovery_events_update_trigger", triggerExists("settlement_service", "recovery_events", "trg_prevent_recovery_event_update"));
+addCheck("recovery_events_delete_trigger", triggerExists("settlement_service", "recovery_events", "trg_prevent_recovery_event_delete"));
+addCheck("reconciliation_events_update_trigger", triggerExists("settlement_service", "reconciliation_events", "trg_prevent_reconciliation_event_update"));
+addCheck("reconciliation_events_delete_trigger", triggerExists("settlement_service", "reconciliation_events", "trg_prevent_reconciliation_event_delete"));
+addCheck("resettlement_requests_original_index", indexExists("settlement_service", "resettlement_requests", "idx_resettlement_requests_original"));
+addCheck("resettlement_requests_corrected_input_index", indexExists("settlement_service", "resettlement_requests", "idx_resettlement_requests_corrected_input"));
+addCheck("resettlement_requests_hash_index", indexExists("settlement_service", "resettlement_requests", "idx_resettlement_requests_hash"));
+addCheck("resettlement_records_original_index", indexExists("settlement_service", "resettlement_records", "idx_resettlement_records_original"));
+addCheck("resettlement_records_reversal_index", indexExists("settlement_service", "resettlement_records", "idx_resettlement_records_reversal"));
+addCheck("resettlement_records_corrected_index", indexExists("settlement_service", "resettlement_records", "idx_resettlement_records_corrected"));
+addCheck("resettlement_records_state_index", indexExists("settlement_service", "resettlement_records", "idx_resettlement_records_state"));
+addCheck("resettlement_events_request_index", indexExists("settlement_service", "resettlement_events", "idx_resettlement_events_request"));
+addCheck("resettlement_events_state_index", indexExists("settlement_service", "resettlement_events", "idx_resettlement_events_state"));
+addCheck("resettlement_requests_update_trigger", triggerExists("settlement_service", "resettlement_requests", "trg_prevent_resettlement_request_update"));
+addCheck("resettlement_requests_delete_trigger", triggerExists("settlement_service", "resettlement_requests", "trg_prevent_resettlement_request_delete"));
+addCheck("resettlement_records_update_trigger", triggerExists("settlement_service", "resettlement_records", "trg_prevent_resettlement_record_update"));
+addCheck("resettlement_records_delete_trigger", triggerExists("settlement_service", "resettlement_records", "trg_prevent_resettlement_record_delete"));
+addCheck("resettlement_events_update_trigger", triggerExists("settlement_service", "resettlement_events", "trg_prevent_resettlement_event_update"));
+addCheck("resettlement_events_delete_trigger", triggerExists("settlement_service", "resettlement_events", "trg_prevent_resettlement_event_delete"));
+addCheck("settlement_promotion_rehearsals_evidence_unique", uniqueIndexExists("settlement_service", "settlement_promotion_rehearsals", "canonical_evidence_hash"));
+addCheck("settlement_promotion_rehearsals_mode_index", indexExists("settlement_service", "settlement_promotion_rehearsals", "idx_settlement_promotion_rehearsals_mode"));
+addCheck("settlement_promotion_rehearsals_readiness_index", indexExists("settlement_service", "settlement_promotion_rehearsals", "idx_settlement_promotion_rehearsals_readiness"));
+addCheck("settlement_promotion_rehearsals_result_index", indexExists("settlement_service", "settlement_promotion_rehearsals", "idx_settlement_promotion_rehearsals_result"));
+addCheck("settlement_promotion_rehearsals_update_trigger", triggerExists("settlement_service", "settlement_promotion_rehearsals", "trg_prevent_settlement_promotion_rehearsal_update"));
+addCheck("settlement_promotion_rehearsals_delete_trigger", triggerExists("settlement_service", "settlement_promotion_rehearsals", "trg_prevent_settlement_promotion_rehearsal_delete"));
 addCheck("auth_append_only_triggers_deferred_documented", true, {
   reason: "Auth Service draft documents trigger enforcement as deferred pending production DBA review.",
 });

@@ -439,6 +439,72 @@
       "reason": "Adds append-only canonical SettlementInput handoff artifacts derived only from Math Evaluation Certificates without settlement, ledger, wallet, commission, tax, or cashier effects."
     },
     {
+      "id": "048_add_settlement_input_ingestion",
+      "path": "scripts/migrations/local/048_add_settlement_input_ingestion.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "settlement_service",
+        "game_engine"
+      ],
+      "reason": "Adds durable SettlementInput ingestion requests and append-only attempt evidence for binding Math Authority handoff artifacts to accepted wager financial context without settlement execution or financial effects."
+    },
+    {
+      "id": "049_add_authoritative_settlement_execution",
+      "path": "scripts/migrations/local/049_add_authoritative_settlement_execution.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "settlement_service",
+        "game_engine"
+      ],
+      "reason": "Adds append-only authoritative SettlementRecords and execution attempt evidence derived only from canonical SettlementInput ingestion requests without ledger, credit, commission, tax, cashier, or reconciliation effects."
+    },
+    {
+      "id": "050_add_financial_instruction_state_machine",
+      "path": "scripts/migrations/local/050_add_financial_instruction_state_machine.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "settlement_service"
+      ],
+      "reason": "Adds append-only Financial Instruction state machine artifacts generated from authoritative SettlementRecords while Ledger and Credit Wallet posting remain disabled."
+    },
+    {
+      "id": "051_add_financial_instruction_execution",
+      "path": "scripts/migrations/local/051_add_financial_instruction_execution.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "settlement_service"
+      ],
+      "reason": "Adds append-only Financial Instruction execution evidence for idempotent Ledger and Credit Wallet target calls without distributed transactions, commissions, taxes, cashier logic, or reconciliation."
+    },
+    {
+      "id": "052_add_settlement_recovery_reconciliation",
+      "path": "scripts/migrations/local/052_add_settlement_recovery_reconciliation.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "settlement_service"
+      ],
+      "reason": "Adds append-only Settlement recovery, resume, unknown-result verification, and instruction-level reconciliation evidence without accounting reconciliation, commissions, taxes, cashier logic, or distributed transactions."
+    },
+    {
+      "id": "053_add_resettlement_reversal_chains",
+      "path": "scripts/migrations/local/053_add_resettlement_reversal_chains.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "settlement_service",
+        "game_engine"
+      ],
+      "reason": "Adds append-only resettlement requests, compensating reversal/correction chain records, and lifecycle evidence without mutating original SettlementInput-backed records or producing cashier, tax, commission, or accounting reconciliation effects."
+    },
+    {
+      "id": "054_add_settlement_authority_promotion_rehearsals",
+      "path": "scripts/migrations/local/054_add_settlement_authority_promotion_rehearsals.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "settlement_service"
+      ],
+      "reason": "Adds append-only Settlement Authority promotion dry-run evidence and guardrail rehearsal records while production SERVICE authority remains disabled."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",
