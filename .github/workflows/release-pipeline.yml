@@ -134,7 +134,7 @@ jobs:
           npm run qa:container-network-hardening
 
       - name: Source container security scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -233,7 +233,7 @@ jobs:
 
       - name: Container image scan
         if: github.event_name == 'pull_request' || !(github.ref_protected || startsWith(github.ref, 'refs/tags/v'))
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:sha-${{ github.sha }}
           format: table
