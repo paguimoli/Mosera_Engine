@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { checkAuthRateLimit } from "@/src/domains/auth/auth-rate-limit";
-import { loginController } from "@/src/domains/auth/auth.controller";
 import { loginWithAuthService } from "@/src/domains/auth/auth-service.client";
-import { isAuthServiceProviderEnabled } from "@/src/domains/auth/auth-provider";
 import type { AuthRequestMetadata } from "@/src/domains/auth/auth.types";
 
 export const runtime = "nodejs";
@@ -70,31 +68,20 @@ export async function POST(request: Request) {
 
   if (!rateLimit.allowed) return rateLimitedResponse(rateLimit.retryAfterSeconds);
 
-  if (isAuthServiceProviderEnabled()) {
-    const password =
-      typeof (body as { password?: unknown })?.password === "string"
-        ? (body as { password: string }).password
-        : "";
-    const result = await loginWithAuthService({
-      username: username ?? "",
-      password,
-    });
-
-    if (!result.success) {
-      return loginFailureResponse(result.error);
-    }
-
-    return NextResponse.json(result);
-  }
-
-  const result = await loginController({
-    body,
-    metadata: getRequestMetadata(request),
+  const password =
+    typeof (body as { password?: unknown })?.password === "string"
+      ? (body as { password: string }).password
+      : "";
+  const metadata = getRequestMetadata(request);
+  const result = await loginWithAuthService({
+    username: username ?? "",
+    password,
+    ipAddress: metadata.ipAddress,
+    userAgent: metadata.userAgent,
   });
 
-  if (!result.success || !result.data) {
-    return loginFailureResponse(result.errors?.[0]);
+  if (!result.success) {
+    return loginFailureResponse(result.error);
   }
-
-  return NextResponse.json(result.data);
+  return NextResponse.json(result);
 }

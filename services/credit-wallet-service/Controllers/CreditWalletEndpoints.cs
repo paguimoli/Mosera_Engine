@@ -368,8 +368,13 @@ public static class CreditWalletEndpoints
         {
             LogQuery(loggerFactory, "Credit wallet exposure placeholder query received.", playerId);
 
-            _ = marketId;
-            _ = drawId;
+            if (marketId is not null || drawId is not null)
+            {
+                return Results.BadRequest(service.CreateValidationError(
+                    context.GetCorrelationId(),
+                    "marketId and drawId exposure filters are not supported and cannot be ignored.",
+                    marketId is not null ? "marketId" : "drawId"));
+            }
 
             if (!repository.DurablePersistenceConfigured)
             {

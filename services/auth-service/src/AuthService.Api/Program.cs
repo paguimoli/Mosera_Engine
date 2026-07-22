@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using AuthService.Application;
 using AuthService.Application.Contracts;
 using AuthService.Application.Services;
+using AuthService.Domain.Models;
 using AuthService.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -34,6 +35,7 @@ if (string.IsNullOrWhiteSpace(databaseUrl))
     builder.Services.AddSingleton<IServiceAccountRepository>(services => services.GetRequiredService<DisabledAuthRepository>());
     builder.Services.AddSingleton<ISigningKeyRepository>(services => services.GetRequiredService<DisabledAuthRepository>());
     builder.Services.AddSingleton<IAuthRuntimeStore>(services => services.GetRequiredService<DisabledAuthRepository>());
+    builder.Services.AddSingleton<IAuthenticationAuthorityRepository, DisabledAuthenticationAuthorityRepository>();
 }
 else
 {
@@ -50,9 +52,12 @@ else
     builder.Services.AddSingleton<IServiceAccountRepository>(services => services.GetRequiredService<PostgresAuthRepository>());
     builder.Services.AddSingleton<ISigningKeyRepository>(services => services.GetRequiredService<PostgresAuthRepository>());
     builder.Services.AddSingleton<IAuthRuntimeStore>(services => services.GetRequiredService<PostgresAuthRepository>());
+    builder.Services.AddSingleton<IAuthenticationAuthorityRepository>(_ => new PostgresAuthenticationAuthorityRepository(databaseUrl));
 }
 builder.Services.AddSingleton<AuthLoginRuntimeService>();
 builder.Services.AddSingleton<AuthAccessTokenService>();
+builder.Services.AddSingleton<Argon2idPasswordService>();
+builder.Services.AddSingleton<AuthenticationAuthorityService>();
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
@@ -78,12 +83,17 @@ app.MapGet("/health/live", () => Results.Ok(new
     timestamp = DateTimeOffset.UtcNow
 }));
 
-IResult ReadyResult(AuthInfrastructureStatusProvider infrastructure)
+async Task<IResult> ReadyResult(
+    AuthInfrastructureStatusProvider infrastructure,
+    AuthenticationAuthorityService authority,
+    CancellationToken cancellationToken)
 {
     var status = infrastructure.GetStatus();
+    var authorityReadiness = await authority.GetReadinessAsync(cancellationToken);
+    var ready = string.IsNullOrWhiteSpace(databaseUrl) || (status.DatabaseReady && authorityReadiness.DatabaseReachable);
     var response = new
     {
-        status = !string.IsNullOrWhiteSpace(databaseUrl) && !status.DatabaseReady ? "not_ready" : "ready",
+        status = ready ? "ready" : "not_ready",
         service = "auth-service",
         architectureOnly = false,
         runtimeScope = "login-session-access-token",
@@ -91,12 +101,11 @@ IResult ReadyResult(AuthInfrastructureStatusProvider infrastructure)
         oauthRuntimeEnabled = false,
         nextJsCutoverEnabled = false,
         infrastructure = status,
+        authenticationAuthority = authorityReadiness,
         timestamp = DateTimeOffset.UtcNow
     };
 
-    return !string.IsNullOrWhiteSpace(databaseUrl) && !status.DatabaseReady
-        ? Results.Json(response, statusCode: StatusCodes.Status503ServiceUnavailable)
-        : Results.Ok(response);
+    return ready ? Results.Ok(response) : Results.Json(response, statusCode: StatusCodes.Status503ServiceUnavailable);
 }
 
 app.MapGet("/ready", ReadyResult);
@@ -255,13 +264,19 @@ group.MapGet("/schema-status", (AuthArchitectureService service) => Results.Ok(n
 }));
 
 group.MapPost("/login", async (
-    AuthLoginRuntimeService service,
-    AuthAccessTokenService tokens,
+    AuthenticationAuthorityService service,
     LoginEndpointRequest request,
+    HttpRequest httpRequest,
     CancellationToken cancellationToken) =>
 {
     var result = await service.LoginAsync(
-        new LoginRuntimeRequest(request.LoginId ?? string.Empty, request.Password ?? string.Empty, request.CorrelationId),
+        new CanonicalLoginRequest(
+            request.LoginId ?? string.Empty,
+            request.Password ?? string.Empty,
+            request.CorrelationId,
+            ReadClientIp(httpRequest),
+            httpRequest.Headers.UserAgent.FirstOrDefault(),
+            httpRequest.Headers["X-Device-Metadata"].FirstOrDefault()),
         cancellationToken);
 
     if (!result.Success)
@@ -269,7 +284,7 @@ group.MapPost("/login", async (
         var failure = new
         {
             success = false,
-            error = result.RuntimeUnavailableReason is null ? "Invalid login credentials." : result.RuntimeUnavailableReason,
+            error = "Invalid login credentials.",
             failureReason = result.FailureReason,
             correlationId = result.CorrelationId,
             lockoutEnforced = false,
@@ -277,39 +292,154 @@ group.MapPost("/login", async (
             productionLockoutRateLimitReady = false
         };
 
-        return result.RuntimeUnavailableReason is null
-            ? Results.Json(failure, statusCode: StatusCodes.Status401Unauthorized)
-            : Results.Json(failure, statusCode: StatusCodes.Status503ServiceUnavailable);
+        return Results.Json(failure, statusCode: StatusCodes.Status401Unauthorized);
     }
-
-    var sessionValidation = await service.ValidateSessionAsync(result.Session!.Id, cancellationToken);
-    var accessToken = await tokens.IssueForValidatedSessionAsync(sessionValidation, result.CorrelationId, cancellationToken);
-    var refreshToken = await tokens.IssueRefreshTokenForValidatedSessionAsync(sessionValidation, result.CorrelationId, cancellationToken);
 
     return Results.Ok(new
     {
         success = true,
-        session = ToSessionResponse(result.Session!),
-        identity = ToIdentityResponse(result.Identity!),
-        accessToken = accessToken.AccessToken,
-        tokenType = accessToken.TokenType,
-        accessTokenExpiresAt = accessToken.ExpiresAt,
-        accessTokenKeyId = accessToken.KeyId,
-        accessTokenJwtId = accessToken.JwtId,
-        issuer = accessToken.Issuer,
-        audience = accessToken.Audience,
-        refreshToken = refreshToken.RefreshToken,
-        refreshTokenId = refreshToken.RefreshTokenId,
-        refreshTokenExpiresAt = refreshToken.ExpiresAt,
+        session = ToCanonicalSessionResponse(result.Session!),
+        sessionToken = result.Session!.OpaqueToken,
+        identity = ToCanonicalIdentityResponse(result.Identity!),
+        accessToken = result.Tokens!.AccessToken,
+        tokenType = "Bearer",
+        accessTokenExpiresAt = result.Tokens.AccessExpiresAt,
+        accessTokenKeyId = result.Tokens.SigningKeyName,
+        accessTokenJwtId = result.Tokens.JwtId,
+        issuer = result.Tokens.Issuer,
+        audience = result.Tokens.Audience,
+        refreshToken = result.Tokens.RefreshToken,
+        refreshTokenId = result.Tokens.RefreshTokenId,
+        refreshTokenExpiresAt = result.Tokens.RefreshExpiresAt,
         correlationId = result.CorrelationId,
-        tokenIssued = accessToken.Issued,
-        refreshTokenIssued = refreshToken.Issued,
+        tokenIssued = true,
+        refreshTokenIssued = true,
         oauthFlow = false,
         nextJsCutover = false,
         lockoutEnforced = false,
         rateLimitEnforced = false,
         productionLockoutRateLimitReady = false
     });
+});
+
+group.MapGet("/authority/readiness", async (AuthenticationAuthorityService service, CancellationToken cancellationToken) =>
+{
+    var readiness = await service.GetReadinessAsync(cancellationToken);
+    return readiness.DatabaseReachable ? Results.Ok(readiness) : Results.Json(readiness, statusCode: StatusCodes.Status503ServiceUnavailable);
+});
+
+group.MapPost("/authority/identities", async (AuthenticationAuthorityService service, CreateIdentityEndpointRequest request, HttpRequest httpRequest, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var identity = await service.CreateIdentityAsync(new CreateCanonicalIdentityRequest(
+            request.IdentityId ?? Guid.NewGuid(), request.TenantId, request.BrandId, request.Username ?? string.Empty,
+            request.Email, request.AccountType ?? "ADMIN", request.InitialStatus, request.Password ?? string.Empty,
+            request.ActorIdentityId, request.CorrelationId, ReadClientIp(httpRequest), httpRequest.Headers.UserAgent.FirstOrDefault()), cancellationToken);
+        return Results.Created($"/api/auth-service/authority/identities/{identity.IdentityId}", ToCanonicalIdentityResponse(identity));
+    }
+    catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or Npgsql.PostgresException)
+    {
+        return Results.BadRequest(new { success = false, error = exception.Message });
+    }
+});
+
+group.MapPost("/authority/password/change", async (AuthenticationAuthorityService service, PasswordChangeEndpointRequest request, HttpRequest httpRequest, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var credential = await service.RotatePasswordAsync(new PasswordRotationRequest(request.IdentityId, request.CurrentPassword ?? string.Empty, request.NewPassword ?? string.Empty, request.CorrelationId, request.ActorIdentityId, ReadClientIp(httpRequest), httpRequest.Headers.UserAgent.FirstOrDefault()), cancellationToken);
+        return Results.Ok(new { success = true, credentialVersion = credential.Version, credentialId = credential.CredentialVersionId, algorithm = credential.Algorithm });
+    }
+    catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+    {
+        return Results.BadRequest(new { success = false, error = exception.Message });
+    }
+});
+
+group.MapPost("/authority/password/reset", async (AuthenticationAuthorityService service, PasswordResetEndpointRequest request, HttpRequest httpRequest, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var credential = await service.ResetPasswordAsync(new PasswordResetAuthorityRequest(request.IdentityId, request.NewPassword ?? string.Empty, request.ActorIdentityId, request.Reason ?? "governed_reset", request.CorrelationId, ReadClientIp(httpRequest), httpRequest.Headers.UserAgent.FirstOrDefault()), cancellationToken);
+        return Results.Ok(new { success = true, credentialVersion = credential.Version, credentialId = credential.CredentialVersionId, algorithm = credential.Algorithm });
+    }
+    catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+    {
+        return Results.BadRequest(new { success = false, error = exception.Message });
+    }
+});
+
+group.MapPost("/authority/password-reset/request", async (AuthenticationAuthorityService service, PublicPasswordResetEndpointRequest request, HttpRequest httpRequest, CancellationToken cancellationToken) =>
+{
+    var result = await service.RequestPasswordResetAsync(new PublicPasswordResetRequest(request.Identifier ?? string.Empty, request.CorrelationId, ReadClientIp(httpRequest), httpRequest.Headers.UserAgent.FirstOrDefault()), cancellationToken);
+    return Results.Ok(new { success = result.Success, message = result.Message, resetToken = result.ResetToken });
+});
+
+group.MapPost("/authority/password-reset/confirm", async (AuthenticationAuthorityService service, PublicPasswordResetConfirmEndpointRequest request, HttpRequest httpRequest, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var credential = await service.ConfirmPasswordResetAsync(new PublicPasswordResetConfirmRequest(request.ResetToken ?? string.Empty, request.NewPassword ?? string.Empty, request.CorrelationId, ReadClientIp(httpRequest), httpRequest.Headers.UserAgent.FirstOrDefault()), cancellationToken);
+        return Results.Ok(new { success = true, credentialVersion = credential.Version });
+    }
+    catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+    {
+        return Results.BadRequest(new { success = false, errors = new[] { exception.Message } });
+    }
+});
+
+group.MapPost("/authority/lifecycle", async (AuthenticationAuthorityService service, LifecycleEndpointRequest request, HttpRequest httpRequest, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var identity = await service.TransitionAsync(new LifecycleTransitionRequest(request.IdentityId, request.ExpectedStatus, request.TargetStatus, request.ActorIdentityId, request.Reason ?? "governed_transition", request.CorrelationId, ReadClientIp(httpRequest), httpRequest.Headers.UserAgent.FirstOrDefault()), cancellationToken);
+        return Results.Ok(new { success = true, identity = ToCanonicalIdentityResponse(identity) });
+    }
+    catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+    {
+        return Results.BadRequest(new { success = false, error = exception.Message });
+    }
+});
+
+group.MapPost("/authority/session/validate", async (AuthenticationAuthorityService service, CanonicalSessionEndpointRequest request, CancellationToken cancellationToken) =>
+{
+    var session = await service.ValidateSessionAsync(request.SessionToken ?? string.Empty, request.Renew, cancellationToken);
+    return session is null
+        ? Results.Json(new { success = false, valid = false }, statusCode: StatusCodes.Status401Unauthorized)
+        : Results.Ok(new { success = true, valid = true, session = ToCanonicalSessionResponse(session) });
+});
+
+group.MapPost("/authority/logout", async (AuthenticationAuthorityService service, CanonicalLogoutEndpointRequest request, HttpRequest httpRequest, CancellationToken cancellationToken) =>
+{
+    var revoked = await service.LogoutAsync(request.SessionToken ?? string.Empty, request.CorrelationId, ReadClientIp(httpRequest), httpRequest.Headers.UserAgent.FirstOrDefault(), cancellationToken);
+    return Results.Ok(new { success = true, revoked });
+});
+
+group.MapPost("/authority/logout-all", async (AuthenticationAuthorityService service, CanonicalLogoutAllEndpointRequest request, HttpRequest httpRequest, CancellationToken cancellationToken) =>
+{
+    var revoked = await service.LogoutAllAsync(request.IdentityId, request.ActorIdentityId, request.Reason ?? "logout_all", request.CorrelationId, ReadClientIp(httpRequest), httpRequest.Headers.UserAgent.FirstOrDefault(), cancellationToken);
+    return Results.Ok(new { success = true, revoked });
+});
+
+group.MapPost("/authority/session/revoke", async (AuthenticationAuthorityService service, CanonicalSessionRevokeEndpointRequest request, HttpRequest httpRequest, CancellationToken cancellationToken) =>
+{
+    var revoked = await service.ForceRevokeSessionAsync(request.SessionId, request.IdentityId, request.ActorIdentityId, request.Reason ?? "forced_admin_revocation", request.CorrelationId, ReadClientIp(httpRequest), httpRequest.Headers.UserAgent.FirstOrDefault(), cancellationToken);
+    return revoked > 0 ? Results.Ok(new { success = true, revoked }) : Results.NotFound(new { success = false, error = "active_session_not_found" });
+});
+
+group.MapPost("/authority/mfa/{operation}", (string operation) => Results.Json(new
+{
+    success = false,
+    error = "mfa_mutation_deferred_to_security_hardening",
+    operation,
+    legacyMutationAllowed = false
+}, statusCode: StatusCodes.Status501NotImplemented));
+
+group.MapPost("/authority/audit", async (AuthenticationAuthorityService service, CanonicalAuditEndpointRequest request, HttpRequest httpRequest, CancellationToken cancellationToken) =>
+{
+    await service.RecordAuditAsync(request.SubjectIdentityId, request.ActorIdentityId, request.Action ?? "UNKNOWN", request.Result ?? "SUCCESS", request.Reason ?? "delegated_event", request.CorrelationId, ReadClientIp(httpRequest), httpRequest.Headers.UserAgent.FirstOrDefault(), cancellationToken);
+    return Results.Accepted();
 });
 
 group.MapPost("/refresh", async (
@@ -475,69 +605,53 @@ group.MapGet("/sessions/{sessionId:guid}", async (
 
 group.MapGet("/me", async (
     HttpRequest httpRequest,
-    AuthLoginRuntimeService service,
+    AuthenticationAuthorityService service,
+    IAuthenticationAuthorityRepository identities,
+    IRoleRepository roles,
+    IPermissionRepository permissions,
     CancellationToken cancellationToken) =>
 {
-    if (!TryReadSessionId(httpRequest, out var sessionId))
+    var sessionToken = ReadOpaqueSessionToken(httpRequest);
+    if (sessionToken is null)
     {
-        return Results.Json(new { success = false, error = "Session id is required." }, statusCode: StatusCodes.Status401Unauthorized);
+        return Results.Json(new { success = false, error = "Session token is required." }, statusCode: StatusCodes.Status401Unauthorized);
     }
 
-    var result = await service.ValidateSessionAsync(sessionId, cancellationToken);
-    return result.Valid
-        ? Results.Ok(new
-        {
-            success = true,
-            session = ToSessionResponse(result.Session!),
-            identity = ToIdentityResponse(result.Identity!),
-            roles = result.Roles.Select(ToRoleResponse),
-            groups = result.Roles.Select(ToGroupResponse),
-            permissions = result.Permissions.Select(ToPermissionResponse),
-            claims = result.Permissions.Select(permission => new
-            {
-                type = "permission",
-                value = permission,
-                issuer = "auth-service"
-            })
-        })
-        : Results.Json(new
+    var session = await service.ValidateSessionAsync(sessionToken, renew: true, cancellationToken);
+    if (session is null)
+    {
+        return Results.Json(new
         {
             success = false,
-            error = "Session is invalid.",
-            reason = result.Reason
+            error = "Session is invalid."
         }, statusCode: StatusCodes.Status401Unauthorized);
+    }
+    var identity = await identities.FindIdentityById(session.IdentityId, cancellationToken);
+    if (identity is null) return Results.Json(new { success = false, error = "Identity is invalid." }, statusCode: StatusCodes.Status401Unauthorized);
+    var identityRoles = await roles.ListRoles(identity.IdentityId, cancellationToken);
+    var identityPermissions = await permissions.ListPermissions(identity.IdentityId, cancellationToken);
+    return Results.Ok(new
+    {
+        success = true,
+        session = ToCanonicalSessionResponse(session),
+        identity = ToCanonicalIdentityResponse(identity),
+        roles = identityRoles.Select(ToRoleResponse),
+        groups = identityRoles.Select(ToGroupResponse),
+        permissions = identityPermissions.Select(ToPermissionResponse),
+        claims = identityPermissions.Select(permission => new { type = "permission", value = permission, issuer = "auth-service" })
+    });
 });
 
 group.MapPost("/logout", async (
-    AuthLoginRuntimeService service,
-    AuthAccessTokenService tokens,
+    AuthenticationAuthorityService service,
     LogoutEndpointRequest request,
+    HttpRequest httpRequest,
     CancellationToken cancellationToken) =>
 {
-    if (!Guid.TryParse(request.SessionId, out var sessionId))
-    {
-        return Results.BadRequest(new { success = false, error = "sessionId is required." });
-    }
-
-    var result = await service.LogoutAsync(sessionId, request.CorrelationId, cancellationToken);
-    var revokedRefreshTokens = result.Success
-        ? await tokens.RevokeRefreshTokensForSessionAsync(sessionId, result.CorrelationId, cancellationToken)
-        : 0;
-    return result.Success
-        ? Results.Ok(new
-        {
-            success = true,
-            sessionId = result.SessionId,
-            revokedAt = result.RevokedAt,
-            revokedRefreshTokens,
-            correlationId = result.CorrelationId
-        })
-        : Results.Json(new
-        {
-            success = false,
-            error = result.FailureReason,
-            correlationId = result.CorrelationId
-        }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    var token = request.SessionToken ?? request.SessionId;
+    if (string.IsNullOrWhiteSpace(token)) return Results.BadRequest(new { success = false, error = "sessionToken is required." });
+    var revoked = await service.LogoutAsync(token, request.CorrelationId, ReadClientIp(httpRequest), httpRequest.Headers.UserAgent.FirstOrDefault(), cancellationToken);
+    return Results.Ok(new { success = true, revoked, correlationId = request.CorrelationId });
 });
 
 group.MapGet("/shadow-import-status", async (ShadowIdentityImportService service, CancellationToken cancellationToken) => Results.Ok(new
@@ -566,29 +680,24 @@ group.MapPost("/shadow-import/run", async (ShadowIdentityImportService service, 
 
 app.Run();
 
-static bool TryReadSessionId(HttpRequest request, out Guid sessionId)
+static string? ReadOpaqueSessionToken(HttpRequest request)
 {
-    sessionId = Guid.Empty;
-
-    if (request.Headers.TryGetValue("X-Auth-Session-Id", out var sessionHeader) &&
-        Guid.TryParse(sessionHeader.FirstOrDefault(), out sessionId))
+    if (request.Headers.TryGetValue("X-Auth-Session-Id", out var sessionHeader) && !string.IsNullOrWhiteSpace(sessionHeader.FirstOrDefault()))
     {
-        return true;
+        return sessionHeader.FirstOrDefault();
     }
-
     if (request.Headers.TryGetValue("Authorization", out var authorizationHeader))
     {
         var value = authorizationHeader.FirstOrDefault();
-        if (!string.IsNullOrWhiteSpace(value) &&
-            value.StartsWith("Session ", StringComparison.OrdinalIgnoreCase) &&
-            Guid.TryParse(value["Session ".Length..], out sessionId))
-        {
-            return true;
-        }
+        if (!string.IsNullOrWhiteSpace(value) && value.StartsWith("Session ", StringComparison.OrdinalIgnoreCase)) return value["Session ".Length..];
     }
-
-    return false;
+    return null;
 }
+
+static string? ReadClientIp(HttpRequest request) =>
+    request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim()
+    ?? request.Headers["X-Real-IP"].FirstOrDefault()
+    ?? request.HttpContext.Connection.RemoteIpAddress?.ToString();
 
 static object ToIdentityResponse(AuthService.Domain.Models.Identity identity)
 {
@@ -614,6 +723,37 @@ static object ToSessionResponse(AuthService.Domain.Models.Session session)
         revokedAt = session.RevokedAt
     };
 }
+
+static object ToCanonicalIdentityResponse(CanonicalIdentity identity) => new
+{
+    identityId = identity.IdentityId,
+    tenantId = identity.TenantId,
+    brandId = identity.BrandId,
+    loginId = identity.Username,
+    email = identity.Email,
+    identityType = identity.AccountType,
+    lifecycleState = identity.Status,
+    credentialStatus = identity.CredentialStatus,
+    mfaStatus = identity.MfaStatus,
+    createdAt = identity.CreatedAt,
+    disabledAt = identity.DisabledAt,
+    reviewDueAt = identity.ReviewDueAt
+};
+
+static object ToCanonicalSessionResponse(CanonicalSession session) => new
+{
+    sessionId = session.SessionId,
+    identityId = session.IdentityId,
+    state = session.RevokedAt is null ? "Active" : "Revoked",
+    policyCode = "canonical-single-session",
+    createdAt = session.CreatedAt,
+    expiresAt = session.AbsoluteExpiresAt,
+    idleExpiresAt = session.IdleExpiresAt,
+    revokedAt = session.RevokedAt,
+    ipAddress = session.IpAddress,
+    userAgent = session.UserAgent,
+    deviceMetadata = session.DeviceMetadata
+};
 
 static object ToRoleResponse(AuthService.Domain.Models.Role role)
 {
@@ -663,7 +803,18 @@ static object ToJwksResponse(AuthService.Domain.Boundaries.JwksKeyDescriptor key
 
 public sealed record LoginEndpointRequest(string? LoginId, string? Password, string? CorrelationId);
 
-public sealed record LogoutEndpointRequest(string? SessionId, string? CorrelationId);
+public sealed record LogoutEndpointRequest(string? SessionId, string? SessionToken, string? CorrelationId);
+public sealed record CreateIdentityEndpointRequest(Guid? IdentityId, Guid TenantId, Guid? BrandId, string? Username, string? Email, string? AccountType, CanonicalIdentityStatus InitialStatus, string? Password, Guid? ActorIdentityId, string? CorrelationId);
+public sealed record PasswordChangeEndpointRequest(Guid IdentityId, string? CurrentPassword, string? NewPassword, Guid? ActorIdentityId, string? CorrelationId);
+public sealed record PasswordResetEndpointRequest(Guid IdentityId, string? NewPassword, Guid ActorIdentityId, string? Reason, string? CorrelationId);
+public sealed record PublicPasswordResetEndpointRequest(string? Identifier, string? CorrelationId);
+public sealed record PublicPasswordResetConfirmEndpointRequest(string? ResetToken, string? NewPassword, string? CorrelationId);
+public sealed record LifecycleEndpointRequest(Guid IdentityId, CanonicalIdentityStatus ExpectedStatus, CanonicalIdentityStatus TargetStatus, Guid ActorIdentityId, string? Reason, string? CorrelationId);
+public sealed record CanonicalSessionEndpointRequest(string? SessionToken, bool Renew);
+public sealed record CanonicalLogoutEndpointRequest(string? SessionToken, string? CorrelationId);
+public sealed record CanonicalLogoutAllEndpointRequest(Guid IdentityId, Guid ActorIdentityId, string? Reason, string? CorrelationId);
+public sealed record CanonicalSessionRevokeEndpointRequest(Guid SessionId, Guid IdentityId, Guid ActorIdentityId, string? Reason, string? CorrelationId);
+public sealed record CanonicalAuditEndpointRequest(Guid SubjectIdentityId, Guid? ActorIdentityId, string? Action, string? Result, string? Reason, string? CorrelationId);
 
 public sealed record TokenValidationEndpointRequest(string? AccessToken);
 

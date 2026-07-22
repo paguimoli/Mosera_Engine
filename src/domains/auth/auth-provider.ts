@@ -1,11 +1,32 @@
-export type AuthProvider = "legacy" | "auth-service";
+export type AuthProvider = "auth-service";
+export type AuthAuthority =
+  | "MONOLITH"
+  | "SERVICE_SHADOW"
+  | "SERVICE_DRY_RUN"
+  | "SERVICE";
+
+export function getAuthAuthority(): AuthAuthority {
+  const configured = process.env.AUTH_AUTHORITY?.trim().toUpperCase();
+  if (
+    configured === "SERVICE_SHADOW" ||
+    configured === "SERVICE_DRY_RUN" ||
+    configured === "SERVICE"
+  ) {
+    return configured;
+  }
+  return "MONOLITH";
+}
 
 export function getAuthProvider(): AuthProvider {
-  return process.env.AUTH_PROVIDER === "auth-service" ? "auth-service" : "legacy";
+  return "auth-service";
 }
 
 export function isAuthServiceProviderEnabled() {
-  return getAuthProvider() === "auth-service";
+  return true;
+}
+
+export function isAuthServicePromotionEnabled() {
+  return getAuthAuthority() === "SERVICE";
 }
 
 export function getAuthServiceUrl() {

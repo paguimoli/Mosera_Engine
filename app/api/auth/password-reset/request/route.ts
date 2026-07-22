@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { checkAuthRateLimit } from "@/src/domains/auth/auth-rate-limit";
-import { requestPasswordResetController } from "@/src/domains/auth/auth.controller";
+import { requestPasswordResetWithAuthService } from "@/src/domains/auth/auth-service.client";
 
 export const runtime = "nodejs";
 
@@ -44,14 +44,24 @@ export async function POST(request: Request) {
 
   if (!rateLimit.allowed) return rateLimitedResponse(rateLimit.retryAfterSeconds);
 
-  const result = await requestPasswordResetController({ body });
-
-  if (!result.success || !result.data) {
+  const identifier =
+    typeof identifierBody?.username === "string"
+      ? identifierBody.username
+      : typeof identifierBody?.email === "string"
+        ? identifierBody.email
+        : "";
+  try {
+    const result = await requestPasswordResetWithAuthService({ identifier });
+    if (result.status === 200 && result.body?.success) {
+      return NextResponse.json(result.body);
+    }
+  } catch {
+    // Preserve enumeration-safe response while failing closed on mutation.
+  }
+  {
     return NextResponse.json({
       success: true,
       message: PASSWORD_RESET_MESSAGE,
     });
   }
-
-  return NextResponse.json(result.data);
 }

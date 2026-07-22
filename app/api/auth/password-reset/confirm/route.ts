@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { checkAuthRateLimit } from "@/src/domains/auth/auth-rate-limit";
-import { confirmPasswordResetController } from "@/src/domains/auth/auth.controller";
+import { confirmPasswordResetWithAuthService } from "@/src/domains/auth/auth-service.client";
 
 export const runtime = "nodejs";
 
@@ -47,19 +47,29 @@ export async function POST(request: Request) {
 
   if (!rateLimit.allowed) return rateLimitedResponse(rateLimit.retryAfterSeconds);
 
-  const result = await confirmPasswordResetController({ body });
-
-  if (!result.success || !result.data) {
+  const newPassword =
+    typeof (body as { newPassword?: unknown })?.newPassword === "string"
+      ? (body as { newPassword: string }).newPassword
+      : "";
+  try {
+    const result = await confirmPasswordResetWithAuthService({
+      resetToken: token ?? "",
+      newPassword,
+    });
+    if (result.status === 200 && result.body?.success) {
+      return NextResponse.json({ success: true });
+    }
     return NextResponse.json(
       {
         success: false,
-        errors: result.errors ?? ["Password reset request is invalid."],
+        errors: result.body?.errors ?? ["Password reset request is invalid."],
       },
       { status: 400 }
     );
+  } catch {
+    return NextResponse.json(
+      { success: false, errors: ["Password reset request is invalid."] },
+      { status: 503 }
+    );
   }
-
-  return NextResponse.json({
-    success: true,
-  });
 }

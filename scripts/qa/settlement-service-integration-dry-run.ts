@@ -338,11 +338,16 @@ async function verifyDependencyFailureFailsClosed(pool: Pool) {
     ],
   });
 
-  assert(failed.response.status === 503, "Unavailable/rejected dependency should fail closed.", {
+  assert(failed.response.status === 400, "Invalid Ledger target data should fail closed as a target rejection.", {
     status: failed.response.status,
     body: failed.body,
   });
-  pass("unavailable dependency fails closed");
+  assert(
+    failed.body?.error?.code === "SETTLEMENT_INTEGRATION_TARGET_REJECTED",
+    "Ledger validation rejection should not be reported as dependency unavailability.",
+    { body: failed.body }
+  );
+  pass("invalid Ledger target data fails closed without a legacy fallback");
 }
 
 function verifySettlementAuthorityRemainsMonolith() {

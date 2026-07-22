@@ -1,4 +1,6 @@
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using SettlementService.Application;
 using SettlementService.Configuration;
@@ -148,6 +150,35 @@ public sealed class SettlementLedgerServiceClient
                 "SKIPPED"), "sha256:noop");
         }
 
+        var effectiveAt = instruction.CreatedAt.ToUniversalTime();
+        var postingRuleId = instruction.InstructionType switch
+        {
+            FinancialInstructionType.LEDGER_PAYOUT => "SETTLEMENT_PAYOUT",
+            FinancialInstructionType.LEDGER_REFUND => "SETTLEMENT_REFUND",
+            _ => null
+        };
+        var postingRuleVersion = postingRuleId is null ? null : "1.0.0";
+        var canonicalRequestHash = ComputeCanonicalLedgerRequestHash(
+            instruction.InstructionId.ToString(),
+            instruction.InstructionType.ToString(),
+            instruction.CanonicalPayloadHash,
+            "settlement-service",
+            context.SettlementRecord.SettlementId.ToString(),
+            walletId.ToString(),
+            null,
+            transactionType,
+            direction,
+            amount,
+            context.SettlementRecord.Currency,
+            context.SettlementRecord.MinorUnitPrecision,
+            targetIdempotencyKey,
+            "settlement_financial_instruction",
+            instruction.InstructionId.ToString(),
+            null,
+            effectiveAt,
+            postingRuleId,
+            postingRuleVersion);
+
         var client = httpClientFactory.CreateClient();
         client.BaseAddress = new Uri(NormalizeBaseUrl(configuration.Integrations.LedgerServiceUrl));
         using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/ledger/entries");
@@ -156,6 +187,12 @@ public sealed class SettlementLedgerServiceClient
         request.Content = JsonContent.Create(new
         {
             walletId,
+            ledgerAccountId = (Guid?)null,
+            instructionId = instruction.InstructionId.ToString(),
+            instructionType = instruction.InstructionType.ToString(),
+            instructionHash = instruction.CanonicalPayloadHash,
+            originatingAuthority = "settlement-service",
+            settlementRecordId = context.SettlementRecord.SettlementId,
             transactionType,
             direction,
             money = new
@@ -163,11 +200,17 @@ public sealed class SettlementLedgerServiceClient
                 amount,
                 currency = context.SettlementRecord.Currency
             },
+            minorUnitPrecision = context.SettlementRecord.MinorUnitPrecision,
+            canonicalRequestHash,
+            effectiveAt,
             reference = new
             {
                 type = "settlement_financial_instruction",
                 id = instruction.InstructionId.ToString()
             },
+            reversalOfLedgerEntryId = (Guid?)null,
+            postingRuleId,
+            postingRuleVersion,
             metadata = new Dictionary<string, object?>
             {
                 ["settlementId"] = context.SettlementRecord.SettlementId,
@@ -183,8 +226,10 @@ public sealed class SettlementLedgerServiceClient
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            throw new SettlementIntegrationException(
-                $"Ledger Service rejected financial instruction. StatusCode={(int)response.StatusCode}. Body={body}");
+            throw new SettlementTargetRejectedException(
+                "ledger-service",
+                (int)response.StatusCode,
+                body);
         }
 
         using var document = JsonDocument.Parse(body);
@@ -225,6 +270,34 @@ public sealed class SettlementLedgerServiceClient
                 "SKIPPED");
         }
 
+        var amountMinor = ToMinorAmount(effect.Amount);
+        var effectiveAt = effect.CreatedAt.ToUniversalTime();
+        var instructionHash = FinancialInstructionService.HashCanonical(JsonSerializer.Serialize(new
+        {
+            effect.Id,
+            effect.EffectType,
+            effect.SettlementRecordId,
+            amountMinor
+        }, JsonOptions));
+        var canonicalRequestHash = ComputeCanonicalLedgerRequestHash(
+            effect.Id,
+            effect.EffectType,
+            instructionHash,
+            "settlement-service",
+            null,
+            walletId.ToString(),
+            null,
+            effect.TransactionType,
+            effect.Direction,
+            amountMinor,
+            "USD",
+            2,
+            effect.IdempotencyKey,
+            "settlement_service_dry_run",
+            effect.ReferenceId,
+            null,
+            effectiveAt);
+
         var client = httpClientFactory.CreateClient();
         client.BaseAddress = new Uri(NormalizeBaseUrl(configuration.Integrations.LedgerServiceUrl));
         using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/ledger/entries");
@@ -233,18 +306,28 @@ public sealed class SettlementLedgerServiceClient
         request.Content = JsonContent.Create(new
         {
             walletId,
+            ledgerAccountId = (Guid?)null,
+            instructionId = effect.Id,
+            instructionType = effect.EffectType,
+            instructionHash,
+            originatingAuthority = "settlement-service",
+            settlementRecordId = (Guid?)null,
             transactionType = effect.TransactionType,
             direction = effect.Direction,
             money = new
             {
-                amount = ToMinorAmount(effect.Amount),
+                amount = amountMinor,
                 currency = "USD"
             },
+            minorUnitPrecision = 2,
+            canonicalRequestHash,
+            effectiveAt,
             reference = new
             {
                 type = "settlement_service_dry_run",
                 id = effect.ReferenceId
             },
+            reversalOfLedgerEntryId = (Guid?)null,
             metadata = new Dictionary<string, object?>
             {
                 ["settlementRunId"] = effect.SettlementRunId,
@@ -259,8 +342,10 @@ public sealed class SettlementLedgerServiceClient
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            throw new SettlementIntegrationException(
-                $"Ledger Service rejected settlement effect. StatusCode={(int)response.StatusCode}. Body={body}");
+            throw new SettlementTargetRejectedException(
+                "ledger-service",
+                (int)response.StatusCode,
+                body);
         }
 
         using var document = JsonDocument.Parse(body);
@@ -288,6 +373,59 @@ public sealed class SettlementLedgerServiceClient
         return value.Trim().TrimEnd('/');
     }
 
+    private static string ComputeCanonicalLedgerRequestHash(
+        string instructionId,
+        string instructionType,
+        string instructionHash,
+        string originatingAuthority,
+        string? settlementRecordId,
+        string ledgerWalletId,
+        string? ledgerAccountId,
+        string transactionType,
+        string direction,
+        long amountMinor,
+        string currency,
+        int minorUnitPrecision,
+        string idempotencyKey,
+        string? referenceType,
+        string? referenceId,
+        string? reversalOfLedgerEntryId,
+        DateTimeOffset effectiveAt,
+        string? postingRuleId = null,
+        string? postingRuleVersion = null)
+    {
+        var material = new SortedDictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["amountMinor"] = amountMinor,
+            ["currency"] = currency.Trim(),
+            ["direction"] = direction,
+            ["effectiveAt"] = effectiveAt.ToUniversalTime().ToString("O"),
+            ["idempotencyKey"] = idempotencyKey.Trim(),
+            ["instructionHash"] = instructionHash.Trim(),
+            ["instructionId"] = instructionId.Trim(),
+            ["instructionType"] = instructionType.Trim(),
+            ["ledgerAccountId"] = string.IsNullOrWhiteSpace(ledgerAccountId) ? null : ledgerAccountId.Trim(),
+            ["ledgerWalletId"] = ledgerWalletId.Trim(),
+            ["minorUnitPrecision"] = minorUnitPrecision,
+            ["originatingAuthority"] = originatingAuthority.Trim(),
+            ["referenceId"] = string.IsNullOrWhiteSpace(referenceId) ? null : referenceId.Trim(),
+            ["referenceType"] = string.IsNullOrWhiteSpace(referenceType) ? null : referenceType.Trim(),
+            ["reversalOfLedgerEntryId"] = string.IsNullOrWhiteSpace(reversalOfLedgerEntryId) ? null : reversalOfLedgerEntryId.Trim(),
+            ["settlementRecordId"] = string.IsNullOrWhiteSpace(settlementRecordId) ? null : settlementRecordId.Trim(),
+            ["transactionType"] = transactionType
+        };
+
+        if (!string.IsNullOrWhiteSpace(postingRuleId)
+            || !string.IsNullOrWhiteSpace(postingRuleVersion))
+        {
+            material["postingRuleId"] = postingRuleId?.Trim();
+            material["postingRuleVersion"] = postingRuleVersion?.Trim();
+        }
+
+        var canonical = JsonSerializer.Serialize(material, JsonOptions);
+        return $"sha256:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant()}";
+    }
+
     private static bool GetBool(JsonElement element, string propertyName)
     {
         return element.TryGetProperty(propertyName, out var property) &&
@@ -302,10 +440,27 @@ public sealed class SettlementLedgerServiceClient
     }
 }
 
-public sealed class SettlementIntegrationException : Exception
+public class SettlementIntegrationException : Exception
 {
     public SettlementIntegrationException(string message)
         : base(message)
     {
     }
+}
+
+public sealed class SettlementTargetRejectedException : SettlementIntegrationException
+{
+    public SettlementTargetRejectedException(string targetService, int statusCode, string responseBody)
+        : base($"{targetService} rejected the canonical settlement request with status {statusCode}.")
+    {
+        TargetService = targetService;
+        StatusCode = statusCode;
+        ResponseBody = responseBody;
+    }
+
+    public string TargetService { get; }
+
+    public int StatusCode { get; }
+
+    public string ResponseBody { get; }
 }

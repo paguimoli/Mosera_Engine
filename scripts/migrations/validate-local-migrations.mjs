@@ -89,6 +89,16 @@ select exists (
 `) === "t";
 }
 
+function functionOverloadCount(schema, functionName) {
+  return Number(queryScalar(`
+select count(*)::int
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = '${schema}'
+  and p.proname = '${functionName}';
+`) ?? "0");
+}
+
 function columnExists(schema, table, column) {
   return queryScalar(`
 select exists (
@@ -117,7 +127,7 @@ if (!guardrails.ok) {
   addCheck("guardrails_pass", true);
 }
 
-const requiredSchemas = ["platform_migrations", "game_engine", "auth_service", "settlement_service", "platform"];
+const requiredSchemas = ["platform_migrations", "game_engine", "auth_service", "settlement_service", "ledger_service", "platform"];
 for (const schema of requiredSchemas) {
   addCheck(`schema_exists:${schema}`, existsSchema(schema));
 }
@@ -210,6 +220,14 @@ const requiredTables = [
   "settlement_service.resettlement_records",
   "settlement_service.resettlement_events",
   "settlement_service.settlement_promotion_rehearsals",
+  "ledger_service.ledger_posting_requests",
+  "ledger_service.ledger_posting_attempts",
+  "ledger_service.ledger_replay_evidence",
+  "ledger_service.ledger_transactions",
+  "ledger_service.ledger_entries",
+  "ledger_service.financial_posting_rules",
+  "ledger_service.ledger_promotion_rehearsals",
+  "ledger_service.ledger_authority_verifications",
   "platform.organizations",
   "platform.tenants",
   "platform.brands",
@@ -711,6 +729,37 @@ addCheck("reconciliation_events_status_index", indexExists("settlement_service",
 addCheck("reconciliation_events_target_idempotency_index", indexExists("settlement_service", "reconciliation_events", "idx_reconciliation_events_target_idempotency"));
 addCheck("cashier_transactions_status_index", indexExists("public", "cashier_transactions", "cashier_transactions_status_idx"));
 addCheck("financial_ledger_entries_idempotency_unique", uniqueIndexExists("public", "financial_ledger_entries", "idempotency_key"));
+addCheck("financial_ledger_entries_canonical_request_hash_column", columnExists("public", "financial_ledger_entries", "canonical_request_hash"));
+addCheck("financial_ledger_entries_canonical_request_hash_index", indexExists("public", "financial_ledger_entries", "financial_ledger_entries_canonical_request_hash_idx"));
+addCheck("financial_ledger_entries_original_hash_column", columnExists("public", "financial_ledger_entries", "original_ledger_entry_hash"));
+addCheck("financial_ledger_entries_reversal_reason_column", columnExists("public", "financial_ledger_entries", "reversal_reason_code"));
+addCheck("financial_ledger_entries_reversal_policy_column", columnExists("public", "financial_ledger_entries", "reversal_policy_version"));
+addCheck("financial_ledger_entries_canonical_reversal_hash_column", columnExists("public", "financial_ledger_entries", "canonical_reversal_hash"));
+addCheck("financial_ledger_entries_reversal_governance_version_column", columnExists("public", "financial_ledger_entries", "reversal_governance_version"));
+addCheck("financial_ledger_entries_one_reversal_index", indexExists("public", "financial_ledger_entries", "financial_ledger_entries_one_reversal_per_original"));
+addCheck("financial_ledger_entries_original_hash_index", indexExists("public", "financial_ledger_entries", "financial_ledger_entries_original_hash_idx"));
+addCheck("financial_ledger_entries_canonical_reversal_hash_index", indexExists("public", "financial_ledger_entries", "financial_ledger_entries_canonical_reversal_hash_idx"));
+addCheck("financial_ledger_entries_update_blocked", triggerExists("public", "financial_ledger_entries", "prevent_financial_ledger_entries_update"));
+addCheck("financial_ledger_entries_delete_blocked", triggerExists("public", "financial_ledger_entries", "prevent_financial_ledger_entries_delete"));
+addCheck("financial_ledger_entries_insert_validated", triggerExists("public", "financial_ledger_entries", "validate_financial_ledger_entries_insert"));
+addCheck("financial_ledger_entries_posting_function_single_overload", functionOverloadCount("public", "post_financial_ledger_entry") === 1);
+addCheck("ledger_posting_requests_table", existsRegclass("ledger_service.ledger_posting_requests"));
+addCheck("ledger_posting_attempts_table", existsRegclass("ledger_service.ledger_posting_attempts"));
+addCheck("ledger_replay_evidence_table", existsRegclass("ledger_service.ledger_replay_evidence"));
+addCheck("ledger_posting_requests_idempotency_unique", uniqueIndexExists("ledger_service", "ledger_posting_requests", "idempotency_key"));
+addCheck("ledger_posting_requests_instruction_index", indexExists("ledger_service", "ledger_posting_requests", "ledger_posting_requests_instruction_idx"));
+addCheck("ledger_posting_requests_entry_index", indexExists("ledger_service", "ledger_posting_requests", "ledger_posting_requests_entry_idx"));
+addCheck("ledger_posting_attempts_request_index", indexExists("ledger_service", "ledger_posting_attempts", "ledger_posting_attempts_request_result_idx"));
+addCheck("ledger_replay_evidence_request_index", indexExists("ledger_service", "ledger_replay_evidence", "ledger_replay_evidence_request_idx"));
+addCheck("ledger_posting_requests_update_guard", triggerExists("ledger_service", "ledger_posting_requests", "ledger_posting_requests_update_guard"));
+addCheck("ledger_posting_requests_delete_guard", triggerExists("ledger_service", "ledger_posting_requests", "ledger_posting_requests_delete_guard"));
+addCheck("ledger_posting_requests_wallet_is_evidence_reference", !constraintExists("ledger_service", "ledger_posting_requests", "ledger_posting_requests_ledger_wallet_id_fkey"));
+addCheck("ledger_posting_requests_account_is_evidence_reference", !constraintExists("ledger_service", "ledger_posting_requests", "ledger_posting_requests_ledger_account_id_fkey"));
+addCheck("ledger_posting_requests_original_is_evidence_reference", !constraintExists("ledger_service", "ledger_posting_requests", "ledger_posting_requests_original_ledger_entry_id_fkey"));
+addCheck("ledger_posting_attempts_update_guard", triggerExists("ledger_service", "ledger_posting_attempts", "ledger_posting_attempts_update_guard"));
+addCheck("ledger_posting_attempts_delete_guard", triggerExists("ledger_service", "ledger_posting_attempts", "ledger_posting_attempts_delete_guard"));
+addCheck("ledger_replay_evidence_update_guard", triggerExists("ledger_service", "ledger_replay_evidence", "ledger_replay_evidence_update_guard"));
+addCheck("ledger_replay_evidence_delete_guard", triggerExists("ledger_service", "ledger_replay_evidence", "ledger_replay_evidence_delete_guard"));
 addCheck("outbox_events_aggregate_index", indexExists("public", "outbox_events", "outbox_events_aggregate_idx"));
 addCheck("financial_worker_event_handlers_idempotency_unique", uniqueIndexExists("public", "financial_worker_event_handlers", "idempotency_key"));
 addCheck("financial_worker_event_handlers_event_type_index", indexExists("public", "financial_worker_event_handlers", "financial_worker_event_handlers_event_type_idx"));
@@ -1073,9 +1122,137 @@ addCheck("settlement_promotion_rehearsals_readiness_index", indexExists("settlem
 addCheck("settlement_promotion_rehearsals_result_index", indexExists("settlement_service", "settlement_promotion_rehearsals", "idx_settlement_promotion_rehearsals_result"));
 addCheck("settlement_promotion_rehearsals_update_trigger", triggerExists("settlement_service", "settlement_promotion_rehearsals", "trg_prevent_settlement_promotion_rehearsal_update"));
 addCheck("settlement_promotion_rehearsals_delete_trigger", triggerExists("settlement_service", "settlement_promotion_rehearsals", "trg_prevent_settlement_promotion_rehearsal_delete"));
-addCheck("auth_append_only_triggers_deferred_documented", true, {
-  reason: "Auth Service draft documents trigger enforcement as deferred pending production DBA review.",
-});
+addCheck("ledger_transactions_hash_unique", uniqueIndexExists("ledger_service", "ledger_transactions", "transaction_hash"));
+addCheck("ledger_transactions_posting_request_unique", uniqueIndexExists("ledger_service", "ledger_transactions", "posting_request_id"));
+addCheck("ledger_transactions_instruction_index", indexExists("ledger_service", "ledger_transactions", "idx_ledger_transactions_instruction"));
+addCheck("ledger_transactions_reversal_index", indexExists("ledger_service", "ledger_transactions", "idx_ledger_transactions_reversal"));
+addCheck("ledger_transactions_balance_trigger", triggerExists("ledger_service", "ledger_transactions", "ledger_transactions_balance_guard"));
+addCheck("ledger_transactions_update_trigger", triggerExists("ledger_service", "ledger_transactions", "ledger_transactions_update_guard"));
+addCheck("ledger_transactions_delete_trigger", triggerExists("ledger_service", "ledger_transactions", "ledger_transactions_delete_guard"));
+addCheck("ledger_entries_sequence_unique", constraintExists("ledger_service", "ledger_entries", "ledger_entries_transaction_sequence_unique"));
+addCheck("ledger_entries_balance_trigger", triggerExists("ledger_service", "ledger_entries", "ledger_entries_balance_guard"));
+addCheck("ledger_entries_update_trigger", triggerExists("ledger_service", "ledger_entries", "ledger_entries_update_guard"));
+addCheck("ledger_entries_delete_trigger", triggerExists("ledger_service", "ledger_entries", "ledger_entries_delete_guard"));
+addCheck("ledger_posting_requests_journal_reference", columnExists("ledger_service", "ledger_posting_requests", "journal_transaction_id"));
+addCheck("financial_posting_rules_exact_resolution_index", indexExists("ledger_service", "financial_posting_rules", "ux_financial_posting_rules_exact_resolution"));
+addCheck("financial_posting_rules_update_trigger", triggerExists("ledger_service", "financial_posting_rules", "financial_posting_rules_update_guard"));
+addCheck("financial_posting_rules_delete_trigger", triggerExists("ledger_service", "financial_posting_rules", "financial_posting_rules_delete_guard"));
+addCheck("ledger_promotion_rehearsals_evidence_unique", uniqueIndexExists("ledger_service", "ledger_promotion_rehearsals", "canonical_evidence_hash"));
+addCheck("ledger_promotion_rehearsals_mode_index", indexExists("ledger_service", "ledger_promotion_rehearsals", "idx_ledger_promotion_rehearsals_mode"));
+addCheck("ledger_promotion_rehearsals_readiness_index", indexExists("ledger_service", "ledger_promotion_rehearsals", "idx_ledger_promotion_rehearsals_readiness"));
+addCheck("ledger_promotion_rehearsals_result_index", indexExists("ledger_service", "ledger_promotion_rehearsals", "idx_ledger_promotion_rehearsals_result"));
+addCheck("ledger_promotion_rehearsals_update_trigger", triggerExists("ledger_service", "ledger_promotion_rehearsals", "ledger_promotion_rehearsals_update_guard"));
+addCheck("ledger_promotion_rehearsals_delete_trigger", triggerExists("ledger_service", "ledger_promotion_rehearsals", "ledger_promotion_rehearsals_delete_guard"));
+addCheck("ledger_authority_verifications_fingerprint_unique", uniqueIndexExists("ledger_service", "ledger_authority_verifications", "readiness_fingerprint"));
+addCheck("ledger_authority_verifications_hash_unique", uniqueIndexExists("ledger_service", "ledger_authority_verifications", "canonical_verification_hash"));
+addCheck("ledger_authority_verifications_result_index", indexExists("ledger_service", "ledger_authority_verifications", "idx_ledger_authority_verifications_result"));
+addCheck("ledger_authority_verifications_migration_index", indexExists("ledger_service", "ledger_authority_verifications", "idx_ledger_authority_verifications_migration"));
+addCheck("ledger_authority_verifications_authority_index", indexExists("ledger_service", "ledger_authority_verifications", "idx_ledger_authority_verifications_authority"));
+addCheck("ledger_authority_verifications_update_trigger", triggerExists("ledger_service", "ledger_authority_verifications", "ledger_authority_verifications_update_guard"));
+addCheck("ledger_authority_verifications_delete_trigger", triggerExists("ledger_service", "ledger_authority_verifications", "ledger_authority_verifications_delete_guard"));
+addCheck("ledger_transactions_posting_rule_id", columnExists("ledger_service", "ledger_transactions", "posting_rule_id"));
+addCheck("ledger_transactions_posting_rule_version", columnExists("ledger_service", "ledger_transactions", "posting_rule_version"));
+addCheck("ledger_transactions_posting_rule_index", indexExists("ledger_service", "ledger_transactions", "idx_ledger_transactions_posting_rule"));
+addCheck("catalog_financial_posting_rpc", functionExists("public", "post_catalog_financial_ledger_entry"));
+addCheck("ledger_recovery_events_table", existsRegclass("ledger_service.ledger_recovery_events"));
+addCheck("ledger_reconciliation_events_table", existsRegclass("ledger_service.ledger_reconciliation_events"));
+addCheck("ledger_recovery_events_request_index", indexExists("ledger_service", "ledger_recovery_events", "idx_ledger_recovery_events_request"));
+addCheck("ledger_recovery_events_classification_index", indexExists("ledger_service", "ledger_recovery_events", "idx_ledger_recovery_events_classification"));
+addCheck("ledger_reconciliation_events_instruction_index", indexExists("ledger_service", "ledger_reconciliation_events", "idx_ledger_reconciliation_events_instruction"));
+addCheck("ledger_reconciliation_events_result_index", indexExists("ledger_service", "ledger_reconciliation_events", "idx_ledger_reconciliation_events_result"));
+addCheck("ledger_recovery_events_update_guard", triggerExists("ledger_service", "ledger_recovery_events", "ledger_recovery_events_update_guard"));
+addCheck("ledger_recovery_events_delete_guard", triggerExists("ledger_service", "ledger_recovery_events", "ledger_recovery_events_delete_guard"));
+addCheck("ledger_reconciliation_events_update_guard", triggerExists("ledger_service", "ledger_reconciliation_events", "ledger_reconciliation_events_update_guard"));
+addCheck("ledger_reconciliation_events_delete_guard", triggerExists("ledger_service", "ledger_reconciliation_events", "ledger_reconciliation_events_delete_guard"));
+addCheck("credit_wallet_instruments_table", existsRegclass("credit_wallet_service.wallet_instrument_definitions"));
+addCheck("credit_wallet_scopes_table", existsRegclass("credit_wallet_service.wallet_scopes"));
+addCheck("credit_wallet_operation_requests_table", existsRegclass("credit_wallet_service.wallet_operation_requests"));
+addCheck("credit_wallet_operation_attempts_table", existsRegclass("credit_wallet_service.wallet_operation_attempts"));
+addCheck("credit_wallet_terminal_results_table", existsRegclass("credit_wallet_service.wallet_operation_terminal_results"));
+addCheck("credit_wallet_request_idempotency_unique", uniqueIndexExists("credit_wallet_service", "wallet_operation_requests", "idempotency_key"));
+addCheck("credit_wallet_request_hash_index", indexExists("credit_wallet_service", "wallet_operation_requests", "idx_wallet_operation_requests_hash"));
+addCheck("credit_wallet_request_update_guard", triggerExists("credit_wallet_service", "wallet_operation_requests", "wallet_operation_requests_update_guard"));
+addCheck("credit_wallet_request_delete_guard", triggerExists("credit_wallet_service", "wallet_operation_requests", "wallet_operation_requests_delete_guard"));
+addCheck("credit_wallet_attempt_update_guard", triggerExists("credit_wallet_service", "wallet_operation_attempts", "wallet_operation_attempts_update_guard"));
+addCheck("credit_wallet_attempt_delete_guard", triggerExists("credit_wallet_service", "wallet_operation_attempts", "wallet_operation_attempts_delete_guard"));
+addCheck("credit_wallet_terminal_update_guard", triggerExists("credit_wallet_service", "wallet_operation_terminal_results", "wallet_operation_terminal_results_update_guard"));
+addCheck("credit_wallet_terminal_delete_guard", triggerExists("credit_wallet_service", "wallet_operation_terminal_results", "wallet_operation_terminal_results_delete_guard"));
+addCheck("credit_reservation_exposure_equation", constraintExists("public", "credit_reservations", "credit_reservations_exposure_equation"));
+addCheck("credit_reservation_component_bounds", constraintExists("public", "credit_reservations", "credit_reservations_component_bounds"));
+addCheck("credit_release_update_guard", triggerExists("public", "credit_reservation_releases", "credit_reservation_releases_update_guard"));
+addCheck("credit_release_delete_guard", triggerExists("public", "credit_reservation_releases", "credit_reservation_releases_delete_guard"));
+addCheck("credit_settlement_update_guard", triggerExists("public", "credit_settlement_applications", "credit_settlement_applications_update_guard"));
+addCheck("credit_settlement_delete_guard", triggerExists("public", "credit_settlement_applications", "credit_settlement_applications_delete_guard"));
+addCheck("credit_reservation_captured_amount", columnExists("public", "credit_reservations", "captured_amount"));
+addCheck("credit_reservation_wallet_scope", columnExists("public", "credit_reservations", "wallet_id"));
+addCheck("credit_reservation_terminal_remaining", constraintExists("public", "credit_reservations", "credit_reservations_terminal_remaining_check"));
+addCheck("credit_reservation_projection_guard", triggerExists("public", "credit_reservations", "credit_reservations_canonical_projection_guard"));
+addCheck("credit_reservation_insert_guard", triggerExists("public", "credit_reservations", "credit_reservations_canonical_insert_guard"));
+addCheck("credit_reservation_legacy_capture_sync", triggerExists("public", "credit_reservations", "credit_reservations_legacy_capture_sync"));
+addCheck("credit_reservation_cancellation_table", existsRegclass("credit_wallet_service.wallet_reservation_cancellations"));
+addCheck("credit_reservation_cancellation_update_guard", triggerExists("credit_wallet_service", "wallet_reservation_cancellations", "wallet_reservation_cancellations_update_guard"));
+addCheck("credit_reservation_cancellation_delete_guard", triggerExists("credit_wallet_service", "wallet_reservation_cancellations", "wallet_reservation_cancellations_delete_guard"));
+addCheck("credit_settlement_instruction_unique", indexExists("public", "credit_settlement_applications", "ux_credit_settlement_authoritative_instruction"));
+addCheck("credit_settlement_instruction_hash", columnExists("public", "credit_settlement_applications", "settlement_instruction_hash"));
+addCheck("credit_settlement_legacy_instruction_adapter", triggerExists("public", "credit_settlement_applications", "credit_settlement_applications_legacy_instruction"));
+addCheck("credit_reserve_wallet_function", functionExists("credit_wallet_service", "reserve_wallet"));
+addCheck("credit_release_wallet_function", functionExists("credit_wallet_service", "release_wallet_reservation"));
+addCheck("credit_cancel_wallet_function", functionExists("credit_wallet_service", "cancel_wallet_reservation"));
+addCheck("credit_capture_wallet_function", functionExists("credit_wallet_service", "capture_wallet_reservation"));
+addCheck("credit_settlement_auth_evidence_table", existsRegclass("credit_wallet_service.settlement_instruction_authentication_evidence"));
+addCheck("credit_settlement_auth_evidence_update_guard", triggerExists("credit_wallet_service", "settlement_instruction_authentication_evidence", "settlement_instruction_auth_evidence_update_guard"));
+addCheck("credit_settlement_auth_evidence_delete_guard", triggerExists("credit_wallet_service", "settlement_instruction_authentication_evidence", "settlement_instruction_auth_evidence_delete_guard"));
+addCheck("credit_settlement_ledger_trace_index", indexExists("public", "credit_settlement_applications", "idx_credit_settlement_ledger_trace"));
+addCheck("credit_settlement_chain_trace_index", indexExists("public", "credit_settlement_applications", "idx_credit_settlement_chain_trace"));
+addCheck("credit_settlement_reversal_unique", indexExists("public", "credit_settlement_applications", "ux_credit_settlement_reversal_application"));
+addCheck("credit_authoritative_settlement_function", functionExists("credit_wallet_service", "apply_authoritative_wallet_settlement"));
+addCheck("credit_authoritative_reversal_function", functionExists("credit_wallet_service", "reverse_authoritative_wallet_settlement"));
+addCheck("credit_wallet_recovery_runs_table", existsRegclass("credit_wallet_service.wallet_recovery_runs"));
+addCheck("credit_wallet_recovery_evidence_table", existsRegclass("credit_wallet_service.wallet_recovery_evidence"));
+addCheck("credit_wallet_replay_evidence_table", existsRegclass("credit_wallet_service.wallet_replay_evidence"));
+addCheck("credit_wallet_projection_baselines_table", existsRegclass("credit_wallet_service.wallet_projection_baselines"));
+addCheck("credit_wallet_projection_verifications_table", existsRegclass("credit_wallet_service.wallet_projection_verifications"));
+addCheck("credit_wallet_reconciliation_evidence_table", existsRegclass("credit_wallet_service.wallet_reconciliation_evidence"));
+addCheck("credit_wallet_recovery_evidence_operation_index", indexExists("credit_wallet_service", "wallet_recovery_evidence", "idx_wallet_recovery_evidence_operation"));
+addCheck("credit_wallet_replay_evidence_operation_index", indexExists("credit_wallet_service", "wallet_replay_evidence", "idx_wallet_replay_evidence_operation"));
+addCheck("credit_wallet_projection_verification_wallet_index", indexExists("credit_wallet_service", "wallet_projection_verifications", "idx_wallet_projection_verifications_wallet"));
+addCheck("credit_wallet_reconciliation_type_index", indexExists("credit_wallet_service", "wallet_reconciliation_evidence", "idx_wallet_reconciliation_evidence_type"));
+addCheck("credit_wallet_recovery_append_only", triggerExists("credit_wallet_service", "wallet_recovery_evidence", "wallet_recovery_evidence_update_guard"));
+addCheck("credit_wallet_replay_append_only", triggerExists("credit_wallet_service", "wallet_replay_evidence", "wallet_replay_evidence_delete_guard"));
+addCheck("credit_wallet_projection_evidence_append_only", triggerExists("credit_wallet_service", "wallet_projection_verifications", "wallet_projection_verifications_update_guard"));
+addCheck("credit_wallet_reconciliation_append_only", triggerExists("credit_wallet_service", "wallet_reconciliation_evidence", "wallet_reconciliation_evidence_delete_guard"));
+addCheck("credit_wallet_authority_evidence_table", existsRegclass("credit_wallet_service.wallet_authority_evidence"));
+addCheck("credit_wallet_authority_evidence_type_index", indexExists("credit_wallet_service", "wallet_authority_evidence", "idx_wallet_authority_evidence_type_result"));
+addCheck("credit_wallet_authority_evidence_mode_index", indexExists("credit_wallet_service", "wallet_authority_evidence", "idx_wallet_authority_evidence_mode"));
+addCheck("credit_wallet_authority_evidence_fingerprint_index", indexExists("credit_wallet_service", "wallet_authority_evidence", "idx_wallet_authority_evidence_fingerprint"));
+addCheck("credit_wallet_authority_evidence_update_guard", triggerExists("credit_wallet_service", "wallet_authority_evidence", "wallet_authority_evidence_update_guard"));
+addCheck("credit_wallet_authority_evidence_delete_guard", triggerExists("credit_wallet_service", "wallet_authority_evidence", "wallet_authority_evidence_delete_guard"));
+addCheck("ledger_weekly_accounting_periods_table", existsRegclass("ledger_service.weekly_accounting_periods"));
+addCheck("ledger_weekly_accounting_period_scope_index", indexExists("ledger_service", "weekly_accounting_periods", "idx_ledger_weekly_period_scope"));
+addCheck("ledger_weekly_accounting_period_update_guard", triggerExists("ledger_service", "weekly_accounting_periods", "ledger_weekly_period_update_guard"));
+addCheck("ledger_weekly_accounting_period_delete_guard", triggerExists("ledger_service", "weekly_accounting_periods", "ledger_weekly_period_delete_guard"));
+addCheck("ledger_posting_accounting_time", columnExists("ledger_service", "ledger_posting_requests", "accounting_posted_at"));
+addCheck("ledger_posting_original_period_reference", columnExists("ledger_service", "ledger_posting_requests", "original_accounting_period_id"));
+addCheck("ledger_posting_current_period_reference", columnExists("ledger_service", "ledger_posting_requests", "posting_accounting_period_id"));
+addCheck("ledger_posting_period_guard", triggerExists("ledger_service", "ledger_posting_requests", "ledger_posting_requests_period_guard"));
+addCheck("auth_identity_profiles_table", existsRegclass("auth_service.identity_profiles"));
+addCheck("auth_external_identity_bindings_table", existsRegclass("auth_service.external_identity_bindings"));
+addCheck("auth_password_credential_versions_table", existsRegclass("auth_service.password_credential_versions"));
+addCheck("auth_canonical_sessions_table", existsRegclass("auth_service.canonical_sessions"));
+addCheck("auth_password_reset_requests_table", existsRegclass("auth_service.password_reset_requests"));
+addCheck("auth_password_reset_consumptions_table", existsRegclass("auth_service.password_reset_consumptions"));
+addCheck("auth_lifecycle_events_table", existsRegclass("auth_service.identity_lifecycle_events"));
+addCheck("auth_audit_evidence_table", existsRegclass("auth_service.authentication_audit_evidence"));
+addCheck("auth_login_attempt_evidence_table", existsRegclass("auth_service.authentication_login_attempts"));
+addCheck("auth_password_history_index", indexExists("auth_service", "password_credential_versions", "idx_auth_password_history_identity"));
+addCheck("auth_single_active_session_index", indexExists("auth_service", "canonical_sessions", "ux_auth_single_active_session"));
+addCheck("auth_external_binding_immutable", triggerExists("auth_service", "external_identity_bindings", "auth_external_bindings_update_guard"));
+addCheck("auth_password_history_immutable", triggerExists("auth_service", "password_credential_versions", "auth_password_versions_update_guard"));
+addCheck("auth_lifecycle_evidence_immutable", triggerExists("auth_service", "identity_lifecycle_events", "auth_lifecycle_events_update_guard"));
+addCheck("auth_audit_evidence_immutable", triggerExists("auth_service", "authentication_audit_evidence", "auth_audit_evidence_update_guard"));
+addCheck("auth_login_attempt_evidence_immutable", triggerExists("auth_service", "authentication_login_attempts", "auth_login_attempts_update_guard"));
+addCheck("auth_password_reset_requests_immutable", triggerExists("auth_service", "password_reset_requests", "auth_password_reset_requests_update_guard"));
+addCheck("auth_physical_identity_delete_blocked", triggerExists("auth_service", "identities", "auth_identities_delete_guard"));
 addCheck("game_engine_duplicate_create_conflict_resolved_or_blocked", true, {
   resolution: manifest.knownConflicts?.find((conflict) => conflict.id === "game_engine_evaluation_table_duplicate_create")?.resolution,
 });

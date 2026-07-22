@@ -98,6 +98,7 @@ export type CreateLedgerEntryInput = {
   transactionType: LedgerTransactionType;
   direction: LedgerDirection;
   amount: number;
+  effectiveAt?: string | null;
   reference?: LedgerReference;
   idempotencyKey?: string | null;
   reversalOfLedgerEntryId?: string | null;

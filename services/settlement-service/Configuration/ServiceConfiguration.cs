@@ -21,7 +21,8 @@ public sealed record ServiceConfiguration(
             new DatabaseConfiguration(GetEnvironmentValue("DATABASE_URL", string.Empty)),
             new ServiceIntegrationConfiguration(
                 GetEnvironmentValue("LEDGER_SERVICE_URL", string.Empty),
-                GetEnvironmentValue("CREDIT_SERVICE_URL", string.Empty)),
+                GetEnvironmentValue("CREDIT_SERVICE_URL", string.Empty),
+                GetEnvironmentValue("CREDIT_WALLET_INTERNAL_API_KEY", string.Empty)),
             new RabbitMqConfiguration(
                 GetEnvironmentValue("RABBITMQ_URL", string.Empty),
                 GetEnvironmentValue("RABBITMQ_EXCHANGE_NAME", "lottery.events")),
@@ -43,7 +44,10 @@ public sealed record RabbitMqConfiguration(string Url, string ExchangeName);
 
 public sealed record DatabaseConfiguration(string Url);
 
-public sealed record ServiceIntegrationConfiguration(string LedgerServiceUrl, string CreditServiceUrl);
+public sealed record ServiceIntegrationConfiguration(
+    string LedgerServiceUrl,
+    string CreditServiceUrl,
+    string CreditWalletInternalApiKey);
 
 public sealed record RedisConfiguration(string Url);
 

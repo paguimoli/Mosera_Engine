@@ -1,12 +1,14 @@
 import { supabaseServerAdmin } from "@/src/lib/supabase/server-admin-client";
 import { logger } from "@/src/lib/observability/logger";
 import {
-  AUTHENTICATION_EVENT_TYPES,
   IDENTITY_CLASSES,
-  USER_STATUSES,
 } from "../auth/auth.constants";
 import type { AuthContext } from "../auth/auth-context.types";
-import { saveAuthAuditEvent } from "../auth/auth.repository";
+import {
+  revokeAllSessionsWithAuthService,
+  revokeSessionWithAuthService,
+  transitionIdentityWithAuthService,
+} from "../auth/auth-service.client";
 import type {
   OperationalSession,
   OperationalUserInventoryItem,
@@ -354,13 +356,11 @@ export async function revokeOperationalSession({
     throw new OperationalAccessError("Session id is required.");
   }
 
-  const revokedAt = new Date().toISOString();
   const { data, error } = await supabaseServerAdmin
     .from("user_sessions")
-    .update({ revoked_at: revokedAt })
+    .select("id, user_id")
     .eq("id", sessionId)
     .is("revoked_at", null)
-    .select("id, user_id")
     .maybeSingle();
 
   if (error) {
@@ -371,15 +371,13 @@ export async function revokeOperationalSession({
     throw new OperationalAccessError("Active session was not found.");
   }
 
-  await saveAuthAuditEvent({
-    userId: data.user_id,
-    eventType: AUTHENTICATION_EVENT_TYPES.SESSION_REVOKED,
-    metadata: {
-      sessionId,
-      actorUserId: actor.user.id,
-      revokedAt,
-    },
+  const result = await revokeSessionWithAuthService({
+    sessionId,
+    identityId: data.user_id,
+    actorIdentityId: actor.user.id,
+    reason: "forced_admin_revocation",
   });
+  if (result.status !== 200 || !result.body?.success) throw new OperationalAccessError(result.body?.error ?? "Auth Service session revocation failed.");
 }
 
 export async function revokeAllOperationalSessionsForUser({
@@ -393,25 +391,12 @@ export async function revokeAllOperationalSessionsForUser({
     throw new OperationalAccessError("User id is required.");
   }
 
-  const revokedAt = new Date().toISOString();
-  const { error } = await supabaseServerAdmin
-    .from("user_sessions")
-    .update({ revoked_at: revokedAt })
-    .eq("user_id", userId)
-    .is("revoked_at", null);
-
-  if (error) {
-    throw new OperationalAccessError(error.message);
-  }
-
-  await saveAuthAuditEvent({
-    userId,
-    eventType: AUTHENTICATION_EVENT_TYPES.ALL_USER_SESSIONS_REVOKED,
-    metadata: {
-      actorUserId: actor.user.id,
-      revokedAt,
-    },
+  const result = await revokeAllSessionsWithAuthService({
+    identityId: userId,
+    actorIdentityId: actor.user.id,
+    reason: "forced_admin_revocation",
   });
+  if (result.status !== 200 || !result.body?.success) throw new OperationalAccessError(result.body?.error ?? "Auth Service session revocation failed.");
 }
 
 function requireDifferentBreakGlassActor({
@@ -464,45 +449,14 @@ export async function disableBreakGlassAccount({
   requireDifferentBreakGlassActor({ targetUserId: userId, actor });
   await assertBreakGlassAccountExists(userId);
 
-  const disabledAt = new Date().toISOString();
-  const [{ error: breakGlassError }, { error: userError }, { error: sessionError }] =
-    await Promise.all([
-      supabaseServerAdmin
-        .from("break_glass_accounts")
-        .update({ is_enabled: false })
-        .eq("user_id", userId),
-      supabaseServerAdmin
-        .from("platform_users")
-        .update({ status: USER_STATUSES.DISABLED })
-        .eq("id", userId)
-        .eq("identity_class", IDENTITY_CLASSES.BREAK_GLASS),
-      supabaseServerAdmin
-        .from("user_sessions")
-        .update({ revoked_at: disabledAt })
-        .eq("user_id", userId)
-        .is("revoked_at", null),
-    ]);
-
-  if (breakGlassError) {
-    throw new OperationalAccessError(breakGlassError.message);
-  }
-
-  if (userError) {
-    throw new OperationalAccessError(userError.message);
-  }
-
-  if (sessionError) {
-    throw new OperationalAccessError(sessionError.message);
-  }
-
-  await saveAuthAuditEvent({
-    userId,
-    eventType: AUTHENTICATION_EVENT_TYPES.BREAK_GLASS_ACCOUNT_DISABLED,
-    metadata: {
-      actorUserId: actor.user.id,
-      disabledAt,
-    },
+  const result = await transitionIdentityWithAuthService({
+    identityId: userId,
+    expectedStatus: "Emergency",
+    targetStatus: "Disabled",
+    actorIdentityId: actor.user.id,
+    reason: "break_glass_account_disabled",
   });
+  if (result.status !== 200 || !result.body?.success) throw new OperationalAccessError(result.body?.error ?? "Auth Service lifecycle transition failed.");
 }
 
 export async function restoreBreakGlassAccount({
@@ -519,33 +473,12 @@ export async function restoreBreakGlassAccount({
   requireDifferentBreakGlassActor({ targetUserId: userId, actor });
   await assertBreakGlassAccountExists(userId);
 
-  const restoredAt = new Date().toISOString();
-  const [{ error: breakGlassError }, { error: userError }] = await Promise.all([
-    supabaseServerAdmin
-      .from("break_glass_accounts")
-      .update({ is_enabled: true })
-      .eq("user_id", userId),
-    supabaseServerAdmin
-      .from("platform_users")
-      .update({ status: USER_STATUSES.ACTIVE })
-      .eq("id", userId)
-      .eq("identity_class", IDENTITY_CLASSES.BREAK_GLASS),
-  ]);
-
-  if (breakGlassError) {
-    throw new OperationalAccessError(breakGlassError.message);
-  }
-
-  if (userError) {
-    throw new OperationalAccessError(userError.message);
-  }
-
-  await saveAuthAuditEvent({
-    userId,
-    eventType: AUTHENTICATION_EVENT_TYPES.BREAK_GLASS_ACCOUNT_RESTORED,
-    metadata: {
-      actorUserId: actor.user.id,
-      restoredAt,
-    },
+  const result = await transitionIdentityWithAuthService({
+    identityId: userId,
+    expectedStatus: "Disabled",
+    targetStatus: "Active",
+    actorIdentityId: actor.user.id,
+    reason: "break_glass_account_restored",
   });
+  if (result.status !== 200 || !result.body?.success) throw new OperationalAccessError(result.body?.error ?? "Auth Service lifecycle transition failed.");
 }

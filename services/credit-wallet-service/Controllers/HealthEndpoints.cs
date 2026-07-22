@@ -1,3 +1,4 @@
+using CreditWalletService.Application;
 using CreditWalletService.Configuration;
 using CreditWalletService.Contracts;
 using CreditWalletService.Infrastructure;
@@ -66,6 +67,10 @@ public static class HealthEndpoints
             HttpContext context,
             ServiceConfiguration configuration,
             InfrastructureReadinessChecks readinessChecks,
+            CanonicalWalletOperationRepository canonicalRepository,
+            CreditWalletRecoveryRepository recoveryRepository,
+            CreditWalletAuthorityService authorityService,
+            InternalServiceAuthorizer internalServiceAuthorizer,
             CancellationToken cancellationToken) =>
         {
             var rabbitMqReady = await readinessChecks.CheckRabbitMqAsync(cancellationToken);
@@ -76,6 +81,9 @@ public static class HealthEndpoints
                 : new DependencyHealthResult("database", false, "DATABASE_URL is not configured.");
             var durableReadsReady = databaseConfigured && databaseReady.Ready;
             var reconciliationReady = durableReadsReady;
+            var canonicalReady = await canonicalRepository.CheckReadinessAsync(cancellationToken);
+            var recoveryReady = await recoveryRepository.CheckReadinessAsync(cancellationToken);
+            var authorityReadiness = await authorityService.BuildReadinessReportAsync(null, cancellationToken);
             var ready = rabbitMqReady.Ready && redisReady.Ready && (!databaseConfigured || databaseReady.Ready);
             var dependencies = new Dictionary<string, string>
             {
@@ -104,6 +112,56 @@ public static class HealthEndpoints
                     reconciliationReady ? "reserveReleaseSettleReconcileOnly" : "none",
                     reconciliationReady ? "credit-wallet-authority-dry-run-baseline" : null,
                     reconciliationReady),
+                new CanonicalWalletOperationReadiness(
+                    canonicalReady,
+                    canonicalReady,
+                    canonicalReady,
+                    canonicalReady,
+                    canonicalReady,
+                    canonicalReady,
+                    canonicalReady,
+                    canonicalReady,
+                    internalServiceAuthorizer.ProductionReady,
+                    ["RESERVE", "RELEASE", "CANCEL", "SETTLE", "REVERSE"],
+                    ["ISSUE", "EXPIRE", "MANUAL_ADJUSTMENT"],
+                    new ReservationLifecycleReadiness(
+                        canonicalReady,
+                        canonicalReady,
+                        canonicalReady,
+                        canonicalReady,
+                        canonicalReady,
+                        canonicalReady,
+                        canonicalReady,
+                        canonicalReady,
+                        canonicalReady,
+                        canonicalReady,
+                        "NOT_REQUIRED_FOR_CURRENT_CREDIT_ONLY_LAUNCH",
+                        canonicalReady,
+                        false),
+                    new SettlementIntegrationReadiness(
+                        canonicalReady && internalServiceAuthorizer.ProductionReady,
+                        canonicalReady,
+                        canonicalReady,
+                        canonicalReady,
+                        canonicalReady,
+                        canonicalReady,
+                        canonicalReady,
+                        canonicalReady,
+                        false),
+                    new WalletRecoveryReadiness(
+                        recoveryReady,
+                        recoveryReady,
+                        recoveryReady,
+                        recoveryReady,
+                        recoveryReady,
+                        recoveryReady,
+                        recoveryReady,
+                        recoveryReady,
+                        recoveryReady,
+                        recoveryReady,
+                        true,
+                        false)),
+                authorityReadiness,
                 context.GetCorrelationId());
 
             return ready ? Results.Ok(response) : Results.Json(response, statusCode: 503);

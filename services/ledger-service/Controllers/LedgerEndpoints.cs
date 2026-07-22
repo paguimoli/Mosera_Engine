@@ -14,6 +14,7 @@ public static class LedgerEndpoints
             HttpContext context,
             CreateLedgerEntryRequest request,
             DurableLedgerService durableLedgerService,
+            LedgerPostingService ledgerPostingService,
             LedgerContractService ledgerContractService,
             ILoggerFactory loggerFactory) =>
         {
@@ -35,7 +36,18 @@ public static class LedgerEndpoints
                 return Results.BadRequest(ledgerContractService.CreateValidationError(
                     correlationId,
                     "Ledger amount must be a positive integer minor currency value with ISO-4217 currency.",
-                    "money"));
+                        "money"));
+            }
+
+            var canonicalValidationErrors = ledgerContractService.ValidateCanonicalPostingRequest(
+                request,
+                idempotencyKey);
+            if (canonicalValidationErrors.Count > 0)
+            {
+                return Results.BadRequest(ledgerContractService.CreateValidationError(
+                    correlationId,
+                    string.Join(" ", canonicalValidationErrors),
+                    "canonicalRequest"));
             }
 
             if (!durableLedgerService.MutationCapabilityEnabled)
@@ -51,16 +63,72 @@ public static class LedgerEndpoints
 
             try
             {
-                var ledgerEntry = durableLedgerService.PostEntryAsync(
+                var result = ledgerPostingService.PostAsync(
                     request,
                     idempotencyKey,
+                    correlationId,
                     context.RequestAborted).GetAwaiter().GetResult();
 
-                return Results.Ok(new LedgerEntryResponse(ledgerEntry, correlationId));
+                return Results.Ok(new LedgerEntryResponse(
+                    result.LedgerEntry,
+                    correlationId,
+                    result.PostingRequest.Id,
+                    result.PostingRequest.JournalTransactionId));
             }
             catch (Exception error) when (DurableLedgerService.IsBusinessRuleError(error))
             {
                 logger.LogWarning(error, "Ledger entry command failed validation.");
+                return Results.BadRequest(ledgerContractService.CreateValidationError(
+                    correlationId,
+                    error.Message,
+                    "ledgerEntry"));
+            }
+            catch (FinancialPostingCatalogException error)
+            {
+                logger.LogWarning(error, "Ledger posting catalog validation failed.");
+                return Results.BadRequest(ledgerContractService.CreateValidationError(
+                    correlationId,
+                    error.Message,
+                    "postingRule"));
+            }
+            catch (LedgerAccountingPeriodException error)
+            {
+                logger.LogWarning(error, "Ledger accounting-period validation failed.");
+                return Results.BadRequest(ledgerContractService.CreateValidationError(
+                    correlationId,
+                    error.Message,
+                    "accountingPeriod"));
+            }
+            catch (DurableLedgerIdempotencyConflictException error)
+            {
+                logger.LogWarning(error, "Ledger entry command failed idempotency conflict validation.");
+                return Results.Conflict(new ErrorResponse(
+                    new ErrorDto(
+                        LedgerErrorCodes.IdempotencyConflict,
+                        "Idempotency key already exists for a different canonical ledger request."),
+                    correlationId));
+            }
+            catch (LedgerPostingRequestConflictException error)
+            {
+                logger.LogWarning(error, "Ledger posting request failed durable idempotency conflict validation.");
+                return Results.Conflict(new ErrorResponse(
+                    new ErrorDto(
+                        LedgerErrorCodes.IdempotencyConflict,
+                        "Idempotency key already exists for a different durable Ledger posting request."),
+                    correlationId));
+            }
+            catch (LedgerUnknownResultException error)
+            {
+                logger.LogError(error, "Ledger posting result could not be proven.");
+                return Results.Json(
+                    new ErrorResponse(
+                        new ErrorDto(LedgerErrorCodes.UnknownResult, error.Message),
+                        correlationId),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            catch (DurableLedgerRepositoryException error)
+            {
+                logger.LogWarning(error, "Ledger entry command failed repository validation.");
                 return Results.BadRequest(ledgerContractService.CreateValidationError(
                     correlationId,
                     error.Message,
@@ -73,21 +141,32 @@ public static class LedgerEndpoints
             Guid ledgerEntryId,
             ReverseLedgerEntryRequest request,
             DurableLedgerService durableLedgerService,
+            LedgerPostingService ledgerPostingService,
             LedgerContractService ledgerContractService,
             ILoggerFactory loggerFactory) =>
         {
             var correlationId = context.GetCorrelationId();
+            var idempotencyKey = GetIdempotencyKey(context);
             var logger = loggerFactory.CreateLogger("LedgerCommandEndpoints");
             logger.LogInformation(
                 "Ledger reversal command received. LedgerEntryId: {LedgerEntryId}.",
                 ledgerEntryId);
 
-            if (string.IsNullOrWhiteSpace(request.Reason))
+            if (string.IsNullOrWhiteSpace(idempotencyKey))
+            {
+                return Results.BadRequest(ledgerContractService.CreateMissingIdempotencyKeyError(correlationId));
+            }
+
+            var canonicalValidationErrors = ledgerContractService.ValidateCanonicalReversalRequest(
+                ledgerEntryId,
+                request,
+                idempotencyKey);
+            if (canonicalValidationErrors.Count > 0)
             {
                 return Results.BadRequest(ledgerContractService.CreateValidationError(
                     correlationId,
-                    "Reversal reason is required.",
-                    "reason"));
+                    string.Join(" ", canonicalValidationErrors),
+                    "canonicalRequest"));
             }
 
             if (!durableLedgerService.MutationCapabilityEnabled)
@@ -103,18 +182,24 @@ public static class LedgerEndpoints
 
             try
             {
-                var ledgerEntry = durableLedgerService.ReverseEntryAsync(
+                var result = ledgerPostingService.ReverseAsync(
                     ledgerEntryId,
                     request,
+                    idempotencyKey,
+                    correlationId,
                     context.RequestAborted).GetAwaiter().GetResult();
 
-                return ledgerEntry is null
+                return result is null
                     ? Results.NotFound(new ErrorResponse(
                         new ErrorDto(
                             LedgerErrorCodes.EntryNotFound,
                             "Ledger entry was not found."),
                         correlationId))
-                    : Results.Ok(new LedgerEntryResponse(ledgerEntry, correlationId));
+                    : Results.Ok(new LedgerEntryResponse(
+                        result.LedgerEntry,
+                        correlationId,
+                        result.PostingRequest.Id,
+                        result.PostingRequest.JournalTransactionId));
             }
             catch (Exception error) when (DurableLedgerService.IsBusinessRuleError(error))
             {
@@ -123,6 +208,58 @@ public static class LedgerEndpoints
                     correlationId,
                     error.Message,
                     "ledgerEntry"));
+            }
+            catch (LedgerAccountingPeriodException error)
+            {
+                logger.LogWarning(error, "Ledger reversal accounting-period validation failed.");
+                return Results.BadRequest(ledgerContractService.CreateValidationError(
+                    correlationId,
+                    error.Message,
+                    "accountingPeriod"));
+            }
+            catch (DurableLedgerIdempotencyConflictException error)
+            {
+                logger.LogWarning(error, "Ledger reversal command failed idempotency conflict validation.");
+                return Results.Conflict(new ErrorResponse(
+                    new ErrorDto(
+                        LedgerErrorCodes.IdempotencyConflict,
+                        "Idempotency key already exists for a different canonical ledger reversal."),
+                    correlationId));
+            }
+            catch (LedgerPostingRequestConflictException error)
+            {
+                logger.LogWarning(error, "Ledger reversal request failed durable idempotency conflict validation.");
+                return Results.Conflict(new ErrorResponse(
+                    new ErrorDto(
+                        LedgerErrorCodes.IdempotencyConflict,
+                        "Idempotency key already exists for a different durable Ledger reversal request."),
+                    correlationId));
+            }
+            catch (DurableLedgerReversalConflictException error)
+            {
+                logger.LogWarning(error, "Ledger reversal command failed reversal conflict validation.");
+                return Results.Conflict(new ErrorResponse(
+                    new ErrorDto(
+                        LedgerErrorCodes.ReversalNotAllowed,
+                        error.Message),
+                    correlationId));
+            }
+            catch (DurableLedgerRepositoryException error)
+            {
+                logger.LogWarning(error, "Ledger reversal command failed repository validation.");
+                return Results.BadRequest(ledgerContractService.CreateValidationError(
+                    correlationId,
+                    error.Message,
+                    "ledgerEntry"));
+            }
+            catch (LedgerUnknownResultException error)
+            {
+                logger.LogError(error, "Ledger reversal result could not be proven.");
+                return Results.Json(
+                    new ErrorResponse(
+                        new ErrorDto(LedgerErrorCodes.UnknownResult, error.Message),
+                        correlationId),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
             }
         });
 
@@ -234,6 +371,100 @@ public static class LedgerEndpoints
                 page.Entries,
                 new PaginationDto(resolvedLimit, page.NextCursor),
                 correlationId));
+        });
+
+        group.MapGet("/posting-requests/{requestId:guid}", (
+            HttpContext context,
+            Guid requestId,
+            LedgerPostingService ledgerPostingService) =>
+        {
+            var request = ledgerPostingService.FindRequestAsync(
+                requestId,
+                context.RequestAborted).GetAwaiter().GetResult();
+            return request is null
+                ? Results.NotFound(new ErrorResponse(
+                    new ErrorDto(
+                        LedgerErrorCodes.PostingRequestNotFound,
+                        "Ledger posting request was not found."),
+                    context.GetCorrelationId()))
+                : Results.Ok(new LedgerPostingRequestResponse(
+                    request,
+                    context.GetCorrelationId()));
+        });
+
+        group.MapGet("/posting-requests/{requestId:guid}/attempts", (
+            HttpContext context,
+            Guid requestId,
+            LedgerPostingService ledgerPostingService) =>
+        {
+            var attempts = ledgerPostingService.ListAttemptsAsync(
+                requestId,
+                context.RequestAborted).GetAwaiter().GetResult();
+            return Results.Ok(new LedgerPostingAttemptsResponse(
+                attempts,
+                context.GetCorrelationId()));
+        });
+
+        group.MapPost("/posting-requests/{requestId:guid}/recover", (
+            HttpContext context,
+            Guid requestId,
+            LedgerPostingService ledgerPostingService) =>
+        {
+            try
+            {
+                var result = ledgerPostingService.RecoverAsync(
+                    requestId,
+                    context.RequestAborted).GetAwaiter().GetResult();
+                return Results.Ok(new LedgerEntryResponse(
+                    result.LedgerEntry,
+                    context.GetCorrelationId(),
+                    result.PostingRequest.Id,
+                    result.PostingRequest.JournalTransactionId));
+            }
+            catch (LedgerPostingRequestNotFoundException)
+            {
+                return Results.NotFound(new ErrorResponse(
+                    new ErrorDto(
+                        LedgerErrorCodes.PostingRequestNotFound,
+                        "Ledger posting request was not found."),
+                    context.GetCorrelationId()));
+            }
+            catch (LedgerUnknownResultException error)
+            {
+                return Results.Conflict(new ErrorResponse(
+                    new ErrorDto(LedgerErrorCodes.UnknownResult, error.Message),
+                    context.GetCorrelationId()));
+            }
+        });
+
+        group.MapPost("/posting-requests/{requestId:guid}/replay", (
+            HttpContext context,
+            Guid requestId,
+            LedgerPostingService ledgerPostingService) =>
+        {
+            try
+            {
+                var evidence = ledgerPostingService.ReplayAsync(
+                    requestId,
+                    context.RequestAborted).GetAwaiter().GetResult();
+                return evidence.Result == LedgerReplayResult.MATCH
+                    ? Results.Ok(new LedgerReplayResponse(evidence, context.GetCorrelationId()))
+                    : Results.Conflict(new LedgerReplayResponse(evidence, context.GetCorrelationId()));
+            }
+            catch (LedgerPostingRequestNotFoundException)
+            {
+                return Results.NotFound(new ErrorResponse(
+                    new ErrorDto(
+                        LedgerErrorCodes.PostingRequestNotFound,
+                        "Ledger posting request was not found."),
+                    context.GetCorrelationId()));
+            }
+            catch (LedgerUnknownResultException error)
+            {
+                return Results.Conflict(new ErrorResponse(
+                    new ErrorDto(LedgerErrorCodes.UnknownResult, error.Message),
+                    context.GetCorrelationId()));
+            }
         });
 
         group.MapPost("/shadow/execute", async (

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Pool, type QueryResultRow } from "pg";
 import { readAuthorityConfigurations } from "@/src/domains/authority-control/authority-control.repository";
 
@@ -28,6 +28,11 @@ type LedgerEntry = {
     currency: string;
   };
   idempotencyKey: string | null;
+  canonicalRequestHash?: string | null;
+  originalLedgerEntryHash?: string | null;
+  reversalReasonCode?: string | null;
+  reversalPolicyVersion?: string | null;
+  canonicalReversalHash?: string | null;
   reversalOfLedgerEntryId: string | null;
 };
 
@@ -62,6 +67,62 @@ function assert(condition: boolean, message: string, metadata: Record<string, un
 
 function pass(name: string, metadata: Record<string, unknown> = {}) {
   checks.push({ name, status: "PASS", metadata });
+}
+
+function sha256(value: string) {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+function canonicalJson(value: Record<string, unknown>) {
+  return JSON.stringify(
+    Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)))
+  ).replaceAll("+", "\\u002B");
+}
+
+function toDotNetUtcRoundtrip(value: string) {
+  return `${new Date(value).toISOString().replace("Z", "0000+00:00")}`;
+}
+
+function computeCanonicalLedgerRequestHash(input: {
+  amountMinor: number;
+  currency: string;
+  direction: string;
+  effectiveAt: string;
+  idempotencyKey: string;
+  instructionHash: string;
+  instructionId: string;
+  instructionType: string;
+  ledgerAccountId?: string | null;
+  ledgerWalletId: string;
+  minorUnitPrecision: number;
+  originatingAuthority: string;
+  referenceId?: string | null;
+  referenceType?: string | null;
+  reversalOfLedgerEntryId?: string | null;
+  settlementRecordId?: string | null;
+  transactionType: string;
+}) {
+  return sha256(
+    canonicalJson({
+      amountMinor: input.amountMinor,
+      currency: input.currency.trim(),
+      direction: input.direction,
+      effectiveAt: toDotNetUtcRoundtrip(input.effectiveAt),
+      idempotencyKey: input.idempotencyKey.trim(),
+      instructionHash: input.instructionHash.trim(),
+      instructionId: input.instructionId.trim(),
+      instructionType: input.instructionType.trim(),
+      ledgerAccountId: input.ledgerAccountId?.trim() || null,
+      ledgerWalletId: input.ledgerWalletId.trim(),
+      minorUnitPrecision: input.minorUnitPrecision,
+      originatingAuthority: input.originatingAuthority.trim(),
+      referenceId: input.referenceId?.trim() || null,
+      referenceType: input.referenceType?.trim() || null,
+      reversalOfLedgerEntryId: input.reversalOfLedgerEntryId?.trim() || null,
+      settlementRecordId: input.settlementRecordId?.trim() || null,
+      transactionType: input.transactionType,
+    })
+  );
 }
 
 function getDatabaseUrl() {
@@ -182,7 +243,30 @@ from public.post_financial_ledger_entry(
   return mapLedgerRow(result.rows[0]);
 }
 
-async function postServiceLedgerEntry(walletId: string, idempotencyKey: string, amount: number) {
+async function postServiceLedgerEntry(wallet: WalletRow, idempotencyKey: string, amount: number) {
+  const effectiveAt = "2026-01-02T00:00:00.000Z";
+  const instructionId = idempotencyKey;
+  const instructionType = "DEPOSIT";
+  const instructionHash = sha256(canonicalJson({ amount, idempotencyKey, instructionId, instructionType }));
+  const canonicalRequestHash = computeCanonicalLedgerRequestHash({
+    amountMinor: amount,
+    currency: "USD",
+    direction: "CREDIT",
+    effectiveAt,
+    idempotencyKey,
+    instructionHash,
+    instructionId,
+    instructionType,
+    ledgerAccountId: wallet.account_id,
+    ledgerWalletId: wallet.id,
+    minorUnitPrecision: 2,
+    originatingAuthority: "ledger-service-qa",
+    referenceId: idempotencyKey,
+    referenceType: "qa_ledger_authority_dry_run",
+    reversalOfLedgerEntryId: null,
+    settlementRecordId: null,
+    transactionType: "DEPOSIT",
+  });
   const response = await fetch(`${ledgerServiceUrl}/v1/ledger/entries`, {
     method: "POST",
     headers: {
@@ -191,17 +275,27 @@ async function postServiceLedgerEntry(walletId: string, idempotencyKey: string, 
       "x-correlation-id": `qa-ledger-authority-${idempotencyKey}`,
     },
     body: JSON.stringify({
-      walletId,
+      walletId: wallet.id,
+      ledgerAccountId: wallet.account_id,
+      instructionId,
+      instructionType,
+      instructionHash,
+      originatingAuthority: "ledger-service-qa",
+      settlementRecordId: null,
       transactionType: "DEPOSIT",
       direction: "CREDIT",
       money: {
         amount,
         currency: "USD",
       },
+      minorUnitPrecision: 2,
+      canonicalRequestHash,
+      effectiveAt,
       reference: {
         type: "qa_ledger_authority_dry_run",
         id: idempotencyKey,
       },
+      reversalOfLedgerEntryId: null,
       metadata: {
         qa: "ledger-service-authority-dry-run",
         path: "service",
@@ -218,15 +312,59 @@ async function postServiceLedgerEntry(walletId: string, idempotencyKey: string, 
   return body.ledgerEntry as LedgerEntry;
 }
 
-async function reverseServiceLedgerEntry(ledgerEntryId: string) {
-  const response = await fetch(`${ledgerServiceUrl}/v1/ledger/entries/${ledgerEntryId}/reverse`, {
+async function reverseServiceLedgerEntry(originalEntry: LedgerEntry) {
+  const effectiveAt = "2026-01-02T00:05:00.000Z";
+  const idempotencyKey = `ledger-reversal:${originalEntry.id.replaceAll("-", "")}:authority-dry-run`;
+  const instructionId = `reversal-${originalEntry.id}`;
+  const instructionType = "LEDGER_REVERSAL";
+  const reasonCode = "CORRECTION";
+  const instructionHash = sha256(canonicalJson({ instructionId, instructionType, originalLedgerEntryId: originalEntry.id }));
+  const canonicalReversalHash = sha256(canonicalJson({
+    amountMinor: originalEntry.money.amount,
+    currency: originalEntry.money.currency,
+    direction: "DEBIT",
+    effectiveAt: toDotNetUtcRoundtrip(effectiveAt),
+    idempotencyKey,
+    instructionHash,
+    instructionId,
+    instructionType,
+    ledgerAccountId: originalEntry.accountId,
+    ledgerWalletId: originalEntry.walletId,
+    minorUnitPrecision: 2,
+    originalLedgerEntryHash: originalEntry.canonicalRequestHash,
+    originalLedgerEntryId: originalEntry.id,
+    originatingAuthority: "ledger-service-qa",
+    reasonCode,
+    referenceId: originalEntry.id,
+    referenceType: "ledger_entry",
+    reversalOfLedgerEntryId: originalEntry.id,
+    reversalPolicyVersion: "ledger-reversal-v1",
+    settlementRecordId: null,
+    transactionType: "REVERSAL",
+  }));
+  const response = await fetch(`${ledgerServiceUrl}/v1/ledger/entries/${originalEntry.id}/reverse`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-correlation-id": `qa-ledger-reversal-${ledgerEntryId}`,
+      "Idempotency-Key": idempotencyKey,
+      "x-correlation-id": `qa-ledger-reversal-${originalEntry.id}`,
     },
     body: JSON.stringify({
-      reason: "qa-ledger-service-authority-dry-run",
+      originalLedgerEntryId: originalEntry.id,
+      originalLedgerEntryHash: originalEntry.canonicalRequestHash,
+      walletId: originalEntry.walletId,
+      ledgerAccountId: originalEntry.accountId,
+      direction: "DEBIT",
+      money: originalEntry.money,
+      instructionId,
+      instructionType,
+      instructionHash,
+      originatingAuthority: "ledger-service-qa",
+      reasonCode,
+      reversalPolicyVersion: "ledger-reversal-v1",
+      canonicalReversalHash,
+      effectiveAt,
+      minorUnitPrecision: 2,
       actorUserId: null,
       metadata: {
         qa: "ledger-service-authority-dry-run",
@@ -270,6 +408,18 @@ async function verifyHealthEvidence() {
     body,
   });
   assert(body?.capabilities?.idempotencySupportConfigured === true, "Idempotency support should be configured.", {
+    body,
+  });
+  assert(body?.capabilities?.canonicalPostingContractReady === true, "Canonical posting contract should be ready.", {
+    body,
+  });
+  assert(body?.capabilities?.canonicalHashValidationReady === true, "Canonical hash validation should be ready.", {
+    body,
+  });
+  assert(body?.capabilities?.conflictSafeIdempotencyReady === true, "Conflict-safe idempotency should be ready.", {
+    body,
+  });
+  assert(body?.capabilities?.currencyAccountValidationReady === true, "Currency/account validation should be ready.", {
     body,
   });
   assert(body?.capabilities?.qaCapabilityMarker === "ledger-service-authority-dry-run", "QA marker should be present.", {
@@ -347,8 +497,8 @@ async function main() {
     const monolithDuplicate = await postMonolithLedgerEntry(pool, monolithWallet.id, monolithIdempotencyKey, amount);
     verifyDuplicateHandling(monolithEntry, monolithDuplicate, "Monolith");
 
-    const serviceEntry = await postServiceLedgerEntry(serviceWallet.id, serviceIdempotencyKey, amount);
-    const serviceDuplicate = await postServiceLedgerEntry(serviceWallet.id, serviceIdempotencyKey, amount);
+    const serviceEntry = await postServiceLedgerEntry(serviceWallet, serviceIdempotencyKey, amount);
+    const serviceDuplicate = await postServiceLedgerEntry(serviceWallet, serviceIdempotencyKey, amount);
     verifyDuplicateHandling(serviceEntry, serviceDuplicate, "Ledger Service");
     pass("duplicate handling matches", {
       monolithEntryId: monolithEntry.id,
@@ -357,8 +507,8 @@ async function main() {
 
     verifyEquivalentFinancialResult(monolithEntry, serviceEntry);
 
-    const reversal = await reverseServiceLedgerEntry(serviceEntry.id);
-    const duplicateReversal = await reverseServiceLedgerEntry(serviceEntry.id);
+    const reversal = await reverseServiceLedgerEntry(serviceEntry);
+    const duplicateReversal = await reverseServiceLedgerEntry(serviceEntry);
     assert(duplicateReversal.id === reversal.id, "Duplicate reversal should return existing reversal.", {
       reversal,
       duplicateReversal,

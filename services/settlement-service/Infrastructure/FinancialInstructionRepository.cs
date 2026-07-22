@@ -10,7 +10,9 @@ namespace SettlementService.Infrastructure;
 public sealed record FinancialInstructionExecutionContext(
     FinancialInstructionDto Instruction,
     SettlementRecordResponse SettlementRecord,
-    string? CreditReservationReference);
+    string? CreditReservationReference,
+    Guid? LedgerInstructionId,
+    FinancialInstructionType? LedgerInstructionType);
 
 public sealed class FinancialInstructionRepository(ServiceConfiguration configuration)
 {
@@ -264,12 +266,23 @@ select
 select
   instruction.*,
   record.*,
-  request.credit_reservation_reference
+  request.credit_reservation_reference,
+  ledger_instruction.instruction_id as required_ledger_instruction_id,
+  ledger_instruction.instruction_type as required_ledger_instruction_type
 from settlement_service.financial_instructions instruction
 join settlement_service.authoritative_settlement_records record
   on record.settlement_id = instruction.settlement_id
 join settlement_service.settlement_requests request
   on request.settlement_request_id = record.settlement_request_id
+left join lateral (
+  select prior.instruction_id, prior.instruction_type
+  from settlement_service.financial_instructions prior
+  where prior.settlement_id = instruction.settlement_id
+    and prior.target_service = 'ledger-service'
+    and prior.instruction_sequence < instruction.instruction_sequence
+  order by prior.instruction_sequence desc
+  limit 1
+) ledger_instruction on true
 where instruction.instruction_id = @instruction_id;
 """;
         command.Parameters.AddWithValue("instruction_id", instructionId);
@@ -285,7 +298,13 @@ where instruction.instruction_id = @instruction_id;
             MapSettlementRecord(reader),
             reader.IsDBNull(reader.GetOrdinal("credit_reservation_reference"))
                 ? null
-                : reader.GetString(reader.GetOrdinal("credit_reservation_reference")));
+                : reader.GetString(reader.GetOrdinal("credit_reservation_reference")),
+            reader.IsDBNull(reader.GetOrdinal("required_ledger_instruction_id"))
+                ? null
+                : reader.GetGuid(reader.GetOrdinal("required_ledger_instruction_id")),
+            reader.IsDBNull(reader.GetOrdinal("required_ledger_instruction_type"))
+                ? null
+                : Enum.Parse<FinancialInstructionType>(reader.GetString(reader.GetOrdinal("required_ledger_instruction_type"))));
     }
 
     public async Task<IReadOnlyList<FinancialInstructionExecutionContext>> ListExecutionContextsAsync(
@@ -298,12 +317,23 @@ where instruction.instruction_id = @instruction_id;
 select
   instruction.*,
   record.*,
-  request.credit_reservation_reference
+  request.credit_reservation_reference,
+  ledger_instruction.instruction_id as required_ledger_instruction_id,
+  ledger_instruction.instruction_type as required_ledger_instruction_type
 from settlement_service.financial_instructions instruction
 join settlement_service.authoritative_settlement_records record
   on record.settlement_id = instruction.settlement_id
 join settlement_service.settlement_requests request
   on request.settlement_request_id = record.settlement_request_id
+left join lateral (
+  select prior.instruction_id, prior.instruction_type
+  from settlement_service.financial_instructions prior
+  where prior.settlement_id = instruction.settlement_id
+    and prior.target_service = 'ledger-service'
+    and prior.instruction_sequence < instruction.instruction_sequence
+  order by prior.instruction_sequence desc
+  limit 1
+) ledger_instruction on true
 where instruction.settlement_id = @settlement_id
 order by instruction.instruction_sequence asc;
 """;
@@ -318,7 +348,13 @@ order by instruction.instruction_sequence asc;
                 MapSettlementRecord(reader),
                 reader.IsDBNull(reader.GetOrdinal("credit_reservation_reference"))
                     ? null
-                    : reader.GetString(reader.GetOrdinal("credit_reservation_reference"))));
+                    : reader.GetString(reader.GetOrdinal("credit_reservation_reference")),
+                reader.IsDBNull(reader.GetOrdinal("required_ledger_instruction_id"))
+                    ? null
+                    : reader.GetGuid(reader.GetOrdinal("required_ledger_instruction_id")),
+                reader.IsDBNull(reader.GetOrdinal("required_ledger_instruction_type"))
+                    ? null
+                    : Enum.Parse<FinancialInstructionType>(reader.GetString(reader.GetOrdinal("required_ledger_instruction_type")))));
         }
 
         return contexts;
@@ -333,12 +369,23 @@ order by instruction.instruction_sequence asc;
 select
   instruction.*,
   record.*,
-  request.credit_reservation_reference
+  request.credit_reservation_reference,
+  ledger_instruction.instruction_id as required_ledger_instruction_id,
+  ledger_instruction.instruction_type as required_ledger_instruction_type
 from settlement_service.financial_instructions instruction
 join settlement_service.authoritative_settlement_records record
   on record.settlement_id = instruction.settlement_id
 join settlement_service.settlement_requests request
   on request.settlement_request_id = record.settlement_request_id
+left join lateral (
+  select prior.instruction_id, prior.instruction_type
+  from settlement_service.financial_instructions prior
+  where prior.settlement_id = instruction.settlement_id
+    and prior.target_service = 'ledger-service'
+    and prior.instruction_sequence < instruction.instruction_sequence
+  order by prior.instruction_sequence desc
+  limit 1
+) ledger_instruction on true
 where not exists (
   select 1
   from settlement_service.financial_instruction_execution_attempts attempt
@@ -357,7 +404,13 @@ order by record.issued_at asc, instruction.instruction_sequence asc;
                 MapSettlementRecord(reader),
                 reader.IsDBNull(reader.GetOrdinal("credit_reservation_reference"))
                     ? null
-                    : reader.GetString(reader.GetOrdinal("credit_reservation_reference"))));
+                    : reader.GetString(reader.GetOrdinal("credit_reservation_reference")),
+                reader.IsDBNull(reader.GetOrdinal("required_ledger_instruction_id"))
+                    ? null
+                    : reader.GetGuid(reader.GetOrdinal("required_ledger_instruction_id")),
+                reader.IsDBNull(reader.GetOrdinal("required_ledger_instruction_type"))
+                    ? null
+                    : Enum.Parse<FinancialInstructionType>(reader.GetString(reader.GetOrdinal("required_ledger_instruction_type")))));
         }
 
         return contexts;

@@ -73,6 +73,7 @@ const safeProductionEnvironment = {
   NEXT_PUBLIC_SUPABASE_URL: "https://supabase.lotteryplatform.com",
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "pk_live_lotteryplatform_StrongPublishable987",
   AUTH_PROVIDER: "auth-service",
+  AUTH_AUTHORITY: "MONOLITH",
   AUTH_SERVICE_URL: "http://auth-service:8080",
   APP_BASE_URL: "https://app.lotteryplatform.com",
   PUBLIC_APP_URL: "https://app.lotteryplatform.com",

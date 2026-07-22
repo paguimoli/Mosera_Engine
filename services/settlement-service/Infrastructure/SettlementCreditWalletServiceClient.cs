@@ -147,39 +147,70 @@ public sealed class SettlementCreditWalletServiceClient
         CancellationToken cancellationToken)
     {
         var record = context.SettlementRecord;
-        var settlementId = CreateDeterministicGuid(context.Instruction.InstructionId.ToString());
-        var settlementBatchId = CreateDeterministicGuid(record.SettlementRequestId.ToString());
-        var releaseAmount = record.StakeAmountMinor;
+        var reservation = await GetReservationContextAsync(reservationId, correlationId, cancellationToken);
+        if (reservation.PlayerId != playerId)
+        {
+            throw new SettlementIntegrationException("Credit reservation player does not match Settlement instruction player.");
+        }
+
+        var role = GetProvenanceString(context.Instruction.Provenance, "resettlementRole");
+        var originalSettlementId = ParseOptionalGuid(
+            GetProvenanceString(context.Instruction.Provenance, "originalSettlementId"));
+        WalletSettlementTrace? trace = null;
+        if (role is "reversal" or "corrected")
+        {
+            if (originalSettlementId is null)
+            {
+                throw new SettlementIntegrationException("Resettlement instruction is missing originalSettlementId provenance.");
+            }
+            trace = await GetSettlementTraceAsync(originalSettlementId.Value, correlationId, cancellationToken);
+        }
+
+        var operation = role == "reversal" ? "REVERSE" : "SETTLE";
+        var captureAmount = record.StakeAmountMinor;
         var balanceImpact = record.NetResultAmountMinor == 0 ? record.GrossPayoutAmountMinor : record.NetResultAmountMinor;
         if (balanceImpact == 0)
         {
             balanceImpact = record.GrossPayoutAmountMinor;
         }
+        var ledgerInstructionId = context.LedgerInstructionId
+            ?? throw new SettlementIntegrationException("Credit instruction is missing its preceding Ledger instruction reference.");
+        var ledgerPostingRequired = context.LedgerInstructionType != FinancialInstructionType.LEDGER_NOOP;
 
         var client = httpClientFactory.CreateClient();
         client.BaseAddress = new Uri(NormalizeBaseUrl(configuration.Integrations.CreditServiceUrl));
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/credit-wallets/{playerId}/settle");
-        request.Headers.TryAddWithoutValidation("Idempotency-Key", targetIdempotencyKey);
-        request.Headers.TryAddWithoutValidation("x-correlation-id", correlationId);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/credit-wallets/internal/operations");
+        AddInternalHeaders(request, targetIdempotencyKey, correlationId);
         request.Content = JsonContent.Create(new
         {
-            settlementId,
-            settlementBatchId,
-            reservationId,
+            requestId = context.Instruction.InstructionId,
+            reservation.TenantId,
+            reservation.BrandId,
+            reservation.PlayerId,
+            reservation.WalletId,
+            instrument = reservation.Instrument,
+            operation,
+            money = new { amount = captureAmount, currency = reservation.Currency },
+            balanceImpact = new { amount = balanceImpact, currency = reservation.Currency },
+            authority = "settlement-service",
+            effectiveAt = context.Instruction.CreatedAt,
             ticketId = ToGuid(record.TicketId, "ticketId"),
-            releaseAmount = new
-            {
-                amount = releaseAmount,
-                currency = record.Currency
-            },
-            balanceImpact = new
-            {
-                amount = balanceImpact,
-                currency = record.Currency
-            },
-            outcome = record.SettlementOutcome == "REJECTED" ? "VOID" : record.SettlementOutcome,
+            reservationId,
+            settlementId = record.SettlementId,
+            settlementBatchId = record.SettlementRequestId,
+            settlementInstructionId = context.Instruction.InstructionId,
+            settlementInstructionSequence = context.Instruction.InstructionSequence,
+            settlementInstructionHash = context.Instruction.CanonicalPayloadHash,
+            settlementVersion = record.PolicyVersion,
+            settlementHash = record.CanonicalSettlementHash,
+            settlementOutcome = record.SettlementOutcome == "REJECTED" ? "VOID" : record.SettlementOutcome,
+            ledgerInstructionId,
+            ledgerPostingRequired,
+            originalOperationId = role == "reversal" ? trace?.OriginalOperationId : null,
+            correctsOperationId = role == "corrected" ? trace?.ReversalOperationId : null,
+            reasonCode = role == "reversal" ? "authoritative_settlement_reversal" : null,
             sourceService = "settlement-service",
-            metadata = new Dictionary<string, object?>
+            auditMetadata = new Dictionary<string, object?>
             {
                 ["settlementId"] = record.SettlementId,
                 ["settlementRequestId"] = record.SettlementRequestId,
@@ -198,8 +229,8 @@ public sealed class SettlementCreditWalletServiceClient
         }
 
         using var document = JsonDocument.Parse(body);
-        var settlementApplicationId = document.RootElement.GetProperty("settlementApplicationId").GetString()
-            ?? throw new SettlementIntegrationException("Credit Wallet Service response did not include settlementApplicationId.");
+        var settlementApplicationId = document.RootElement.GetProperty("effectReferenceId").GetString()
+            ?? throw new SettlementIntegrationException("Credit Wallet Service response did not include effectReferenceId.");
 
         return (new SettlementExternalReferenceDto(
             record.SettlementId.ToString(),
@@ -220,23 +251,33 @@ public sealed class SettlementCreditWalletServiceClient
         CancellationToken cancellationToken)
     {
         var record = context.SettlementRecord;
+        var reservation = await GetReservationContextAsync(reservationId, correlationId, cancellationToken);
+        if (reservation.PlayerId != playerId)
+        {
+            throw new SettlementIntegrationException("Credit reservation player does not match Settlement release instruction player.");
+        }
         var client = httpClientFactory.CreateClient();
         client.BaseAddress = new Uri(NormalizeBaseUrl(configuration.Integrations.CreditServiceUrl));
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/credit-wallets/{playerId}/release");
-        request.Headers.TryAddWithoutValidation("Idempotency-Key", targetIdempotencyKey);
-        request.Headers.TryAddWithoutValidation("x-correlation-id", correlationId);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/credit-wallets/internal/operations");
+        AddInternalHeaders(request, targetIdempotencyKey, correlationId);
         request.Content = JsonContent.Create(new
         {
+            requestId = context.Instruction.InstructionId,
+            reservation.TenantId,
+            reservation.BrandId,
+            reservation.PlayerId,
+            reservation.WalletId,
+            instrument = reservation.Instrument,
+            operation = "RELEASE",
+            money = new { amount = record.StakeAmountMinor, currency = reservation.Currency },
+            balanceImpact = (object?)null,
+            authority = "settlement-service",
+            effectiveAt = context.Instruction.CreatedAt,
             reservationId,
             ticketId = ToGuid(record.TicketId, "ticketId"),
-            releaseAmount = new
-            {
-                amount = record.StakeAmountMinor,
-                currency = record.Currency
-            },
             reasonCode = "settlement_instruction_release",
             sourceService = "settlement-service",
-            metadata = new Dictionary<string, object?>
+            auditMetadata = new Dictionary<string, object?>
             {
                 ["settlementId"] = record.SettlementId,
                 ["instructionId"] = context.Instruction.InstructionId,
@@ -253,7 +294,7 @@ public sealed class SettlementCreditWalletServiceClient
         }
 
         using var document = JsonDocument.Parse(body);
-        var reservationReference = document.RootElement.GetProperty("reservationId").GetString()
+        var reservationReference = document.RootElement.GetProperty("effectReferenceId").GetString()
             ?? reservationId.ToString();
 
         return (new SettlementExternalReferenceDto(
@@ -362,6 +403,75 @@ public sealed class SettlementCreditWalletServiceClient
             : throw new SettlementIntegrationException($"{fieldName} must be a GUID for Credit Wallet integration.");
     }
 
+    private async Task<WalletReservationContext> GetReservationContextAsync(
+        Guid reservationId,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        var client = httpClientFactory.CreateClient();
+        client.BaseAddress = new Uri(NormalizeBaseUrl(configuration.Integrations.CreditServiceUrl));
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/v1/credit-wallets/internal/reservations/{reservationId}/settlement-context");
+        AddInternalHeaders(request, null, correlationId);
+        using var response = await client.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new SettlementIntegrationException(
+                $"Credit Wallet reservation context lookup failed with status {(int)response.StatusCode}.");
+        }
+        return await response.Content.ReadFromJsonAsync<WalletReservationContext>(JsonOptions, cancellationToken)
+            ?? throw new SettlementIntegrationException("Credit Wallet reservation context response was empty.");
+    }
+
+    private async Task<WalletSettlementTrace> GetSettlementTraceAsync(
+        Guid settlementId,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        var client = httpClientFactory.CreateClient();
+        client.BaseAddress = new Uri(NormalizeBaseUrl(configuration.Integrations.CreditServiceUrl));
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/v1/credit-wallets/internal/settlements/{settlementId}/operation-trace");
+        AddInternalHeaders(request, null, correlationId);
+        using var response = await client.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new SettlementIntegrationException(
+                $"Original Credit Wallet settlement trace lookup failed with status {(int)response.StatusCode}.");
+        }
+        return await response.Content.ReadFromJsonAsync<WalletSettlementTrace>(JsonOptions, cancellationToken)
+            ?? throw new SettlementIntegrationException("Credit Wallet settlement trace response was empty.");
+    }
+
+    private void AddInternalHeaders(HttpRequestMessage request, string? idempotencyKey, string correlationId)
+    {
+        if (string.IsNullOrWhiteSpace(configuration.Integrations.CreditWalletInternalApiKey))
+        {
+            throw new SettlementIntegrationException("Credit Wallet internal authentication key is not configured.");
+        }
+        request.Headers.TryAddWithoutValidation("x-internal-service-name", "settlement-service");
+        request.Headers.TryAddWithoutValidation(
+            "Authorization", $"Bearer {configuration.Integrations.CreditWalletInternalApiKey}");
+        request.Headers.TryAddWithoutValidation("x-correlation-id", correlationId);
+        if (!string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            request.Headers.TryAddWithoutValidation("Idempotency-Key", idempotencyKey);
+        }
+    }
+
+    private static string? GetProvenanceString(
+        IReadOnlyDictionary<string, object?> provenance,
+        string key)
+    {
+        if (!provenance.TryGetValue(key, out var value) || value is null) return null;
+        return value is JsonElement element ? element.ToString() : value.ToString();
+    }
+
+    private static Guid? ParseOptionalGuid(string? value) =>
+        Guid.TryParse(value, out var parsed) ? parsed : null;
+
     private static Guid CreateDeterministicGuid(string value)
     {
         var bytes = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(value));
@@ -377,6 +487,26 @@ public sealed class SettlementCreditWalletServiceClient
     {
         return value.Trim().TrimEnd('/');
     }
+
+    private sealed record WalletReservationContext(
+        Guid ReservationId,
+        Guid TenantId,
+        Guid BrandId,
+        Guid PlayerId,
+        Guid WalletId,
+        string Instrument,
+        string Currency,
+        Guid TicketId,
+        string Status,
+        long RemainingExposure,
+        long CapturedAmount);
+
+    private sealed record WalletSettlementTrace(
+        Guid OriginalSettlementId,
+        Guid OriginalOperationId,
+        Guid OriginalApplicationId,
+        Guid? ReversalOperationId,
+        Guid? ReversalApplicationId);
 
     private static bool GetBool(JsonElement element, string propertyName)
     {

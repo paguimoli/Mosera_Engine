@@ -267,6 +267,8 @@ public sealed record CreditWalletHealthResponse(
     DateTimeOffset Timestamp,
     IReadOnlyDictionary<string, string> Dependencies,
     CreditWalletCapabilityDto Capabilities,
+    CanonicalWalletOperationReadiness CanonicalOperations,
+    CreditWalletAuthorityReadinessReport AuthorityReadiness,
     string CorrelationId);
 
 public sealed record CreditWalletCapabilityDto(

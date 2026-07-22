@@ -30,7 +30,7 @@ public sealed record RefreshTokenMetadata(
     DateTimeOffset? RotatedAt,
     DateTimeOffset? RevokedAt);
 
-public sealed record TokenRevocationRecord(
+public sealed record TokenRevocationMetadata(
     Guid TokenId,
     string TokenType,
     string Reason,

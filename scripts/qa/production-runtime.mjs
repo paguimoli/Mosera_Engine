@@ -73,6 +73,7 @@ const safeRuntimeEnvironment = {
   SUPABASE_SERVICE_ROLE_KEY: "sr_live_lotteryplatform_StrongCredential987",
   SUPABASE_ANON_KEY: "anon_live_lotteryplatform_StrongCredential987",
   AUTH_PROVIDER: "auth-service",
+  AUTH_AUTHORITY: "MONOLITH",
   AUTH_SERVICE_URL: "http://auth-service:8080",
   APP_BASE_URL: "https://app.lotteryplatform.com",
   PUBLIC_APP_URL: "https://app.lotteryplatform.com",

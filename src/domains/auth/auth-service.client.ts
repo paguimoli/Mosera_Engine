@@ -41,6 +41,7 @@ type AuthServiceSession = {
 
 type AuthServiceLoginSuccess = {
   success: true;
+  sessionToken?: string;
   session: AuthServiceSession;
   identity: AuthServiceIdentity;
   accessToken?: string | null;
@@ -285,15 +286,23 @@ function mapPlatformScopes(response: AuthServiceContextResponse) {
 export async function loginWithAuthService({
   username,
   password,
+  ipAddress,
+  userAgent,
 }: {
   username: string;
   password: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
 }): Promise<LoginResponse> {
   try {
     const response = await requestJson<AuthServiceLoginSuccess | AuthServiceFailure>(
       "/api/auth-service/login",
       {
         method: "POST",
+        headers: {
+          ...(ipAddress ? { "x-forwarded-for": ipAddress } : {}),
+          ...(userAgent ? { "user-agent": userAgent } : {}),
+        },
         body: JSON.stringify({
           loginId: username,
           password,
@@ -308,7 +317,7 @@ export async function loginWithAuthService({
 
     return {
       success: true,
-      sessionToken: response.body.session.sessionId as SessionToken,
+      sessionToken: (response.body.sessionToken ?? response.body.session.sessionId) as SessionToken,
       expiresAt: response.body.session.expiresAt,
       accessToken: response.body.accessToken ?? null,
       tokenType: response.body.tokenType === "Bearer" ? "Bearer" : undefined,
@@ -332,10 +341,10 @@ export async function logoutWithAuthService(
   }
 
   try {
-    await requestJson<unknown>("/api/auth-service/logout", {
+    await requestJson<unknown>("/api/auth-service/authority/logout", {
       method: "POST",
       body: JSON.stringify({
-        sessionId: sessionToken,
+        sessionToken,
         correlationId: `nextjs-logout-${randomUUID()}`,
       }),
     });
@@ -344,6 +353,122 @@ export async function logoutWithAuthService(
   }
 
   return { success: true };
+}
+
+export async function requestPasswordResetWithAuthService(input: {
+  identifier: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}) {
+  return requestJson<{ success: boolean; message: string; resetToken?: string | null }>(
+    "/api/auth-service/authority/password-reset/request",
+    {
+      method: "POST",
+      headers: {
+        ...(input.ipAddress ? { "x-forwarded-for": input.ipAddress } : {}),
+        ...(input.userAgent ? { "user-agent": input.userAgent } : {}),
+      },
+      body: JSON.stringify({
+        identifier: input.identifier,
+        correlationId: `nextjs-password-reset-${randomUUID()}`,
+      }),
+    }
+  );
+}
+
+export async function confirmPasswordResetWithAuthService(input: {
+  resetToken: string;
+  newPassword: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}) {
+  return requestJson<{ success: boolean; errors?: string[] }>(
+    "/api/auth-service/authority/password-reset/confirm",
+    {
+      method: "POST",
+      headers: {
+        ...(input.ipAddress ? { "x-forwarded-for": input.ipAddress } : {}),
+        ...(input.userAgent ? { "user-agent": input.userAgent } : {}),
+      },
+      body: JSON.stringify({
+        resetToken: input.resetToken,
+        newPassword: input.newPassword,
+        correlationId: `nextjs-password-reset-confirm-${randomUUID()}`,
+      }),
+    }
+  );
+}
+
+export async function delegateMfaMutationToAuthService(
+  operation: string,
+  body: unknown
+) {
+  return requestJson<{ success: boolean; error?: string }>(
+    `/api/auth-service/authority/mfa/${encodeURIComponent(operation)}`,
+    { method: "POST", body: JSON.stringify(body ?? {}) }
+  );
+}
+
+export async function transitionIdentityWithAuthService(input: {
+  identityId: string;
+  expectedStatus: "Active" | "Disabled" | "Locked" | "Compromised" | "Emergency" | "Deleted";
+  targetStatus: "Active" | "Disabled" | "Locked" | "Compromised" | "Emergency" | "Deleted";
+  actorIdentityId: string;
+  reason: string;
+}) {
+  return requestJson<{ success: boolean; error?: string }>(
+    "/api/auth-service/authority/lifecycle",
+    {
+      method: "POST",
+      body: JSON.stringify({ ...input, correlationId: `nextjs-lifecycle-${randomUUID()}` }),
+    }
+  );
+}
+
+export async function revokeAllSessionsWithAuthService(input: {
+  identityId: string;
+  actorIdentityId: string;
+  reason: string;
+}) {
+  return requestJson<{ success: boolean; revoked?: number; error?: string }>(
+    "/api/auth-service/authority/logout-all",
+    {
+      method: "POST",
+      body: JSON.stringify({ ...input, correlationId: `nextjs-logout-all-${randomUUID()}` }),
+    }
+  );
+}
+
+export async function revokeSessionWithAuthService(input: {
+  sessionId: string;
+  identityId: string;
+  actorIdentityId: string;
+  reason: string;
+}) {
+  return requestJson<{ success: boolean; revoked?: number; error?: string }>(
+    "/api/auth-service/authority/session/revoke",
+    {
+      method: "POST",
+      body: JSON.stringify({ ...input, correlationId: `nextjs-session-revoke-${randomUUID()}` }),
+    }
+  );
+}
+
+export async function appendAuthAuditEvidenceToAuthService(input: {
+  subjectIdentityId: string;
+  actorIdentityId?: string | null;
+  action: string;
+  result?: string;
+  reason?: string;
+  correlationId?: string;
+}) {
+  return requestJson<unknown>("/api/auth-service/authority/audit", {
+    method: "POST",
+    body: JSON.stringify({
+      ...input,
+      correlationId: input.correlationId ?? `nextjs-auth-audit-${randomUUID()}`,
+    }),
+  });
 }
 
 export async function getAuthServiceContext(

@@ -505,6 +505,221 @@
       "reason": "Adds append-only Settlement Authority promotion dry-run evidence and guardrail rehearsal records while production SERVICE authority remains disabled."
     },
     {
+      "id": "055_add_ledger_canonical_posting_hash",
+      "path": "scripts/migrations/local/055_add_ledger_canonical_posting_hash.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "public"
+      ],
+      "reason": "Adds canonical request hash binding to durable Ledger postings so same idempotency key with different payload fails closed."
+    },
+    {
+      "id": "056_drop_legacy_ledger_posting_overload",
+      "path": "scripts/migrations/local/056_drop_legacy_ledger_posting_overload.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "public"
+      ],
+      "reason": "Drops the legacy 9-argument Ledger posting overload after the canonical request hash signature is installed to avoid ambiguous RPC calls."
+    },
+    {
+      "id": "057_add_ledger_immutability_and_reversal_governance",
+      "path": "scripts/migrations/local/057_add_ledger_immutability_and_reversal_governance.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "public"
+      ],
+      "reason": "Makes financial ledger entries database-immutable and adds conflict-safe, hash-bound, reversal-only correction evidence with one reversal per original entry."
+    },
+    {
+      "id": "058_allow_settlement_reversal_instruction_compatibility",
+      "path": "scripts/migrations/local/058_allow_settlement_reversal_instruction_compatibility.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "public"
+      ],
+      "reason": "Preserves the existing Settlement Service dry-run SETTLEMENT_REVERSAL instruction contract while retaining fail-closed rejection of arbitrary standalone reversal postings."
+    },
+    {
+      "id": "059_add_ledger_posting_request_evidence",
+      "path": "scripts/migrations/local/059_add_ledger_posting_request_evidence.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ledger_service"
+      ],
+      "reason": "Adds durable Ledger posting requests, append-only attempt evidence, unknown-result recovery state, and deterministic replay evidence without creating a second financial posting path."
+    },
+    {
+      "id": "060_relax_ledger_posting_request_input_references",
+      "path": "scripts/migrations/local/060_relax_ledger_posting_request_input_references.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ledger_service"
+      ],
+      "reason": "Keeps invalid requested wallet, account, and reversal target identifiers as auditable evidence while preserving the foreign key on a proven completed Ledger entry."
+    },
+    {
+      "id": "061_add_minimal_balanced_ledger_journal",
+      "path": "scripts/migrations/local/061_add_minimal_balanced_ledger_journal.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ledger_service"
+      ],
+      "reason": "Adds the minimal immutable two-line balanced journal required for credit-only launch, linked to existing durable posting requests and financial Ledger entries."
+    },
+    {
+      "id": "062_add_financial_posting_catalog",
+      "path": "scripts/migrations/local/062_add_financial_posting_catalog.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ledger_service"
+      ],
+      "reason": "Adds the immutable versioned credit-only launch posting catalog and binds balanced journals to exact posting rule versions."
+    },
+    {
+      "id": "063_add_catalog_financial_posting_rpc",
+      "path": "scripts/migrations/local/063_add_catalog_financial_posting_rpc.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "public",
+        "ledger_service"
+      ],
+      "reason": "Adds the narrow durable posting RPC and transaction allowlist for approved commission, rebate, and promotion catalog instructions."
+    },
+    {
+      "id": "064_add_ledger_recovery_reconciliation_evidence",
+      "path": "scripts/migrations/local/064_add_ledger_recovery_reconciliation_evidence.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ledger_service",
+        "settlement_service",
+        "public"
+      ],
+      "reason": "Adds immutable Ledger recovery and minimal instruction-level Settlement/Ledger/Credit reconciliation evidence."
+    },
+    {
+      "id": "065_add_ledger_authority_promotion_rehearsals",
+      "path": "scripts/migrations/local/065_add_ledger_authority_promotion_rehearsals.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ledger_service"
+      ],
+      "reason": "Adds append-only Ledger Authority readiness and promotion rehearsal evidence while production SERVICE authority remains disabled."
+    },
+    {
+      "id": "066_add_ledger_authority_verifications",
+      "path": "scripts/migrations/local/066_add_ledger_authority_verifications.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ledger_service"
+      ],
+      "reason": "Adds append-only final Ledger Authority verification evidence and deterministic readiness fingerprints without activating SERVICE authority."
+    },
+    {
+      "id": "067_add_credit_wallet_canonical_operations",
+      "path": "scripts/migrations/local/067_add_credit_wallet_canonical_operations.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "credit_wallet_service",
+        "public",
+        "platform"
+      ],
+      "reason": "Adds immutable Wallet Instrument definitions, tenant/brand/player wallet scope, conflict-safe canonical operation requests, attempts, terminal evidence, and Credit Wallet database invariants without promoting authority."
+    },
+    {
+      "id": "068_add_credit_wallet_reservation_lifecycle",
+      "path": "scripts/migrations/local/068_add_credit_wallet_reservation_lifecycle.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "credit_wallet_service",
+        "public",
+        "platform"
+      ],
+      "reason": "Completes canonical reservation release, cancellation, and capture transitions with exact scope, wallet-status enforcement, authoritative settlement-instruction uniqueness, exposure invariants, and append-only evidence without promoting authority."
+    },
+    {
+      "id": "069_allow_zero_impact_wallet_capture",
+      "path": "scripts/migrations/local/069_allow_zero_impact_wallet_capture.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "credit_wallet_service"
+      ],
+      "reason": "Allows explicitly instructed zero-balance-impact reservation capture while retaining canonical scope, instruction identity, and instrument validation."
+    },
+    {
+      "id": "070_preserve_legacy_credit_settlement_compatibility",
+      "path": "scripts/migrations/local/070_preserve_legacy_credit_settlement_compatibility.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "credit_wallet_service",
+        "public"
+      ],
+      "reason": "Preserves the existing monolith settlement RPC for legacy reservations while keeping canonical reservation states and projection mutation strict."
+    },
+    {
+      "id": "071_derive_legacy_credit_settlement_instruction",
+      "path": "scripts/migrations/local/071_derive_legacy_credit_settlement_instruction.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "credit_wallet_service",
+        "public"
+      ],
+      "reason": "Derives deterministic legacy settlement instruction evidence for the existing monolith RPC without weakening canonical caller requirements."
+    },
+    {
+      "id": "072_add_credit_wallet_settlement_authority",
+      "path": "scripts/migrations/local/072_add_credit_wallet_settlement_authority.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "credit_wallet_service",
+        "ledger_service",
+        "settlement_service",
+        "public"
+      ],
+      "reason": "Adds authenticated Settlement provenance, completed-Ledger coordination, deterministic cross-authority references, and immutable wallet reversal/correction chains without promoting authority."
+    },
+    {
+      "id": "073_add_credit_wallet_recovery_reconciliation",
+      "path": "scripts/migrations/local/073_add_credit_wallet_recovery_reconciliation.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "credit_wallet_service",
+        "ledger_service",
+        "settlement_service",
+        "public"
+      ],
+      "reason": "Adds append-only wallet recovery, deterministic replay, projection verification, and Ledger/Settlement reconciliation evidence without authority promotion or projection repair."
+    },
+    {
+      "id": "074_add_credit_wallet_authority_guardrails",
+      "path": "scripts/migrations/local/074_add_credit_wallet_authority_guardrails.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "credit_wallet_service"
+      ],
+      "reason": "Adds append-only Credit Wallet readiness, guardrail, blocker, promotion rehearsal, and rollback rehearsal evidence without switching production authority or mutating wallet state."
+    },
+    {
+      "id": "075_add_credit_wallet_verification_remediation",
+      "path": "scripts/migrations/local/075_add_credit_wallet_verification_remediation.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ledger_service",
+        "platform"
+      ],
+      "reason": "Repairs cross-authority identity reconciliation and adds closed weekly accounting-period enforcement without changing financial authority defaults."
+    },
+    {
+      "id": "076_add_authentication_authority_consolidation",
+      "path": "scripts/migrations/local/076_add_authentication_authority_consolidation.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "auth_service",
+        "platform"
+      ],
+      "reason": "Adds canonical tenant-scoped identities, Argon2id-only credential history, single-session authority, lifecycle evidence, and immutable authentication audit without promoting AUTH_AUTHORITY."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

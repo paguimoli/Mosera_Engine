@@ -51,6 +51,8 @@ services:
       RABBITMQ_EXCHANGE_NAME: ${RABBITMQ_EXCHANGE_NAME:-lottery.events}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       AUTH_PROVIDER: ${AUTH_PROVIDER:-auth-service}
+      AUTH_AUTHORITY: ${AUTH_AUTHORITY:-MONOLITH}
+      AUTH_ALLOW_INITIAL_BOOTSTRAP: ${AUTH_ALLOW_INITIAL_BOOTSTRAP:-true}
       AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://auth-service:8080}
       SECURITY_ENFORCE_PRODUCTION_SECRETS: ${SECURITY_ENFORCE_PRODUCTION_SECRETS:-false}
       SECURITY_AUDIT_LEVEL: ${SECURITY_AUDIT_LEVEL:-critical}
@@ -71,6 +73,7 @@ services:
       LEDGER_SERVICE_URL: ${LEDGER_SERVICE_URL:-http://ledger-service:8080}
       CREDIT_SHADOW_MODE_ENABLED: ${CREDIT_SHADOW_MODE_ENABLED:-false}
       CREDIT_SERVICE_URL: ${CREDIT_SERVICE_URL:-http://credit-wallet-service:8080}
+      CREDIT_WALLET_INTERNAL_API_KEY: ${CREDIT_WALLET_INTERNAL_API_KEY:-local-credit-wallet-internal-key}
     depends_on:
       auth-service:
         condition: service_healthy
@@ -146,6 +149,8 @@ services:
       SUPABASE_URL: ${SUPABASE_URL:-${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:54321}}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-dummy-service-role-key}
       AUTH_PRODUCTION_AUTHENTICATION_ENABLED: ${AUTH_PRODUCTION_AUTHENTICATION_ENABLED:-true}
+      AUTH_AUTHORITY: ${AUTH_AUTHORITY:-MONOLITH}
+      AUTH_ALLOW_INITIAL_BOOTSTRAP: ${AUTH_ALLOW_INITIAL_BOOTSTRAP:-true}
       DATABASE_URL: ${LOCAL_DATABASE_URL:-postgresql://lottery:lottery_dev_password@local-postgres:5432/lottery_local}
     depends_on:
       local-postgres:
@@ -195,6 +200,9 @@ services:
       DATABASE_URL: ${LOCAL_DATABASE_URL:-postgresql://lottery:lottery_dev_password@local-postgres:5432/lottery_local}
       LEDGER_SERVICE_URL: ${LEDGER_SERVICE_URL:-http://ledger-service:8080}
       CREDIT_SERVICE_URL: ${CREDIT_SERVICE_URL:-http://credit-wallet-service:8080}
+      CREDIT_WALLET_INTERNAL_AUTH_REQUIRED: ${CREDIT_WALLET_INTERNAL_AUTH_REQUIRED:-true}
+      CREDIT_WALLET_INTERNAL_API_KEY: ${CREDIT_WALLET_INTERNAL_API_KEY:-local-credit-wallet-internal-key}
+      CREDIT_WALLET_INTERNAL_CALLERS: ${CREDIT_WALLET_INTERNAL_CALLERS:-app,settlement-service}
       SUPABASE_URL: ${SUPABASE_URL:-${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:54321}}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-dummy-service-role-key}
     depends_on:
@@ -223,6 +231,7 @@ services:
       DATABASE_URL: ${LOCAL_DATABASE_URL:-postgresql://lottery:lottery_dev_password@local-postgres:5432/lottery_local}
       LEDGER_SERVICE_URL: ${LEDGER_SERVICE_URL:-http://ledger-service:8080}
       CREDIT_SERVICE_URL: ${CREDIT_SERVICE_URL:-http://credit-wallet-service:8080}
+      CREDIT_WALLET_INTERNAL_API_KEY: ${CREDIT_WALLET_INTERNAL_API_KEY:-local-credit-wallet-internal-key}
       SUPABASE_URL: ${SUPABASE_URL:-${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:54321}}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-dummy-service-role-key}
     depends_on:

@@ -11,7 +11,16 @@ type Outcome = "Win" | "Loss" | "Push" | "Void";
 
 const checks: Check[] = [];
 const settlementServiceUrl = trimTrailingSlash(process.env.SETTLEMENT_SERVICE_URL ?? "http://localhost:5400");
+const creditServiceUrl = trimTrailingSlash(process.env.CREDIT_SERVICE_URL ?? "http://localhost:5300");
+const creditWalletApiKey = process.env.CREDIT_WALLET_INTERNAL_API_KEY ?? "local-credit-wallet-internal-key";
 const databaseUrl = process.env.DATABASE_URL;
+
+type WalletScope = {
+  tenantId: string;
+  brandId: string;
+  playerId: string;
+  walletId: string;
+};
 
 function trimTrailingSlash(value: string) {
   return value.endsWith("/") ? value.slice(0, -1) : value;
@@ -72,7 +81,11 @@ async function optionalTableCount(pool: Pool, table: string) {
   return tableCount(pool, table);
 }
 
-async function seedAccountWallet(pool: Pool, accountId: string, withWallet = true) {
+async function seedAccountWallet(
+  pool: Pool,
+  accountId: string,
+  withWallet = true
+): Promise<WalletScope | null> {
   await pool.query(
     `
 insert into public.accounts (id, account_type, account_code, display_name, status)
@@ -83,8 +96,35 @@ on conflict (id) do nothing;
   );
 
   if (!withWallet) {
-    return;
+    return null;
   }
+
+  const organizationId = randomUUID();
+  const tenantId = randomUUID();
+  const brandId = randomUUID();
+  const suffix = randomUUID().replaceAll("-", "").slice(0, 12);
+
+  await pool.query(
+    `insert into platform.organizations
+       (id, organization_code, name, status, version, content_hash, audit_metadata)
+     values ($1, $2, $3, 'Active', '1.0.0', $4, '{"source":"qa"}')`,
+    [organizationId, `qa-fin-inst-org-${suffix}`, `QA Financial Instruction Org ${suffix}`, hash(`org:${suffix}`)]
+  );
+  await pool.query(
+    `insert into platform.tenants
+       (id, organization_id, tenant_code, name, status, default_language, default_currency,
+        default_timezone, credit_enabled, cashier_enabled, version, content_hash, audit_metadata)
+     values ($1, $2, $3, $4, 'Active', 'en', 'USD', 'UTC', true, false,
+       '1.0.0', $5, '{"source":"qa"}')`,
+    [tenantId, organizationId, `qa-fin-inst-tenant-${suffix}`,
+      `QA Financial Instruction Tenant ${suffix}`, hash(`tenant:${suffix}`)]
+  );
+  await pool.query(
+    `insert into platform.brands
+       (id, tenant_id, brand_code, name, display_name, status, version, content_hash, audit_metadata)
+     values ($1, $2, $3, $3, $3, 'Active', '1.0.0', $4, '{"source":"qa"}')`,
+    [brandId, tenantId, `qa-fin-inst-brand-${suffix}`, hash(`brand:${suffix}`)]
+  );
 
   await pool.query(
     `
@@ -104,38 +144,63 @@ on conflict (id) do nothing;
 `,
     [accountId]
   );
+
+  await pool.query(
+    `insert into credit_wallet_service.wallet_scopes
+       (wallet_id, tenant_id, brand_id, player_id, instrument_code, currency, authority, audit_metadata)
+     values ($1, $2, $3, $4, 'CREDIT', 'USD', 'CREDIT_WALLET_SERVICE', '{"source":"qa"}')`,
+    [accountId, tenantId, brandId, accountId]
+  );
+
+  return { tenantId, brandId, playerId: accountId, walletId: accountId };
 }
 
-async function seedCreditReservation(pool: Pool, playerId: string, ticketId: string) {
-  const reservationId = randomUUID();
-  await pool.query(
-    `
-insert into public.credit_reservations (
-  id,
-  player_id,
-  ticket_id,
-  amount,
-  currency,
-  status,
-  reserved_amount,
-  released_amount,
-  settled_amount,
-  remaining_exposure,
-  idempotency_key,
-  correlation_id,
-  metadata
-)
-values ($1, $2, $3, 100, 'USD', 'RESERVED', 100, 0, 0, 100, $4, $5, '{"source":"qa:financial-instruction-execution"}'::jsonb);
-`,
-    [
-      reservationId,
-      playerId,
+async function seedCreditReservation(scope: WalletScope, ticketId: string) {
+  const requestId = randomUUID();
+  const response = await fetch(`${creditServiceUrl}/v1/credit-wallets/internal/operations`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "idempotency-key": `qa-financial-instruction-reservation:${requestId}`,
+      "x-correlation-id": `qa-financial-instruction-execution-${randomUUID()}`,
+      "x-internal-service-name": "app",
+      authorization: `Bearer ${creditWalletApiKey}`,
+    },
+    body: JSON.stringify({
+      requestId,
+      tenantId: scope.tenantId,
+      brandId: scope.brandId,
+      playerId: scope.playerId,
+      walletId: scope.walletId,
+      instrument: "CREDIT",
+      operation: "RESERVE",
+      money: { amount: 100, currency: "USD" },
+      balanceImpact: null,
+      authority: "CREDIT_WALLET_SERVICE",
+      effectiveAt: "2026-07-18T00:00:00Z",
       ticketId,
-      `qa-financial-instruction-reservation:${reservationId}`,
-      `qa-financial-instruction-execution-${randomUUID()}`,
-    ]
-  );
-  return reservationId;
+      reservationId: null,
+      settlementId: null,
+      settlementBatchId: null,
+      settlementInstructionId: null,
+      settlementInstructionSequence: null,
+      settlementInstructionHash: null,
+      settlementVersion: null,
+      settlementHash: null,
+      settlementOutcome: null,
+      ledgerInstructionId: null,
+      ledgerPostingRequired: null,
+      originalOperationId: null,
+      correctsOperationId: null,
+      reasonCode: "QA_FINANCIAL_INSTRUCTION_RESERVE",
+      sourceService: "app",
+      auditMetadata: { source: "qa:financial-instruction-execution" },
+    }),
+  });
+  const result = await readJson(response);
+  assert(response.ok && result?.status === "COMMITTED" && result?.effectReferenceId,
+    "Canonical Credit Wallet reservation fixture should commit.", { status: response.status, result });
+  return result.effectReferenceId as string;
 }
 
 function buildStoredSettlementInput(outcome: Outcome) {
@@ -257,10 +322,10 @@ async function createSettlement(
   await seedSettlementInput(pool, input);
 
   const playerId = randomUUID();
-  await seedAccountWallet(pool, playerId, options.withWallet ?? true);
+  const walletScope = await seedAccountWallet(pool, playerId, options.withWallet ?? true);
   const reservationId = options.withCredit === false
     ? null
-    : await seedCreditReservation(pool, playerId, input.ticketId);
+    : await seedCreditReservation(walletScope!, input.ticketId);
   const acceptedAt = new Date().toISOString();
   const contextReference = `accepted-wager-context:v1:${randomUUID()}`;
   const ingestionPayload = {
@@ -454,12 +519,16 @@ async function main() {
     const ledgerFailure = await createSettlement(pool, "Win");
     const ledgerFailureLedger = findInstruction(ledgerFailure, "LEDGER_PAYOUT");
     const ledgerFailureCredit = findInstruction(ledgerFailure, "CREDIT_APPLY");
-    const creditOnly = await executeInstruction(ledgerFailureCredit.instructionId);
-    assert(creditOnly.response.ok, "Credit should succeed before Ledger failure.", { status: creditOnly.response.status, body: creditOnly.body });
-    await pool.query("delete from public.financial_wallets where id = $1;", [ledgerFailure.playerId]);
+    const creditBeforeLedger = await executeInstruction(ledgerFailureCredit.instructionId);
+    assert(creditBeforeLedger.response.status === 502,
+      "Credit Wallet must fail closed until required Ledger posting completes.", {
+        status: creditBeforeLedger.response.status,
+        body: creditBeforeLedger.body,
+      });
+    await pool.query("update public.financial_wallets set status = 'CLOSED' where id = $1;", [ledgerFailure.playerId]);
     const failedLedger = await executeInstruction(ledgerFailureLedger.instructionId);
     assert(failedLedger.response.status === 502, "Ledger failure should preserve recoverable state.", { status: failedLedger.response.status, body: failedLedger.body });
-    pass("Credit success + Ledger failure preserves recoverable state");
+    pass("Credit-before-Ledger is blocked and Ledger failure preserves recoverable state");
     pass("process restart resumes only missing work");
 
     const updateBlocked = await pool

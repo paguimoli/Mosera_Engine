@@ -361,6 +361,27 @@ public static class SettlementPersistenceEndpoints
                     new ErrorDto("SETTLEMENT_PERSISTENCE_REJECTED", error.MessageText),
                     context.GetCorrelationId()));
             }
+            catch (SettlementTargetRejectedException error)
+            {
+                loggerFactory
+                    .CreateLogger("SettlementPersistenceEndpoints")
+                    .LogWarning(
+                        error,
+                        "Settlement integration target {TargetService} rejected the canonical request with status {StatusCode}.",
+                        error.TargetService,
+                        error.StatusCode);
+
+                var statusCode = error.StatusCode is StatusCodes.Status400BadRequest or StatusCodes.Status409Conflict
+                    ? error.StatusCode
+                    : StatusCodes.Status502BadGateway;
+                return Results.Json(
+                    new ErrorResponse(
+                        new ErrorDto(
+                            "SETTLEMENT_INTEGRATION_TARGET_REJECTED",
+                            $"{error.TargetService} rejected the canonical settlement request."),
+                        context.GetCorrelationId()),
+                    statusCode: statusCode);
+            }
             catch (Exception error) when (error is DurableSettlementRepositoryException or SettlementIntegrationException or NpgsqlException or TimeoutException or InvalidOperationException)
             {
                 loggerFactory
@@ -1090,7 +1111,7 @@ public static class SettlementPersistenceEndpoints
             var provisionalEffect = ToLedgerEffectDto(
                 run,
                 record,
-                BuildLedgerEffect(run, record, DateTimeOffset.UtcNow, Array.Empty<SettlementExternalReferenceDto>()));
+                BuildLedgerEffect(run, record, record.CreatedAt, Array.Empty<SettlementExternalReferenceDto>()));
             if (!HasExternalReference(externalReferences, record.Id, "ledger_entry") &&
                 !HasExternalReference(externalReferences, record.Id, "ledger_noop"))
             {

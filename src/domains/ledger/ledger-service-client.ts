@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { CreateLedgerEntryInput, LedgerEntry } from "./ledger.types";
 
 const LEDGER_SERVICE_TIMEOUT_MS = 2_000;
@@ -36,6 +37,7 @@ type LedgerServiceEntryDto = {
     id?: string | null;
   } | null;
   idempotencyKey?: string | null;
+  canonicalRequestHash?: string | null;
   reversalOfLedgerEntryId?: string | null;
   metadata?: Record<string, unknown>;
   createdAt: string;
@@ -178,6 +180,68 @@ function mapLedgerServiceEntry(entry: LedgerServiceEntryDto): LedgerEntry {
   };
 }
 
+function sha256(value: string) {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+function canonicalJson(value: Record<string, unknown>) {
+  return JSON.stringify(
+    Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)))
+  ).replaceAll("+", "\\u002B");
+}
+
+function toDotNetUtcRoundtrip(value: string) {
+  return `${new Date(value).toISOString().replace("Z", "0000+00:00")}`;
+}
+
+function deriveStableEffectiveAt(idempotencyKey: string) {
+  const digest = createHash("sha256").update(idempotencyKey.trim()).digest();
+  const seconds = digest.readUInt32BE(0) % (366 * 24 * 60 * 60);
+  return new Date(Date.UTC(2026, 0, 1, 0, 0, seconds)).toISOString();
+}
+
+function computeCanonicalLedgerRequestHash(input: {
+  amountMinor: number;
+  currency: string;
+  direction: string;
+  effectiveAt: string;
+  idempotencyKey: string;
+  instructionHash: string;
+  instructionId: string;
+  instructionType: string;
+  ledgerAccountId?: string | null;
+  ledgerWalletId: string;
+  minorUnitPrecision: number;
+  originatingAuthority: string;
+  referenceId?: string | null;
+  referenceType?: string | null;
+  reversalOfLedgerEntryId?: string | null;
+  settlementRecordId?: string | null;
+  transactionType: string;
+}) {
+  return sha256(
+    canonicalJson({
+      amountMinor: input.amountMinor,
+      currency: input.currency.trim(),
+      direction: input.direction,
+      effectiveAt: toDotNetUtcRoundtrip(input.effectiveAt),
+      idempotencyKey: input.idempotencyKey.trim(),
+      instructionHash: input.instructionHash.trim(),
+      instructionId: input.instructionId.trim(),
+      instructionType: input.instructionType.trim(),
+      ledgerAccountId: input.ledgerAccountId?.trim() || null,
+      ledgerWalletId: input.ledgerWalletId.trim(),
+      minorUnitPrecision: input.minorUnitPrecision,
+      originatingAuthority: input.originatingAuthority.trim(),
+      referenceId: input.referenceId?.trim() || null,
+      referenceType: input.referenceType?.trim() || null,
+      reversalOfLedgerEntryId: input.reversalOfLedgerEntryId?.trim() || null,
+      settlementRecordId: input.settlementRecordId?.trim() || null,
+      transactionType: input.transactionType,
+    })
+  );
+}
+
 export async function postLedgerEntryViaLedgerService(
   input: CreateLedgerEntryInput
 ): Promise<LedgerEntry> {
@@ -187,6 +251,43 @@ export async function postLedgerEntryViaLedgerService(
 
   await assertLedgerServiceAuthorityReady();
 
+  const effectiveAt = input.effectiveAt?.trim() || deriveStableEffectiveAt(input.idempotencyKey);
+  const instructionId = input.reference?.referenceId?.trim() || input.idempotencyKey.trim();
+  const instructionType = input.transactionType;
+  const instructionHash = sha256(
+    canonicalJson({
+      amount: input.amount,
+      direction: input.direction,
+      idempotencyKey: input.idempotencyKey,
+      instructionId,
+      referenceId: input.reference?.referenceId ?? null,
+      referenceType: input.reference?.referenceType ?? null,
+      transactionType: input.transactionType,
+      walletId: input.walletId,
+    })
+  );
+  const originatingAuthority = "nextjs-ledger-authority-router";
+  const minorUnitPrecision = 2;
+  const canonicalRequestHash = computeCanonicalLedgerRequestHash({
+    amountMinor: input.amount,
+    currency: "USD",
+    direction: input.direction,
+    effectiveAt,
+    idempotencyKey: input.idempotencyKey,
+    instructionHash,
+    instructionId,
+    instructionType,
+    ledgerAccountId: null,
+    ledgerWalletId: input.walletId,
+    minorUnitPrecision,
+    originatingAuthority,
+    referenceId: input.reference?.referenceId ?? null,
+    referenceType: input.reference?.referenceType ?? null,
+    reversalOfLedgerEntryId: input.reversalOfLedgerEntryId ?? null,
+    settlementRecordId: null,
+    transactionType: input.transactionType,
+  });
+
   const response = await fetchWithTimeout(`${getLedgerServiceUrl()}/v1/ledger/entries`, {
     method: "POST",
     headers: {
@@ -195,16 +296,26 @@ export async function postLedgerEntryViaLedgerService(
     },
     body: JSON.stringify({
       walletId: input.walletId,
+      ledgerAccountId: null,
+      instructionId,
+      instructionType,
+      instructionHash,
+      originatingAuthority,
+      settlementRecordId: null,
       transactionType: input.transactionType,
       direction: input.direction,
       money: {
         amount: input.amount,
         currency: "USD",
       },
+      minorUnitPrecision,
+      canonicalRequestHash,
+      effectiveAt,
       reference: {
         type: input.reference?.referenceType ?? null,
         id: input.reference?.referenceId ?? null,
       },
+      reversalOfLedgerEntryId: input.reversalOfLedgerEntryId ?? null,
       metadata: input.metadata ?? {},
     }),
   });

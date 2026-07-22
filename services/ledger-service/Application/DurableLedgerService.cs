@@ -16,6 +16,15 @@ public sealed class DurableLedgerService
     public bool MutationCapabilityEnabled => repository.DurablePersistenceConfigured;
     public bool DurablePersistenceConfigured => repository.DurablePersistenceConfigured;
     public bool IdempotencySupportConfigured => repository.DurablePersistenceConfigured;
+    public bool CanonicalPostingContractReady => repository.DurablePersistenceConfigured;
+    public bool CanonicalHashValidationReady => repository.DurablePersistenceConfigured;
+    public bool ConflictSafeIdempotencyReady => repository.DurablePersistenceConfigured;
+    public bool CurrencyAccountValidationReady => repository.DurablePersistenceConfigured;
+    public bool ImmutableEntryStorageReady => repository.DurablePersistenceConfigured;
+    public bool ReversalOnlyCorrectionReady => repository.DurablePersistenceConfigured;
+    public bool OriginalEntryValidationReady => repository.DurablePersistenceConfigured;
+    public bool ReversalConflictProtectionReady => repository.DurablePersistenceConfigured;
+    public bool SettlementReversalInstructionCompatible => repository.DurablePersistenceConfigured;
 
     public async Task<LedgerEntryDto> PostEntryAsync(
         CreateLedgerEntryRequest request,
@@ -35,6 +44,7 @@ public sealed class DurableLedgerService
     public async Task<LedgerEntryDto?> ReverseEntryAsync(
         Guid ledgerEntryId,
         ReverseLedgerEntryRequest request,
+        string idempotencyKey,
         CancellationToken cancellationToken)
     {
         var originalEntry = await repository.FindByIdAsync(ledgerEntryId, cancellationToken);
@@ -43,7 +53,26 @@ public sealed class DurableLedgerService
             return null;
         }
 
-        var idempotencyKey = CreateReversalIdempotencyKey(originalEntry.Id);
+        ValidateOriginalEntry(originalEntry, request);
+
+        var existingReversal = await repository.FindReversalByOriginalEntryIdAsync(
+            originalEntry.Id,
+            cancellationToken);
+        if (existingReversal is not null)
+        {
+            if (string.Equals(existingReversal.IdempotencyKey, idempotencyKey, StringComparison.Ordinal)
+                && string.Equals(
+                    existingReversal.CanonicalReversalHash,
+                    request.CanonicalReversalHash,
+                    StringComparison.Ordinal))
+            {
+                return ToDto(existingReversal);
+            }
+
+            throw new DurableLedgerReversalConflictException(
+                "Ledger entry already has an immutable reversal.");
+        }
+
         var reversalEntry = await repository.ReverseEntryAsync(
             originalEntry,
             request,
@@ -80,9 +109,45 @@ public sealed class DurableLedgerService
         }.Any(message => postgresError.MessageText.Contains(message, StringComparison.OrdinalIgnoreCase));
     }
 
-    public static string CreateReversalIdempotencyKey(Guid ledgerEntryId)
+    private static void ValidateOriginalEntry(
+        DurableLedgerEntry originalEntry,
+        ReverseLedgerEntryRequest request)
     {
-        return $"ledger-reversal:{ledgerEntryId:N}";
+        if (originalEntry.ReversalOfLedgerEntryId.HasValue
+            || originalEntry.TransactionType == LedgerTransactionType.REVERSAL)
+        {
+            throw new DurableLedgerReversalConflictException(
+                "A reversal entry cannot itself be reversed through the standard correction path.");
+        }
+
+        if (string.IsNullOrWhiteSpace(originalEntry.CanonicalRequestHash))
+        {
+            throw new DurableLedgerReversalConflictException(
+                "Original ledger entry is not eligible for reversal because it has no canonical entry hash.");
+        }
+
+        if (!string.Equals(
+            originalEntry.CanonicalRequestHash,
+            request.OriginalLedgerEntryHash,
+            StringComparison.Ordinal))
+        {
+            throw new DurableLedgerRepositoryException(
+                "Original ledger entry hash does not match the persisted immutable entry.");
+        }
+
+        var expectedDirection = originalEntry.Direction == LedgerDirection.CREDIT
+            ? LedgerDirection.DEBIT
+            : LedgerDirection.CREDIT;
+
+        if (request.WalletId != originalEntry.WalletId
+            || request.LedgerAccountId != originalEntry.AccountId
+            || request.Direction != expectedDirection
+            || request.Money.Amount != originalEntry.Amount
+            || !string.Equals(request.Money.Currency, originalEntry.CurrencyCode, StringComparison.Ordinal))
+        {
+            throw new DurableLedgerRepositoryException(
+                "Reversal financial dimensions must exactly oppose the original ledger entry.");
+        }
     }
 
     private static int ParseCursor(string? cursor)
@@ -109,7 +174,12 @@ public sealed class DurableLedgerService
                 ? null
                 : new LedgerReferenceDto(entry.ReferenceType, entry.ReferenceId),
             entry.IdempotencyKey,
+            entry.CanonicalRequestHash,
             entry.ReversalOfLedgerEntryId,
+            entry.OriginalLedgerEntryHash,
+            entry.ReversalReasonCode,
+            entry.ReversalPolicyVersion,
+            entry.CanonicalReversalHash,
             entry.Metadata,
             entry.CreatedAt);
     }

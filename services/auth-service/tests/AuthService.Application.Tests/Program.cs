@@ -235,6 +235,8 @@ Assert(report.ReadinessScore == secondReport.ReadinessScore, "Report scoring mus
 
 await VerifyAuthPersistenceAsync();
 await VerifyAuthLoginRuntimeAsync();
+await VerifyCanonicalArgon2idPolicyAsync();
+await VerifyCanonicalAuthenticationAuthorityAsync();
 
 Console.WriteLine("AuthService.Application.Tests PASS");
 
@@ -244,6 +246,88 @@ static void Assert(bool condition, string message)
     {
         throw new InvalidOperationException(message);
     }
+}
+
+static async Task VerifyCanonicalArgon2idPolicyAsync()
+{
+    var passwords = new Argon2idPasswordService();
+    const string password = "Mosera-Authority-Auth!2026";
+    var errors = passwords.ValidatePassword(password, "canonical-user", "canonical@example.com");
+    Assert(errors.Count == 0, "Canonical production password must satisfy policy.");
+    var encoded = await passwords.HashAsync(password);
+    Assert(encoded.StartsWith("$argon2id$v=19$", StringComparison.Ordinal), "Canonical password hash must use Argon2id v1.3 format.");
+    Assert(await passwords.VerifyAsync(password, encoded), "Canonical Argon2id password must verify.");
+    Assert(!await passwords.VerifyAsync("Wrong-Canonical-Password!2026", encoded), "Invalid Argon2id password must fail verification.");
+    Assert(!await passwords.VerifyAsync(password, "pbkdf2-sha256$100000$salt$hash"), "PBKDF2 must not be accepted by the canonical password verifier.");
+    Assert(passwords.ValidatePassword("short").Count > 0, "Weak passwords must fail canonical policy.");
+}
+
+static async Task VerifyCanonicalAuthenticationAuthorityAsync()
+{
+    Environment.SetEnvironmentVariable("AUTH_AUTHORITY", "MONOLITH");
+    Environment.SetEnvironmentVariable("AUTH_ALLOW_INITIAL_BOOTSTRAP", "true");
+    var legacy = new TestAuthRuntimeRepository();
+    var identityId = Guid.NewGuid();
+    legacy.AddIdentity(new Identity(identityId, new LoginId("canonical-admin"), IdentityType.Admin, IdentityLifecycleState.Active, [], [], [], [], DateTimeOffset.UtcNow));
+    var legacyLogin = new AuthLoginRuntimeService(legacy, legacy, legacy, legacy, legacy, legacy);
+    var accessTokens = new AuthAccessTokenService(legacy, legacy, legacy, legacy, legacy, legacyLogin);
+    var repository = new TestCanonicalAuthRepository();
+    var authority = new AuthenticationAuthorityService(repository, new Argon2idPasswordService(), accessTokens, legacy, legacy);
+    var tenantId = Guid.NewGuid();
+    var brandId = Guid.NewGuid();
+    const string password = "Mosera-Admin-Password!2026";
+
+    var created = await authority.CreateIdentityAsync(new CreateCanonicalIdentityRequest(identityId, tenantId, brandId, "Canonical-Admin", "Auth.Owner@Example.com", "ADMIN", CanonicalIdentityStatus.Active, password, null, "create-canonical", "127.0.0.1", "tests"));
+    Assert(created.NormalizedUsername == "canonical-admin", "Canonical username must be case-normalized.");
+    Assert(created.NormalizedEmail == "auth.owner@example.com", "Canonical email must be case-normalized.");
+    Assert((await repository.FindActivePasswordCredential(identityId))?.Algorithm == "ARGON2ID", "Canonical credential must use Argon2id.");
+
+    var login = await authority.LoginAsync(new CanonicalLoginRequest("CANONICAL-ADMIN", password, "login-one", "127.0.0.1", "tests", "test-device"));
+    Assert(login.Success && login.Session is not null && login.Tokens is not null, "Canonical login must atomically establish session and token artifacts.");
+    Assert(login.Session!.OpaqueToken != login.Session.TokenHash, "Only the session hash may be persisted.");
+    var secondLogin = await authority.LoginAsync(new CanonicalLoginRequest("auth.owner@example.com", password, "login-two", "127.0.0.1", "tests", null));
+    Assert(secondLogin.Success, "Canonical email login must succeed.");
+    Assert(await authority.ValidateSessionAsync(login.Session.OpaqueToken, false) is null, "Session replacement must revoke the prior session.");
+    Assert(await authority.ValidateSessionAsync(secondLogin.Session!.OpaqueToken, true) is not null, "Newest canonical session must validate and renew.");
+
+    var rotated = await authority.RotatePasswordAsync(new PasswordRotationRequest(identityId, password, "Canonical-Rotated-Password!2026", "rotate", identityId, null, null));
+    Assert(rotated.Version == 2, "Credential rotation must append a new version.");
+    await AssertThrowsAsync(() => authority.RotatePasswordAsync(new PasswordRotationRequest(identityId, "Canonical-Rotated-Password!2026", password, "reuse", identityId, null, null)), "Password history must reject reuse.");
+
+    await authority.TransitionAsync(new LifecycleTransitionRequest(identityId, CanonicalIdentityStatus.Active, CanonicalIdentityStatus.Disabled, identityId, "disable", "disable", null, null));
+    Assert(await authority.ValidateSessionAsync(secondLogin.Session.OpaqueToken, false) is null, "Disabling an account must revoke its session.");
+    await authority.TransitionAsync(new LifecycleTransitionRequest(identityId, CanonicalIdentityStatus.Disabled, CanonicalIdentityStatus.Active, identityId, "reactivate", "reactivate", null, null));
+    await authority.TransitionAsync(new LifecycleTransitionRequest(identityId, CanonicalIdentityStatus.Active, CanonicalIdentityStatus.Locked, identityId, "lock", "lock", null, null));
+    await authority.TransitionAsync(new LifecycleTransitionRequest(identityId, CanonicalIdentityStatus.Locked, CanonicalIdentityStatus.Active, identityId, "unlock", "unlock", null, null));
+    await authority.TransitionAsync(new LifecycleTransitionRequest(identityId, CanonicalIdentityStatus.Active, CanonicalIdentityStatus.Compromised, identityId, "compromise", "compromise", null, null));
+    await authority.ResetPasswordAsync(new PasswordResetAuthorityRequest(identityId, "Canonical-Recovery-Password!2026", identityId, "compromise_recovery", "recovery-reset", null, null));
+    await authority.TransitionAsync(new LifecycleTransitionRequest(identityId, CanonicalIdentityStatus.Compromised, CanonicalIdentityStatus.Active, identityId, "recover", "recover", null, null));
+
+    var resetRequest = await authority.RequestPasswordResetAsync(new PublicPasswordResetRequest("canonical-admin", "reset-request", null, null));
+    Assert(!string.IsNullOrWhiteSpace(resetRequest.ResetToken), "Non-production reset flow must produce a testable one-time token.");
+    var resetCredential = await authority.ConfirmPasswordResetAsync(new PublicPasswordResetConfirmRequest(resetRequest.ResetToken!, "Canonical-Reset-Password!2026", "reset-confirm", null, null));
+    Assert(resetCredential.Version == 5, "Password reset must append a credential version.");
+    await AssertThrowsAsync(() => authority.ConfirmPasswordResetAsync(new PublicPasswordResetConfirmRequest(resetRequest.ResetToken!, "Another-Password-Value!2026", "reset-replay", null, null)), "Password reset token must be single-use.");
+
+    repository.FailSessionEstablishment = true;
+    var sessionCount = repository.Sessions.Count;
+    await AssertThrowsAsync(() => authority.LoginAsync(new CanonicalLoginRequest("canonical-admin", "Canonical-Reset-Password!2026", "rollback", null, null, null)), "Session transaction failure must surface.");
+    Assert(repository.Sessions.Count == sessionCount, "Session transaction failure must not leave partial state.");
+    Assert(repository.Audit.Any(item => item.Action == "PASSWORD_RESET"), "Immutable audit must contain password reset evidence.");
+    Assert((await authority.GetReadinessAsync()).AuthorityMode == AuthenticationAuthorityMode.Monolith, "AUTH_AUTHORITY must remain MONOLITH.");
+}
+
+static async Task AssertThrowsAsync(Func<Task> action, string message)
+{
+    try
+    {
+        await action();
+    }
+    catch
+    {
+        return;
+    }
+    throw new InvalidOperationException(message);
 }
 
 static async Task VerifyAuthPersistenceAsync()
@@ -919,4 +1003,142 @@ sealed class TestAuthRuntimeRepository :
     {
         return Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
     }
+}
+
+sealed class TestCanonicalAuthRepository : IAuthenticationAuthorityRepository
+{
+    public bool RuntimeAvailable => true;
+    public bool FailSessionEstablishment { get; set; }
+    public Dictionary<Guid, CanonicalIdentity> Identities { get; } = [];
+    public Dictionary<Guid, List<PasswordCredentialVersion>> Credentials { get; } = [];
+    public Dictionary<Guid, CanonicalSession> Sessions { get; } = [];
+    public List<AuthenticationAuditEvidence> Audit { get; } = [];
+    private readonly Dictionary<string, PasswordResetAuthorityRecord> resets = new(StringComparer.Ordinal);
+    private readonly HashSet<Guid> consumedResets = [];
+
+    public Task<CanonicalIdentity?> FindIdentityByIdentifier(string normalizedIdentifier, CancellationToken cancellationToken = default) =>
+        Task.FromResult<CanonicalIdentity?>(Identities.Values.SingleOrDefault(item => item.NormalizedUsername == normalizedIdentifier || item.NormalizedEmail == normalizedIdentifier));
+
+    public Task<CanonicalIdentity?> FindIdentityById(Guid identityId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(Identities.TryGetValue(identityId, out var identity) ? identity : null);
+
+    public Task<PasswordCredentialVersion?> FindActivePasswordCredential(Guid identityId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<PasswordCredentialVersion?>(Credentials.GetValueOrDefault(identityId)?.OrderByDescending(item => item.Version).FirstOrDefault());
+
+    public Task<IReadOnlyCollection<PasswordCredentialVersion>> ListPasswordHistory(Guid identityId, int limit, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyCollection<PasswordCredentialVersion>>(Credentials.GetValueOrDefault(identityId)?.OrderByDescending(item => item.Version).Take(limit).ToArray() ?? []);
+
+    public Task<CanonicalIdentity> CreateIdentity(CanonicalIdentity identity, PasswordCredentialVersion credential, AuthenticationAuditEvidence evidence, CancellationToken cancellationToken = default)
+    {
+        if (Identities.Values.Any(item => item.TenantId == identity.TenantId && (item.NormalizedUsername == identity.NormalizedUsername || item.NormalizedEmail == identity.NormalizedEmail))) throw new InvalidOperationException("identity_uniqueness_conflict");
+        Identities.Add(identity.IdentityId, identity);
+        Credentials[identity.IdentityId] = [credential];
+        Audit.Add(evidence);
+        return Task.FromResult(identity);
+    }
+
+    public Task<PasswordCredentialVersion> RotatePassword(Guid identityId, PasswordCredentialVersion credential, AuthenticationAuditEvidence evidence, CancellationToken cancellationToken = default)
+    {
+        Credentials[identityId].Add(credential);
+        Audit.Add(evidence);
+        return Task.FromResult(credential);
+    }
+
+    public Task CreatePasswordResetRequest(PasswordResetAuthorityRecord reset, AuthenticationAuditEvidence evidence, CancellationToken cancellationToken = default)
+    {
+        resets[reset.TokenHash] = reset;
+        Audit.Add(evidence);
+        return Task.CompletedTask;
+    }
+
+    public Task<PasswordResetAuthorityRecord?> FindActivePasswordResetByHash(string tokenHash, CancellationToken cancellationToken = default) =>
+        Task.FromResult<PasswordResetAuthorityRecord?>(resets.TryGetValue(tokenHash, out var reset) && reset.ExpiresAt > DateTimeOffset.UtcNow && !consumedResets.Contains(reset.ResetId) ? reset : null);
+
+    public Task<PasswordCredentialVersion> ConsumePasswordReset(PasswordResetAuthorityRecord reset, PasswordCredentialVersion credential, AuthenticationAuditEvidence resetEvidence, AuthenticationAuditEvidence logoutEvidence, CancellationToken cancellationToken = default)
+    {
+        if (!consumedResets.Add(reset.ResetId)) throw new InvalidOperationException("invalid_password_reset_token");
+        Credentials[reset.IdentityId].Add(credential);
+        foreach (var session in Sessions.Values.Where(item => item.IdentityId == reset.IdentityId && item.RevokedAt is null).ToArray()) Sessions[session.SessionId] = session with { RevokedAt = DateTimeOffset.UtcNow };
+        Audit.Add(resetEvidence);
+        Audit.Add(logoutEvidence);
+        return Task.FromResult(credential);
+    }
+
+    public Task<CanonicalIdentity> TransitionIdentity(Guid identityId, CanonicalIdentityStatus expectedStatus, CanonicalIdentityStatus targetStatus, AuthenticationAuditEvidence evidence, CancellationToken cancellationToken = default)
+    {
+        var identity = Identities[identityId];
+        if (identity.Status != expectedStatus) throw new InvalidOperationException("identity_lifecycle_conflict");
+        var latest = Credentials[identityId].OrderByDescending(item => item.Version).First();
+        if (targetStatus == CanonicalIdentityStatus.Compromised)
+        {
+            Credentials[identityId].Add(latest with { CredentialVersionId = Guid.NewGuid(), Version = latest.Version + 1, Compromised = true, CreatedAt = DateTimeOffset.UtcNow, RotatedAt = DateTimeOffset.UtcNow });
+        }
+        if (expectedStatus == CanonicalIdentityStatus.Compromised && targetStatus == CanonicalIdentityStatus.Active && Credentials[identityId].OrderByDescending(item => item.Version).First().Compromised)
+        {
+            throw new InvalidOperationException("identity_lifecycle_conflict");
+        }
+        var transitioned = identity with { Status = targetStatus, DisabledAt = targetStatus is CanonicalIdentityStatus.Disabled or CanonicalIdentityStatus.Deleted ? DateTimeOffset.UtcNow : null };
+        Identities[identityId] = transitioned;
+        Audit.Add(evidence);
+        return Task.FromResult(transitioned);
+    }
+
+    public Task<CanonicalSession> EstablishSession(CanonicalIdentity identity, CanonicalSession session, CanonicalTokenArtifacts tokens, AuthenticationAuditEvidence loginEvidence, AuthenticationAuditEvidence sessionEvidence, CancellationToken cancellationToken = default)
+    {
+        if (FailSessionEstablishment) throw new InvalidOperationException("simulated_transaction_failure");
+        foreach (var current in Sessions.Values.Where(item => item.IdentityId == identity.IdentityId && item.RevokedAt is null).ToArray()) Sessions[current.SessionId] = current with { RevokedAt = DateTimeOffset.UtcNow };
+        Sessions[session.SessionId] = session with { OpaqueToken = string.Empty };
+        Audit.Add(loginEvidence);
+        Audit.Add(sessionEvidence);
+        return Task.FromResult(session);
+    }
+
+    public Task<CanonicalSession?> FindSessionByHash(string tokenHash, CancellationToken cancellationToken = default) =>
+        Task.FromResult<CanonicalSession?>(Sessions.Values.SingleOrDefault(item => item.TokenHash == tokenHash));
+
+    public Task<CanonicalSession?> RenewSession(string tokenHash, DateTimeOffset idleExpiresAt, CancellationToken cancellationToken = default)
+    {
+        var session = Sessions.Values.SingleOrDefault(item => item.TokenHash == tokenHash);
+        if (session is null) return Task.FromResult<CanonicalSession?>(null);
+        var renewed = session with { IdleExpiresAt = idleExpiresAt };
+        Sessions[session.SessionId] = renewed;
+        return Task.FromResult<CanonicalSession?>(renewed);
+    }
+
+    public Task<int> RevokeSession(string tokenHash, AuthenticationAuditEvidence evidence, CancellationToken cancellationToken = default)
+    {
+        var session = Sessions.Values.SingleOrDefault(item => item.TokenHash == tokenHash && item.RevokedAt is null);
+        if (session is null) return Task.FromResult(0);
+        Sessions[session.SessionId] = session with { RevokedAt = DateTimeOffset.UtcNow };
+        Audit.Add(evidence);
+        return Task.FromResult(1);
+    }
+
+    public Task<int> RevokeSessionById(Guid sessionId, AuthenticationAuditEvidence evidence, CancellationToken cancellationToken = default)
+    {
+        if (!Sessions.TryGetValue(sessionId, out var session) || session.RevokedAt is not null) return Task.FromResult(0);
+        Sessions[sessionId] = session with { RevokedAt = DateTimeOffset.UtcNow };
+        Audit.Add(evidence);
+        return Task.FromResult(1);
+    }
+
+    public Task<int> RevokeAllSessions(Guid identityId, AuthenticationAuditEvidence evidence, CancellationToken cancellationToken = default)
+    {
+        var sessions = Sessions.Values.Where(item => item.IdentityId == identityId && item.RevokedAt is null).ToArray();
+        foreach (var session in sessions) Sessions[session.SessionId] = session with { RevokedAt = DateTimeOffset.UtcNow };
+        Audit.Add(evidence);
+        return Task.FromResult(sessions.Length);
+    }
+
+    public Task AppendAudit(AuthenticationAuditEvidence evidence, CancellationToken cancellationToken = default)
+    {
+        Audit.Add(evidence);
+        return Task.CompletedTask;
+    }
+
+    public Task AppendAnonymousLoginFailure(string identifierHash, string reason, string correlationId, string? ipAddress, string? userAgent, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<bool> HasSuperAdminGovernance(Guid identityId, CancellationToken cancellationToken = default) => Task.FromResult(true);
+
+    public Task<bool> CheckReadiness(CancellationToken cancellationToken = default) => Task.FromResult(true);
 }

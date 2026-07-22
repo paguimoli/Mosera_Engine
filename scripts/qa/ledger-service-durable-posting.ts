@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Pool, type QueryResultRow } from "pg";
 import { readAuthorityConfigurations } from "@/src/domains/authority-control/authority-control.repository";
 
@@ -31,6 +31,62 @@ function assert(condition: boolean, message: string, metadata: Record<string, un
 
 function pass(name: string, metadata: Record<string, unknown> = {}) {
   checks.push({ name, status: "PASS", metadata });
+}
+
+function sha256(value: string) {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+function canonicalJson(value: Record<string, unknown>) {
+  return JSON.stringify(
+    Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)))
+  ).replaceAll("+", "\\u002B");
+}
+
+function toDotNetUtcRoundtrip(value: string) {
+  return `${new Date(value).toISOString().replace("Z", "0000+00:00")}`;
+}
+
+function computeCanonicalLedgerRequestHash(input: {
+  amountMinor: number;
+  currency: string;
+  direction: string;
+  effectiveAt: string;
+  idempotencyKey: string;
+  instructionHash: string;
+  instructionId: string;
+  instructionType: string;
+  ledgerAccountId?: string | null;
+  ledgerWalletId: string;
+  minorUnitPrecision: number;
+  originatingAuthority: string;
+  referenceId?: string | null;
+  referenceType?: string | null;
+  reversalOfLedgerEntryId?: string | null;
+  settlementRecordId?: string | null;
+  transactionType: string;
+}) {
+  return sha256(
+    canonicalJson({
+      amountMinor: input.amountMinor,
+      currency: input.currency.trim(),
+      direction: input.direction,
+      effectiveAt: toDotNetUtcRoundtrip(input.effectiveAt),
+      idempotencyKey: input.idempotencyKey.trim(),
+      instructionHash: input.instructionHash.trim(),
+      instructionId: input.instructionId.trim(),
+      instructionType: input.instructionType.trim(),
+      ledgerAccountId: input.ledgerAccountId?.trim() || null,
+      ledgerWalletId: input.ledgerWalletId.trim(),
+      minorUnitPrecision: input.minorUnitPrecision,
+      originatingAuthority: input.originatingAuthority.trim(),
+      referenceId: input.referenceId?.trim() || null,
+      referenceType: input.referenceType?.trim() || null,
+      reversalOfLedgerEntryId: input.reversalOfLedgerEntryId?.trim() || null,
+      settlementRecordId: input.settlementRecordId?.trim() || null,
+      transactionType: input.transactionType,
+    })
+  );
 }
 
 function getDatabaseUrl() {
@@ -111,13 +167,48 @@ async function verifyHealth() {
   assert(body?.capabilities?.idempotencySupportConfigured === true, "Idempotency marker should be enabled.", {
     body,
   });
+  assert(body?.capabilities?.canonicalPostingContractReady === true, "Canonical posting marker should be enabled.", {
+    body,
+  });
+  assert(body?.capabilities?.canonicalHashValidationReady === true, "Canonical hash marker should be enabled.", {
+    body,
+  });
+  assert(body?.capabilities?.conflictSafeIdempotencyReady === true, "Conflict-safe idempotency marker should be enabled.", {
+    body,
+  });
+  assert(body?.capabilities?.currencyAccountValidationReady === true, "Currency/account validation marker should be enabled.", {
+    body,
+  });
   assert(body?.capabilities?.serviceAuthorityEnabled === false, "Ledger Service must not self-report authority enabled.", {
     body,
   });
   pass("Ledger Service readiness and capability markers are explicit");
 }
 
-async function postLedgerEntry(walletId: string, idempotencyKey: string, amount = 25) {
+async function postLedgerEntry(wallet: WalletRow, idempotencyKey: string, amount = 25) {
+  const effectiveAt = "2026-01-01T00:00:00.000Z";
+  const instructionId = idempotencyKey;
+  const instructionType = "DEPOSIT";
+  const instructionHash = sha256(canonicalJson({ amount, idempotencyKey, instructionId, instructionType }));
+  const canonicalRequestHash = computeCanonicalLedgerRequestHash({
+    amountMinor: amount,
+    currency: "USD",
+    direction: "CREDIT",
+    effectiveAt,
+    idempotencyKey,
+    instructionHash,
+    instructionId,
+    instructionType,
+    ledgerAccountId: wallet.account_id,
+    ledgerWalletId: wallet.id,
+    minorUnitPrecision: 2,
+    originatingAuthority: "ledger-service-qa",
+    referenceId: idempotencyKey,
+    referenceType: "qa_ledger_service",
+    reversalOfLedgerEntryId: null,
+    settlementRecordId: null,
+    transactionType: "DEPOSIT",
+  });
   const response = await fetch(`${ledgerServiceUrl}/v1/ledger/entries`, {
     method: "POST",
     headers: {
@@ -126,17 +217,27 @@ async function postLedgerEntry(walletId: string, idempotencyKey: string, amount 
       "x-correlation-id": `qa-ledger-service-${idempotencyKey}`,
     },
     body: JSON.stringify({
-      walletId,
+      walletId: wallet.id,
+      ledgerAccountId: wallet.account_id,
+      instructionId,
+      instructionType,
+      instructionHash,
+      originatingAuthority: "ledger-service-qa",
+      settlementRecordId: null,
       transactionType: "DEPOSIT",
       direction: "CREDIT",
       money: {
         amount,
         currency: "USD",
       },
+      minorUnitPrecision: 2,
+      canonicalRequestHash,
+      effectiveAt,
       reference: {
         type: "qa_ledger_service",
         id: idempotencyKey,
       },
+      reversalOfLedgerEntryId: null,
       metadata: {
         qa: "ledger-service-durable-posting",
       },
@@ -149,7 +250,7 @@ async function postLedgerEntry(walletId: string, idempotencyKey: string, amount 
 
 async function verifyPosting(wallet: WalletRow) {
   const idempotencyKey = `qa-ledger-service-${randomUUID()}`;
-  const first = await postLedgerEntry(wallet.id, idempotencyKey);
+  const first = await postLedgerEntry(wallet, idempotencyKey);
 
   assert(first.response.ok, "Ledger Service posting should succeed.", {
     status: first.response.status,
@@ -170,9 +271,14 @@ async function verifyPosting(wallet: WalletRow) {
   assert(ledgerEntry?.idempotencyKey === idempotencyKey, "Posted entry should preserve idempotency key.", {
     ledgerEntry,
   });
+  assert(
+    ledgerEntry?.canonicalRequestHash?.startsWith("sha256:"),
+    "Posted entry should preserve canonical request hash.",
+    { ledgerEntry }
+  );
   pass("post ledger entry succeeds", { ledgerEntryId: ledgerEntry.id });
 
-  const duplicate = await postLedgerEntry(wallet.id, idempotencyKey);
+  const duplicate = await postLedgerEntry(wallet, idempotencyKey);
   assert(duplicate.response.ok, "Duplicate idempotency key should return success.", {
     status: duplicate.response.status,
     body: duplicate.body,

@@ -23,6 +23,62 @@ public sealed class AuthAccessTokenService(
     public string Audience { get; } = Environment.GetEnvironmentVariable("AUTH_SERVICE_TOKEN_AUDIENCE") ?? "lottery-platform";
     public bool TokenIssuanceEnabled { get; } = !string.Equals(Environment.GetEnvironmentVariable("AUTH_SERVICE_ACCESS_TOKENS_ENABLED"), "false", StringComparison.OrdinalIgnoreCase);
 
+    public async Task<CanonicalTokenArtifacts> PrepareCanonicalTokensAsync(
+        CanonicalIdentity identity,
+        CanonicalSession session,
+        IReadOnlyCollection<Role> roles,
+        IReadOnlyCollection<string> permissions,
+        string correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TokenIssuanceEnabled) throw new InvalidOperationException("access_token_issuance_disabled");
+        var signingKey = await GetOrCreateActiveSigningKey(cancellationToken);
+        var issuedAt = DateTimeOffset.UtcNow;
+        var expiresAt = issuedAt.Add(AccessTokenLifetime);
+        var accessTokenId = Guid.NewGuid();
+        var jwtId = accessTokenId.ToString("N");
+        var roleCodes = roles.Select(role => role.Code).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        var scopes = permissions.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        var claims = new Dictionary<string, object?>
+        {
+            ["iss"] = Issuer,
+            ["aud"] = Audience,
+            ["sub"] = identity.IdentityId.ToString(),
+            ["identity_id"] = identity.IdentityId.ToString(),
+            ["tenant_id"] = identity.TenantId.ToString(),
+            ["brand_id"] = identity.BrandId?.ToString(),
+            ["session_id"] = session.SessionId.ToString(),
+            ["jti"] = jwtId,
+            ["iat"] = ToUnixTimeSeconds(issuedAt),
+            ["nbf"] = ToUnixTimeSeconds(issuedAt),
+            ["exp"] = ToUnixTimeSeconds(expiresAt),
+            ["roles"] = roleCodes,
+            ["groups"] = roleCodes,
+            ["permissions"] = scopes,
+            ["correlation_id"] = correlationId
+        };
+        var refreshIssuedAt = issuedAt;
+        var refreshToken = GenerateRefreshToken();
+        return new CanonicalTokenArtifacts(
+            accessTokenId,
+            SignJwt(signingKey, claims),
+            jwtId,
+            signingKey.SigningKeyId,
+            signingKey.KeyId,
+            Issuer,
+            Audience,
+            scopes,
+            issuedAt,
+            expiresAt,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            refreshToken,
+            HashRefreshToken(refreshToken),
+            refreshIssuedAt,
+            refreshIssuedAt.Add(RefreshTokenLifetime));
+    }
+
     public async Task<ServiceTokenIssueResult> IssueServiceTokenAsync(
         string serviceName,
         string clientSecret,

@@ -1,70 +1,32 @@
-import { supabaseServerAdmin } from "../src/lib/supabase/server-admin-client";
-import { verifyPassword } from "../src/domains/auth/password.helpers";
+export {};
 
-type PlatformPasswordRow = {
-  username: string;
-  password_hash?: string | null;
-};
-
-const PASSWORD_ENV_NAME = "VERIFY_PLATFORM_PASSWORD";
-
-function getArgValue(args: string[], name: string) {
-  const flagIndex = args.indexOf(name);
-
-  if (flagIndex < 0) {
-    return null;
-  }
-
-  return args[flagIndex + 1] || null;
-}
-
-function getRequiredEnv(name: string) {
-  const value = process.env[name];
-
-  if (!value) {
-    throw new Error(`${name} is required.`);
-  }
-
-  return value;
-}
+const AUTH_SERVICE_URL = (process.env.AUTH_SERVICE_URL || "http://localhost:5600").replace(/\/$/, "");
 
 async function main() {
-  const username = getArgValue(process.argv.slice(2), "--username")?.trim();
+  const loginId = process.env.PLATFORM_USERNAME?.trim();
+  const password = process.env.PLATFORM_PASSWORD;
+  if (!loginId || !password) throw new Error("PLATFORM_USERNAME and PLATFORM_PASSWORD are required.");
 
-  if (!username) {
-    throw new Error("Usage: verify-platform-password --username <username>");
+  const login = await fetch(`${AUTH_SERVICE_URL}/api/auth-service/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ loginId, password, correlationId: crypto.randomUUID() }),
+  });
+  const payload = await login.json().catch(() => ({}));
+  if (!login.ok) throw new Error(`Auth Service verification failed (${login.status}).`);
+
+  const sessionToken = typeof payload.sessionToken === "string" ? payload.sessionToken : "";
+  if (sessionToken) {
+    await fetch(`${AUTH_SERVICE_URL}/api/auth-service/authority/logout`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionToken, correlationId: crypto.randomUUID() }),
+    });
   }
-
-  const password = getRequiredEnv(PASSWORD_ENV_NAME);
-
-  const { data, error } = await supabaseServerAdmin
-    .from("platform_users")
-    .select("username, password_hash")
-    .eq("username", username)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error("Unable to load platform user.");
-  }
-
-  const user = data as PlatformPasswordRow | null;
-  const passwordHash = user?.password_hash ?? null;
-  const verifyResult = passwordHash
-    ? await verifyPassword(password, passwordHash)
-    : false;
-
-  console.log(`username: ${username}`);
-  console.log(`user found: ${user ? "yes" : "no"}`);
-  console.log(`has password hash: ${passwordHash ? "yes" : "no"}`);
-  console.log(`verify result: ${verifyResult}`);
+  console.log(JSON.stringify({ success: true, authority: "AUTH_SERVICE", identityId: payload.identity?.identityId ?? null }, null, 2));
 }
 
 main().catch((error: unknown) => {
-  const message =
-    error instanceof Error
-      ? error.message
-      : "Platform password verification failed.";
-
-  console.error(message);
+  console.error(error instanceof Error ? error.message : "Auth Service verification failed.");
   process.exit(1);
 });

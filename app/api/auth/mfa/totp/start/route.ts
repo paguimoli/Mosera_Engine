@@ -1,43 +1,15 @@
 import { NextResponse } from "next/server";
 
-import {
-  AuthMiddlewareError,
-  requireAuthenticatedUser,
-} from "@/src/domains/auth/auth-middleware";
-import { startTotpEnrollment } from "@/src/domains/auth/mfa.service";
+import { delegateMfaMutationToAuthService } from "@/src/domains/auth/auth-service.client";
 
 export const runtime = "nodejs";
 
-function authErrorResponse(error: AuthMiddlewareError) {
-  return NextResponse.json(
-    {
-      success: false,
-      error: error.message,
-    },
-    { status: error.status }
-  );
-}
-
 export async function POST(request: Request) {
+  const body = await request.json().catch(() => ({}));
   try {
-    const authContext = await requireAuthenticatedUser(request);
-    const enrollment = await startTotpEnrollment(authContext);
-
-    return NextResponse.json({
-      success: true,
-      ...enrollment,
-    });
-  } catch (error) {
-    if (error instanceof AuthMiddlewareError) {
-      return authErrorResponse(error);
-    }
-
-    return NextResponse.json(
-      {
-        success: false,
-        error: "MFA enrollment failed.",
-      },
-      { status: 400 }
-    );
+    const result = await delegateMfaMutationToAuthService("totp-start", body);
+    return NextResponse.json(result.body ?? { success: false }, { status: result.status });
+  } catch {
+    return NextResponse.json({ success: false, error: "MFA authority unavailable." }, { status: 503 });
   }
 }

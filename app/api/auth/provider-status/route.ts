@@ -1,18 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { getAuthProvider, getAuthServiceUrl } from "@/src/domains/auth/auth-provider";
+import { getAuthAuthority, getAuthProvider, getAuthServiceUrl } from "@/src/domains/auth/auth-provider";
 
 export const runtime = "nodejs";
 
 async function checkAuthService() {
-  if (getAuthProvider() !== "auth-service") {
-    return {
-      configured: false,
-      reachable: null,
-      ready: null,
-    };
-  }
-
   try {
     const response = await fetch(`${getAuthServiceUrl()}/health/ready`, {
       cache: "no-store",
@@ -41,7 +33,8 @@ export async function GET() {
   return NextResponse.json({
     success: true,
     provider,
-    legacyFallbackAvailable: provider === "legacy",
+    authority: getAuthAuthority(),
+    legacyFallbackAvailable: false,
     authService: await checkAuthService(),
     tokenIssuanceEnabled: provider === "auth-service",
     oauthRuntimeEnabled: false,

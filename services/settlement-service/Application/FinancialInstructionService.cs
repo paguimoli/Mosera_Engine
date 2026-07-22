@@ -98,6 +98,16 @@ public sealed class FinancialInstructionService(FinancialInstructionRepository r
         var instructionId = CreateDeterministicGuid(idempotencyKey);
         var provenance = new SortedDictionary<string, object?>(StringComparer.Ordinal)
         {
+            ["amountMinor"] = amountMinor,
+            ["balanceImpactMinor"] = instructionType switch
+            {
+                FinancialInstructionType.CREDIT_APPLY or FinancialInstructionType.CREDIT_REFUND =>
+                    ComputeBalanceImpact(settlementRecord),
+                _ => null
+            },
+            ["captureAmountMinor"] = instructionType.ToString().StartsWith("CREDIT_", StringComparison.Ordinal)
+                ? settlementRecord.StakeAmountMinor
+                : null,
             ["creditWalletPosting"] = "disabled",
             ["initialStatus"] = "Pending",
             ["ledgerPosting"] = "disabled",
@@ -105,6 +115,9 @@ public sealed class FinancialInstructionService(FinancialInstructionRepository r
             ["settlementHash"] = settlementRecord.CanonicalSettlementHash,
             ["stateTransition"] = status == FinancialInstructionStatus.Ready ? "Pending->Ready" : "Pending->Skipped"
         };
+        CopyProvenance(settlementRecord.Provenance, provenance, "resettlementRequestId");
+        CopyProvenance(settlementRecord.Provenance, provenance, "resettlementRole");
+        CopyProvenance(settlementRecord.Provenance, provenance, "originalSettlementId");
         var payload = new SortedDictionary<string, object?>(StringComparer.Ordinal)
         {
             ["amountMinor"] = amountMinor,
@@ -135,6 +148,20 @@ public sealed class FinancialInstructionService(FinancialInstructionRepository r
             HashCanonical(JsonSerializer.Serialize(payload, JsonOptions)),
             idempotencyKey,
             provenance);
+    }
+
+    private static long ComputeBalanceImpact(SettlementRecordResponse settlementRecord)
+    {
+        if (settlementRecord.NetResultAmountMinor != 0) return settlementRecord.NetResultAmountMinor;
+        return settlementRecord.GrossPayoutAmountMinor;
+    }
+
+    private static void CopyProvenance(
+        IReadOnlyDictionary<string, object?> source,
+        IDictionary<string, object?> target,
+        string key)
+    {
+        if (source.TryGetValue(key, out var value)) target[key] = value;
     }
 
     public static string HashCanonical(string value)

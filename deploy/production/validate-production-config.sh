@@ -249,6 +249,12 @@ validate_runtime() {
   if [ "${AUTH_PROVIDER:-}" != "auth-service" ]; then
     fail "AUTH_PROVIDER must be auth-service in production."
   fi
+  if [ "${AUTH_AUTHORITY:-}" != "MONOLITH" ]; then
+    fail "AUTH_AUTHORITY must remain MONOLITH until Authentication Authority promotion is explicitly approved."
+  fi
+  if [ "${AUTH_ALLOW_INITIAL_BOOTSTRAP:-false}" != "false" ]; then
+    fail "AUTH_ALLOW_INITIAL_BOOTSTRAP must be false in production."
+  fi
   require_var AUTH_SERVICE_URL
   reject_unsafe_value AUTH_SERVICE_URL
 

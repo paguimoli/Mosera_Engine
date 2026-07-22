@@ -6,7 +6,8 @@ public sealed record ServiceConfiguration(
     RabbitMqConfiguration RabbitMQ,
     RedisConfiguration Redis,
     SupabaseConfiguration Supabase,
-    DatabaseConfiguration Database)
+    DatabaseConfiguration Database,
+    ServiceDependencyConfiguration CreditWalletService)
 {
     public static ServiceConfiguration FromEnvironment(IHostEnvironment environment)
     {
@@ -24,7 +25,9 @@ public sealed record ServiceConfiguration(
             new SupabaseConfiguration(
                 GetEnvironmentValue("SUPABASE_URL", string.Empty),
                 GetEnvironmentValue("SUPABASE_SERVICE_ROLE_KEY", string.Empty)),
-            new DatabaseConfiguration(GetEnvironmentValue("DATABASE_URL", string.Empty)));
+            new DatabaseConfiguration(GetEnvironmentValue("DATABASE_URL", string.Empty)),
+            new ServiceDependencyConfiguration(
+                GetEnvironmentValue("CREDIT_WALLET_SERVICE_URL", "http://credit-wallet-service:8080")));
     }
 
     private static string GetEnvironmentValue(string name, string fallback)
@@ -42,3 +45,5 @@ public sealed record RedisConfiguration(string Url);
 public sealed record SupabaseConfiguration(string Url, string ServiceRoleKey);
 
 public sealed record DatabaseConfiguration(string Url);
+
+public sealed record ServiceDependencyConfiguration(string Url);

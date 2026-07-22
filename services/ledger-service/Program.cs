@@ -21,6 +21,15 @@ builder.Services.AddSingleton<InfrastructureReadinessChecks>();
 builder.Services.AddSingleton<LedgerContractService>();
 builder.Services.AddSingleton<DurableLedgerRepository>();
 builder.Services.AddSingleton<DurableLedgerService>();
+builder.Services.AddSingleton<LedgerPostingEvidenceRepository>();
+builder.Services.AddSingleton<LedgerAccountingPeriodRepository>();
+builder.Services.AddSingleton<FinancialPostingCatalog>();
+builder.Services.AddSingleton<LedgerJournalRepository>();
+builder.Services.AddSingleton<LedgerPostingService>();
+builder.Services.AddSingleton<LedgerRecoveryRepository>();
+builder.Services.AddSingleton<LedgerRecoveryService>();
+builder.Services.AddSingleton<LedgerPromotionRepository>();
+builder.Services.AddSingleton<LedgerAuthorityService>();
 builder.Services.AddSingleton<LedgerShadowCalculator>();
 builder.Services.AddSingleton<LedgerShadowPersistence>();
 
@@ -30,5 +39,7 @@ app.UseMiddleware<CorrelationIdMiddleware>();
 
 app.MapHealthEndpoints();
 app.MapLedgerEndpoints();
+app.MapLedgerRecoveryEndpoints();
+app.MapLedgerAuthorityEndpoints();
 
 app.Run();
