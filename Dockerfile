@@ -5,7 +5,7 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY package.json package-lock.json* ./
-RUN npm install --include=dev
+RUN npm ci --omit=dev
 
 FROM node:20-bookworm-slim AS build
 
@@ -34,7 +34,7 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY package.json package-lock.json* ./
-RUN npm install --include=dev
+RUN npm ci --omit=dev
 
 FROM node:20-bookworm-slim AS runtime
 
