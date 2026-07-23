@@ -1,0 +1,4 @@
+# Temporary upstream exception:
+# Next.js 16.2.11 requires optional sharp ^0.34.5.
+# Remove when Next.js supports sharp >=0.35.0.
+GHSA-f88m-g3jw-g9cj
