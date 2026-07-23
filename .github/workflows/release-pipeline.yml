@@ -79,8 +79,12 @@ jobs:
 
       - name: npm build
         env:
+        
           NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ci-placeholder-key
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+        
         run: npm run build
       - name: Dependency audit
         run: npm run security:audit
