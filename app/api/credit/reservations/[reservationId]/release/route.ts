@@ -6,10 +6,12 @@ import {
 } from "@/src/domains/auth/auth-middleware";
 import {
   CreditReservationValidationError,
+  getCreditReservationById,
   releaseCreditExposure,
 } from "@/src/domains/credit/credit.entrypoints";
 import { getOrCreateCorrelationId } from "@/src/lib/observability/correlation";
 import { logger } from "@/src/lib/observability/logger";
+import { resolveScopedAccount } from "@/src/domains/accounts/account-scope-governance";
 
 export const runtime = "nodejs";
 
@@ -66,7 +68,15 @@ export async function POST(request: Request, { params }: RouteParams) {
   const payload = body as Record<string, unknown>;
 
   try {
-    await requirePermission(request, "tickets.settle");
+    const context = await requirePermission(request, "tickets.settle");
+    const existing = await getCreditReservationById(reservationId);
+    if (!existing) {
+      return NextResponse.json(
+        { success: false, error: "Credit reservation not found.", correlationId },
+        { status: 404 }
+      );
+    }
+    await resolveScopedAccount(context, existing.playerId);
 
     const reservation = await releaseCreditExposure({
       reservationId,

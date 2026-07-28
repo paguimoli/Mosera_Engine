@@ -8,6 +8,11 @@ import {
   AccountingValidationError,
   getWeeklyAccountingSnapshots,
 } from "@/src/domains/accounting/accounting.service";
+import { resolveScopedAccount } from "@/src/domains/accounts/account-scope-governance";
+import {
+  hasCanonicalGlobalScope,
+  resolveCanonicalScope,
+} from "@/src/domains/scope/canonical-scope-resolver";
 
 export const runtime = "nodejs";
 
@@ -35,11 +40,20 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
 
   try {
-    await requirePermission(request, "reports.view");
+    const context = await requirePermission(request, "reports.view");
+    const accountId = url.searchParams.get("accountId");
+    if (accountId) {
+      await resolveScopedAccount(context, accountId);
+    } else if (!hasCanonicalGlobalScope(resolveCanonicalScope(context))) {
+      throw new AuthMiddlewareError(
+        403,
+        "An authoritative account scope is required."
+      );
+    }
     const snapshots = await getWeeklyAccountingSnapshots({
       weekStart: url.searchParams.get("weekStart"),
       weekEnd: url.searchParams.get("weekEnd"),
-      accountId: url.searchParams.get("accountId"),
+      accountId,
       currency: url.searchParams.get("currency"),
     });
 

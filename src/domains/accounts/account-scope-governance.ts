@@ -5,50 +5,20 @@ import {
 } from "@/src/domains/auth/auth-middleware";
 
 import type { CanonicalAccountScope } from "./account.repository";
-import { findAccountById } from "./account.repository";
+import {
+  findAccountById,
+  resolveCanonicalAccountHierarchy,
+} from "./account.repository";
 import type { Account, PersistedAccountType } from "./account.types";
+import { resolveCanonicalScope } from "@/src/domains/scope/canonical-scope-resolver";
 
 type ScopeTarget = CanonicalAccountScope | Account;
-
-function normalizedScopes(context: AuthContext) {
-  return (context.platformScopes ?? []).map((scope) => ({
-    type: scope.scopeType.trim().toUpperCase(),
-    id: scope.scopeId.trim().toLowerCase(),
-  }));
-}
-
-function includesScope(
-  context: AuthContext,
-  type: string,
-  id: string
-) {
-  const normalizedType = type.toUpperCase();
-  const normalizedId = id.toLowerCase();
-  return normalizedScopes(context).some(
-    (scope) =>
-      scope.type === normalizedType &&
-      (scope.id === normalizedId || scope.id === "*")
-  );
-}
 
 export function canAccessAccountScope(
   context: AuthContext,
   scope: ScopeTarget
 ) {
-  if (context.hasPermission("system.admin")) return true;
-  if (
-    includesScope(context, "GLOBAL", "platform") ||
-    includesScope(context, "GLOBAL", "*")
-  ) {
-    return true;
-  }
-
-  return (
-    includesScope(context, "MARKET", scope.marketId) ||
-    includesScope(context, "BRAND", scope.brandId) ||
-    includesScope(context, "TENANT", scope.tenantId) ||
-    includesScope(context, "ORGANIZATION", scope.organizationId)
-  );
+  return resolveCanonicalScope(context, scope).authorized;
 }
 
 export function assertAccountScope(
@@ -60,11 +30,30 @@ export function assertAccountScope(
   }
 }
 
-export function filterAccountsByScope(
+export async function canAccessResolvedAccountScope(
+  context: AuthContext,
+  account: Account
+) {
+  const hierarchy = await resolveCanonicalAccountHierarchy(account.id);
+  return resolveCanonicalScope(context, {
+    ...account,
+    ...hierarchy,
+  }).authorized;
+}
+
+export async function filterAccountsByScope(
   context: AuthContext,
   accounts: Account[]
 ) {
-  return accounts.filter((account) => canAccessAccountScope(context, account));
+  const decisions = await Promise.all(
+    accounts.map(async (account) => ({
+      account,
+      authorized: await canAccessResolvedAccountScope(context, account),
+    }))
+  );
+  return decisions
+    .filter((decision) => decision.authorized)
+    .map((decision) => decision.account);
 }
 
 export async function requireScopedAccount(
@@ -73,12 +62,22 @@ export async function requireScopedAccount(
   permission: string
 ) {
   const context = await requirePermission(request, permission);
+  const account = await resolveScopedAccount(context, accountId);
+  return { context, account };
+}
+
+export async function resolveScopedAccount(
+  context: AuthContext,
+  accountId: string
+) {
   const account = await findAccountById(accountId);
   if (!account) {
     throw new AccountScopeNotFoundError();
   }
-  assertAccountScope(context, account);
-  return { context, account };
+  if (!(await canAccessResolvedAccountScope(context, account))) {
+    throw new AuthMiddlewareError(403, "Canonical account scope denied.");
+  }
+  return account;
 }
 
 export class AccountScopeNotFoundError extends Error {

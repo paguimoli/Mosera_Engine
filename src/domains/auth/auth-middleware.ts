@@ -1,6 +1,10 @@
 import type { AuthContext, SerializableAuthContext } from "./auth-context.types";
 import { getAuthServiceContext } from "./auth-service.client";
 import { extractSessionTokenFromRequest } from "./auth-token.helpers";
+import {
+  canonicalPermissionGranted,
+  resolveCanonicalScope,
+} from "@/src/domains/scope/canonical-scope-resolver";
 
 export class AuthMiddlewareError extends Error {
   readonly status: 401 | 403;
@@ -43,7 +47,8 @@ export async function requirePermission(
   permissionKey: string
 ): Promise<AuthContext> {
   const context = await requireAuthenticatedUser(request);
-  if (!context.hasPermission(permissionKey)) {
+  const scope = resolveCanonicalScope(context);
+  if (!canonicalPermissionGranted(scope, permissionKey)) {
     throw new AuthMiddlewareError(403, "Permission denied.");
   }
   return context;

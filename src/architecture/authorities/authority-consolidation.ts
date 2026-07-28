@@ -67,11 +67,9 @@ export const coreAuthorityOwnership: readonly CoreAuthorityOwnership[] = [
   },
   {
     authority: "SCOPE",
-    canonicalOwner: "Server-derived authentication and resource scope guards",
+    canonicalOwner: "Canonical Scope Resolver",
     productionBoundary: [
-      "src/domains/auth/auth-middleware.ts",
-      "src/domains/platform-management/platform-management-auth.ts",
-      "src/domains/accounts/account-scope-governance.ts",
+      "src/domains/scope/canonical-scope-resolver.ts",
     ],
     retainedCompatibility: [],
   },

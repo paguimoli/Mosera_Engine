@@ -9,6 +9,8 @@ import {
   listWeeklyAccountingPeriods,
   WeeklyAccountingBusinessRuleError,
 } from "@/src/domains/weekly-accounting/weekly-accounting.service";
+import { resolveAccountScope } from "@/src/domains/accounts/account.service";
+import { resolveCanonicalScope } from "@/src/domains/scope/canonical-scope-resolver";
 
 export const runtime = "nodejs";
 
@@ -50,12 +52,26 @@ async function requirePeriodCreatePermission(request: Request) {
 
 export async function GET(request: Request) {
   try {
-    await requirePermission(request, "reports.view");
+    const context = await requirePermission(request, "reports.view");
     const periods = await listWeeklyAccountingPeriods();
+    const scopedPeriods = (
+      await Promise.all(
+        periods.map(async (period) => ({
+          period,
+          scope: await resolveAccountScope(period.marketId),
+        }))
+      )
+    )
+      .filter(
+        ({ period, scope }) =>
+          scope.brandId === period.brandId &&
+          resolveCanonicalScope(context, scope).authorized
+      )
+      .map(({ period }) => period);
 
     return NextResponse.json({
       success: true,
-      periods,
+      periods: scopedPeriods,
     });
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {
@@ -94,7 +110,14 @@ export async function POST(request: Request) {
   }
 
   try {
-    await requirePeriodCreatePermission(request);
+    const context = await requirePeriodCreatePermission(request);
+    const scope = await resolveAccountScope(marketId);
+    if (
+      scope.brandId !== brandId ||
+      !resolveCanonicalScope(context, scope).authorized
+    ) {
+      throw new AuthMiddlewareError(403, "Canonical accounting scope denied.");
+    }
     const period = await ensureOpenWeeklyPeriodForMarketBrand(marketId, brandId);
 
     return NextResponse.json({

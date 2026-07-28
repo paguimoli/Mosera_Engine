@@ -5,6 +5,9 @@ import { AuthMiddlewareError, requirePermission } from "@/src/domains/auth/auth-
 import { extractSessionTokenFromRequest } from "@/src/domains/auth/auth-token.helpers";
 import { isAuthServiceProviderEnabled } from "@/src/domains/auth/auth-provider";
 import { getAuthServiceContext } from "@/src/domains/auth/auth-service.client";
+import {
+  resolveCanonicalScope,
+} from "@/src/domains/scope/canonical-scope-resolver";
 import type {
   PlatformResourceName,
   PlatformResourceScopeSnapshot,
@@ -170,14 +173,15 @@ function isPlatformManagementPermissionList(
 }
 
 function authorizationFromContext(context: AuthContext): PlatformManagementAuthorization {
-  const permissions = new Set(context.permissions.map((permission) => permission.key));
+  const resolved = resolveCanonicalScope(context);
+  const permissions = new Set(resolved.permissions);
 
   return {
     permissions,
-    scopes: context.platformScopes ?? [],
-    superAdmin: context.hasPermission("system.admin"),
-    actorId: context.user.id,
-    sessionId: context.session.id,
+    scopes: resolved.claims,
+    superAdmin: resolved.permissions.includes("system.admin"),
+    actorId: resolved.identityId,
+    sessionId: resolved.sessionId,
   };
 }
 
@@ -215,30 +219,6 @@ export function withPlatformMutationAudit(
   };
 }
 
-function normalizeScope(scope: PlatformManagementScope) {
-  return {
-    scopeType: scope.scopeType.trim().toUpperCase(),
-    scopeId: scope.scopeId.trim().toLowerCase(),
-  };
-}
-
-function hasScope(
-  authorization: PlatformManagementAuthorization,
-  scopeType: string,
-  scopeId?: string | null
-) {
-  const normalizedType = scopeType.toUpperCase();
-  const normalizedId = scopeId?.toLowerCase();
-
-  return authorization.scopes.map(normalizeScope).some((scope) => {
-    if (scope.scopeType !== normalizedType) {
-      return false;
-    }
-
-    return !normalizedId || scope.scopeId === normalizedId || scope.scopeId === "*";
-  });
-}
-
 export function assertPlatformResourceScope(
   authorization: PlatformManagementAuthorization,
   resource: PlatformResourceName,
@@ -249,7 +229,22 @@ export function assertPlatformResourceScope(
     return;
   }
 
-  if (hasScope(authorization, "GLOBAL", "platform") || hasScope(authorization, "GLOBAL", "*")) {
+  const resolved = resolveCanonicalScope(
+    {
+      identityId: authorization.actorId,
+      sessionId: authorization.sessionId ?? "platform-management-override",
+      roles: [],
+      permissions: [...authorization.permissions],
+      claims: authorization.scopes,
+    },
+    scope ?? {}
+  );
+
+  if (
+    resolved.matchedClaim?.scopeType === "GLOBAL" &&
+    (resolved.matchedClaim.scopeId === "platform" ||
+      resolved.matchedClaim.scopeId === "*")
+  ) {
     if (resource === "organizations" && action === "create") {
       throw new PlatformManagementAuthorizationError(
         403,
@@ -260,44 +255,17 @@ export function assertPlatformResourceScope(
     return;
   }
 
-  if (!scope) {
+  if (!scope || !resolved.targetBound) {
     throw new PlatformManagementAuthorizationError(403, "Platform scope is required.");
   }
-
-  if (
-    scope.marketId &&
-    hasScope(authorization, "MARKET", scope.marketId)
-  ) {
-    return;
+  if (!resolved.authorized) {
+    throw new PlatformManagementAuthorizationError(403, "Platform scope denied.");
   }
 
-  if (
-    scope.brandId &&
-    hasScope(authorization, "BRAND", scope.brandId)
-  ) {
-    return;
+  if (resource === "organizations" && action === "create") {
+    throw new PlatformManagementAuthorizationError(
+      403,
+      "Organization creation requires Super Admin scope."
+    );
   }
-
-  if (
-    scope.tenantId &&
-    hasScope(authorization, "TENANT", scope.tenantId)
-  ) {
-    return;
-  }
-
-  if (
-    scope.organizationId &&
-    hasScope(authorization, "ORGANIZATION", scope.organizationId)
-  ) {
-    if (resource === "organizations" && action === "create") {
-      throw new PlatformManagementAuthorizationError(
-        403,
-        "Organization creation requires Super Admin scope."
-      );
-    }
-
-    return;
-  }
-
-  throw new PlatformManagementAuthorizationError(403, "Platform scope denied.");
 }

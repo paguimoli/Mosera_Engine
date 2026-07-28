@@ -10,6 +10,7 @@ import {
 } from "@/src/domains/credit/credit.entrypoints";
 import { getOrCreateCorrelationId } from "@/src/lib/observability/correlation";
 import { logger } from "@/src/lib/observability/logger";
+import { resolveScopedAccount } from "@/src/domains/accounts/account-scope-governance";
 
 export const runtime = "nodejs";
 
@@ -61,10 +62,12 @@ export async function POST(request: Request) {
   const payload = body as Record<string, unknown>;
 
   try {
-    await requirePermission(request, "tickets.create");
+    const context = await requirePermission(request, "tickets.create");
+    const playerId = getString(payload.playerId);
+    await resolveScopedAccount(context, playerId);
 
     const reservation = await reserveCreditExposure({
-      playerId: getString(payload.playerId),
+      playerId,
       ticketId: getString(payload.ticketId),
       amount: getInteger(payload.amount),
       currency: getString(payload.currency).toUpperCase(),

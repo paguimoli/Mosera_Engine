@@ -8,6 +8,7 @@ import {
   CommissionValidationError,
   createCommissionAdjustment,
 } from "@/src/domains/commissions/commission.service";
+import { resolveScopedAccount } from "@/src/domains/accounts/account-scope-governance";
 import { getOrCreateCorrelationId } from "@/src/lib/observability/correlation";
 
 export const runtime = "nodejs";
@@ -60,16 +61,18 @@ export async function POST(request: Request) {
   const payload = body as Record<string, unknown>;
 
   try {
-    await requirePermission(request, "ledger.post_adjustment");
+    const context = await requirePermission(request, "ledger.post_adjustment");
+    const accountId = getString(payload.accountId ?? payload.account_id);
+    await resolveScopedAccount(context, accountId);
     const adjustment = await createCommissionAdjustment({
-      accountId: getString(payload.accountId ?? payload.account_id),
+      accountId,
       runId: getString(payload.runId ?? payload.run_id),
       adjustmentAmount: getInteger(
         payload.adjustmentAmount ?? payload.adjustment_amount
       ),
       reasonCode: getString(payload.reasonCode ?? payload.reason_code),
       notes: getString(payload.notes) || null,
-      actorUserId: getString(payload.actorUserId ?? payload.actor_user_id) || null,
+      actorUserId: context.user.id,
       correlationId,
     });
 

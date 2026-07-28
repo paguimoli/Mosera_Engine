@@ -18,6 +18,8 @@ import type {
   LedgerDirection,
   LedgerTransactionType,
 } from "@/src/domains/ledger/ledger.types";
+import { getWalletById } from "@/src/domains/wallets/wallet.service";
+import { resolveScopedAccount } from "@/src/domains/accounts/account-scope-governance";
 
 export const runtime = "nodejs";
 
@@ -71,7 +73,15 @@ export async function GET(request: Request, { params }: RouteParams) {
   const { walletId } = await params;
 
   try {
-    await requirePermission(request, "ledger.view");
+    const context = await requirePermission(request, "ledger.view");
+    const wallet = await getWalletById(walletId);
+    if (!wallet) {
+      return NextResponse.json(
+        { success: false, error: "Wallet not found." },
+        { status: 404 }
+      );
+    }
+    await resolveScopedAccount(context, wallet.accountId);
     const ledgerEntries = await listLedgerEntriesForWallet(walletId);
 
     return NextResponse.json({
@@ -139,7 +149,15 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
 
   try {
-    await requirePermission(request, "ledger.post_adjustment");
+    const context = await requirePermission(request, "ledger.post_adjustment");
+    const wallet = await getWalletById(walletId);
+    if (!wallet) {
+      return NextResponse.json(
+        { success: false, error: "Wallet not found." },
+        { status: 404 }
+      );
+    }
+    await resolveScopedAccount(context, wallet.accountId);
     const ledgerEntry = await postLedgerEntry(input);
 
     return NextResponse.json({

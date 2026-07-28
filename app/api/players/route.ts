@@ -5,7 +5,7 @@ import {
   requirePermission,
 } from "@/src/domains/auth/auth-middleware";
 import {
-  canAccessAccountScope,
+  canAccessResolvedAccountScope,
   requireScopedAccount,
 } from "@/src/domains/accounts/account-scope-governance";
 import { findAccountById } from "@/src/domains/accounts/account.repository";
@@ -84,15 +84,21 @@ export async function GET(request: Request) {
         }))
       )
     )
-      .filter(
-        (item) =>
-          item.account && canAccessAccountScope(context, item.account)
-      )
+      .filter((item) => item.account)
+      .map(async (item) => ({
+        ...item,
+        authorized: await canAccessResolvedAccountScope(
+          context,
+          item.account!
+        ),
+      }));
+    const authorizedProfiles = (await Promise.all(scopedProfiles))
+      .filter((item) => item.authorized)
       .map((item) => item.profile);
 
     return NextResponse.json({
       success: true,
-      playerProfiles: scopedProfiles,
+      playerProfiles: authorizedProfiles,
     });
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {

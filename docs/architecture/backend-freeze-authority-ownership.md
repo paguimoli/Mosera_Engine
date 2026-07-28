@@ -11,7 +11,7 @@ be called around the configured boundary.
 | Draw | Game Engine canonical outcome publication, recovery, certification, and Settlement request pipeline | Read-only projections and local demonstration state |
 | Ticket | `ticket_authority` PostgreSQL functions through the canonical Ticket repository | Client-only local demonstration state |
 | Hierarchy | Immutable Platform Management plus governed Account repositories | Deprecated Brand and Market reads |
-| Scope | Authenticated Platform scopes combined with server-derived Account/resource scope | None |
+| Scope | Canonical Scope Resolver combining authenticated claims with authoritative Platform and Account relationships | None |
 | Operational | Authenticated operational access and authority approval services | Read-only rehearsal and promotion evidence |
 
 ## Rules

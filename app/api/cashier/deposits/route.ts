@@ -9,6 +9,7 @@ import {
   CashierValidationError,
   requestDeposit,
 } from "@/src/domains/cashier/cashier.service";
+import { resolveScopedAccount } from "@/src/domains/accounts/account-scope-governance";
 import {
   authErrorResponse,
   getMetadata,
@@ -37,8 +38,10 @@ export async function POST(request: Request) {
 
   try {
     const authContext = await requirePermission(request, "ledger.post_deposit");
+    const accountId = getString(payload.accountId ?? payload.account_id);
+    await resolveScopedAccount(authContext, accountId);
     const transaction = await requestDeposit({
-      accountId: getString(payload.accountId ?? payload.account_id),
+      accountId,
       walletId: getString(payload.walletId ?? payload.wallet_id) || null,
       transactionType: "DEPOSIT",
       amount: getNumber(payload.amount),

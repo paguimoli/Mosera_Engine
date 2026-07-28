@@ -2,6 +2,7 @@ import { logger } from "@/src/lib/observability/logger";
 import {
   applyCreditSettlement as applyCreditSettlementRecord,
   cancelCreditReservation as cancelCreditReservationRecord,
+  findCreditReservationById,
   getPlayerCreditSummary as getPlayerCreditSummaryRecord,
   releaseCreditExposure as releaseCreditExposureRecord,
   reserveCreditExposure as reserveCreditExposureRecord,
@@ -34,6 +35,10 @@ export class CreditReservationValidationError extends Error {
     this.name = "CreditReservationValidationError";
     this.errors = errors;
   }
+}
+
+export async function getCreditReservationById(reservationId: string) {
+  return findCreditReservationById(reservationId);
 }
 
 export async function reserveCreditExposure(

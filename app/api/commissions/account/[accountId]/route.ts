@@ -2,12 +2,12 @@ import { NextResponse } from "next/server";
 
 import {
   AuthMiddlewareError,
-  requirePermission,
 } from "@/src/domains/auth/auth-middleware";
 import {
   CommissionValidationError,
   getAccountCommissionDetails,
 } from "@/src/domains/commissions/commission.service";
+import { requireScopedAccount } from "@/src/domains/accounts/account-scope-governance";
 
 export const runtime = "nodejs";
 
@@ -29,7 +29,7 @@ export async function GET(request: Request, { params }: RouteParams) {
   const { accountId } = await params;
 
   try {
-    await requirePermission(request, "reports.view");
+    await requireScopedAccount(request, accountId, "reports.view");
     const details = await getAccountCommissionDetails(accountId);
 
     return NextResponse.json({

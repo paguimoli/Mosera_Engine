@@ -40,6 +40,12 @@ export type AccountScopeReadinessCheck = {
   issueCount: number;
 };
 
+export type CanonicalAccountHierarchy = {
+  hierarchyAccountIds: string[];
+  agentAccountId: string | null;
+  masterAgentAccountId: string | null;
+};
+
 type AccountRow = {
   id: string;
   account_type: PersistedAccountType;
@@ -189,6 +195,39 @@ export async function resolveCanonicalMarketScope(
   );
 
   return result.rows[0] ?? null;
+}
+
+export async function resolveCanonicalAccountHierarchy(
+  accountId: string
+): Promise<CanonicalAccountHierarchy> {
+  const result = await databasePool().query<{
+    id: string;
+    account_type: PersistedAccountType;
+    depth: number;
+  }>(
+    `with recursive hierarchy as (
+       select id, account_type, parent_account_id, 0 as depth
+       from public.accounts
+       where id = $1 and governance_managed
+       union all
+       select parent.id, parent.account_type, parent.parent_account_id, hierarchy.depth + 1
+       from public.accounts parent
+       join hierarchy on hierarchy.parent_account_id = parent.id
+       where parent.governance_managed
+     )
+     select id, account_type, depth
+     from hierarchy
+     order by depth asc`,
+    [accountId]
+  );
+
+  return {
+    hierarchyAccountIds: result.rows.map((row) => row.id),
+    agentAccountId:
+      result.rows.find((row) => row.account_type === "AGENT")?.id ?? null,
+    masterAgentAccountId:
+      result.rows.find((row) => row.account_type === "MASTER_AGENT")?.id ?? null,
+  };
 }
 
 function canonicalCreateHash(

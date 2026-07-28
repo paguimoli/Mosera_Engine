@@ -2,12 +2,12 @@ import { NextResponse } from "next/server";
 
 import {
   AuthMiddlewareError,
-  requirePermission,
 } from "@/src/domains/auth/auth-middleware";
 import {
   AccountingValidationError,
   getWeeklyAccountingSnapshots,
 } from "@/src/domains/accounting/accounting.service";
+import { requireScopedAccount } from "@/src/domains/accounts/account-scope-governance";
 
 export const runtime = "nodejs";
 
@@ -40,7 +40,7 @@ export async function GET(request: Request, { params }: RouteParams) {
   const url = new URL(request.url);
 
   try {
-    await requirePermission(request, "reports.view");
+    await requireScopedAccount(request, accountId, "reports.view");
     const snapshots = await getWeeklyAccountingSnapshots({
       accountId,
       weekStart: url.searchParams.get("weekStart"),

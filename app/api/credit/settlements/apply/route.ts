@@ -7,9 +7,11 @@ import {
 import {
   applyCreditSettlement,
   CreditReservationValidationError,
+  getCreditReservationById,
 } from "@/src/domains/credit/credit.entrypoints";
 import { getOrCreateCorrelationId } from "@/src/lib/observability/correlation";
 import { logger } from "@/src/lib/observability/logger";
+import { resolveScopedAccount } from "@/src/domains/accounts/account-scope-governance";
 
 export const runtime = "nodejs";
 
@@ -63,10 +65,19 @@ export async function POST(request: Request) {
   const payload = body as Record<string, unknown>;
 
   try {
-    await requirePermission(request, "tickets.settle");
+    const context = await requirePermission(request, "tickets.settle");
+    const reservationId = getString(payload.reservationId);
+    const existing = await getCreditReservationById(reservationId);
+    if (!existing) {
+      return NextResponse.json(
+        { success: false, error: "Credit reservation not found.", correlationId },
+        { status: 404 }
+      );
+    }
+    await resolveScopedAccount(context, existing.playerId);
 
     const application = await applyCreditSettlement({
-      reservationId: getString(payload.reservationId),
+      reservationId,
       ticketId: getString(payload.ticketId),
       settlementId: getString(payload.settlementId),
       releaseAmount: getInteger(payload.releaseAmount),

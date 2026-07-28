@@ -10,6 +10,11 @@ import {
 } from "@/src/domains/accounting/accounting.service";
 import { getOrCreateCorrelationId } from "@/src/lib/observability/correlation";
 import { logger } from "@/src/lib/observability/logger";
+import { resolveScopedAccount } from "@/src/domains/accounts/account-scope-governance";
+import {
+  hasCanonicalGlobalScope,
+  resolveCanonicalScope,
+} from "@/src/domains/scope/canonical-scope-resolver";
 
 export const runtime = "nodejs";
 
@@ -64,12 +69,21 @@ export async function POST(request: Request) {
   const payload = body as Record<string, unknown>;
 
   try {
-    await requirePermission(request, "ledger.post_adjustment");
+    const context = await requirePermission(request, "ledger.post_adjustment");
+    const accountScope =
+      getString(payload.accountScope ?? payload.account_scope) || null;
+    if (accountScope) {
+      await resolveScopedAccount(context, accountScope);
+    } else if (!hasCanonicalGlobalScope(resolveCanonicalScope(context))) {
+      throw new AuthMiddlewareError(
+        403,
+        "An authoritative account scope is required."
+      );
+    }
     const snapshots = await closeWeeklyAccounting({
       weekStart: getString(payload.weekStart ?? payload.week_start),
       weekEnd: getString(payload.weekEnd ?? payload.week_end),
-      accountScope:
-        getString(payload.accountScope ?? payload.account_scope) || null,
+      accountScope,
       currency: getString(payload.currency || "USD"),
       closeMode: getCloseMode(payload.closeMode ?? payload.close_mode),
       correlationId,

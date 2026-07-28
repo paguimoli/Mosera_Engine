@@ -5,9 +5,9 @@ import {
   requirePermission,
 } from "@/src/domains/auth/auth-middleware";
 import {
-  assertAccountScope,
+  AccountScopeNotFoundError,
+  resolveScopedAccount,
 } from "@/src/domains/accounts/account-scope-governance";
-import { findAccountById } from "@/src/domains/accounts/account.repository";
 import {
   acceptCanonicalTicket,
   CanonicalTicketRepositoryError,
@@ -30,6 +30,12 @@ const UUID =
 function errorResponse(error: unknown) {
   if (error instanceof AuthMiddlewareError) {
     return NextResponse.json({ accepted: false, error: error.message }, { status: error.status });
+  }
+  if (error instanceof AccountScopeNotFoundError) {
+    return NextResponse.json(
+      { accepted: false, error: "Governed player account not found." },
+      { status: 404 }
+    );
   }
   if (error instanceof CanonicalTicketRepositoryError) {
     const message = error.message;
@@ -139,14 +145,13 @@ export async function POST(request: Request) {
     }
 
     const playerAccountId = requiredUuid(body, "playerAccountId");
-    const playerAccount = await findAccountById(playerAccountId);
-    if (!playerAccount || playerAccount.accountType !== "PLAYER") {
+    const playerAccount = await resolveScopedAccount(context, playerAccountId);
+    if (playerAccount.accountType !== "PLAYER") {
       return NextResponse.json(
         { accepted: false, error: "Governed player account not found." },
         { status: 404 }
       );
     }
-    assertAccountScope(context, playerAccount);
 
     const idempotencyKey = request.headers.get("Idempotency-Key")?.trim();
     if (!idempotencyKey) {

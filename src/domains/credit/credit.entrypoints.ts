@@ -5,6 +5,7 @@ export {
   applyCreditSettlement,
   cancelCreditReservation,
   CreditReservationValidationError,
+  getCreditReservationById,
   getPlayerCreditSummary,
   releaseCreditExposure,
   reserveCreditExposure,
