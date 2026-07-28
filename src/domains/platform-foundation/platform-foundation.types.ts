@@ -21,7 +21,15 @@ export interface VersionedPlatformRecord {
   readonly auditMetadata: PlatformAuditMetadata;
 }
 
+export interface PlatformDefinition extends VersionedPlatformRecord {
+  readonly defaultLanguage: string;
+  readonly defaultCurrency: string;
+  readonly defaultTimezone: string;
+  readonly regulatoryIdentifier?: string;
+}
+
 export interface OrganizationDefinition extends VersionedPlatformRecord {
+  readonly platformId: string;
   readonly governanceMetadata: Record<string, unknown>;
   readonly globalDefaults: Record<string, unknown>;
 }
@@ -63,7 +71,7 @@ export interface WebsiteDefinition {
   readonly id: string;
   readonly tenantId: string;
   readonly brandId: string;
-  readonly marketId?: string;
+  readonly marketId: string;
   readonly websiteCode: string;
   readonly displayName: string;
   readonly status: PlatformLifecycleState;
@@ -98,7 +106,7 @@ export interface HostResolutionDefinition {
   readonly hostname: string;
   readonly tenantId: string;
   readonly brandId: string;
-  readonly marketId?: string;
+  readonly marketId: string;
   readonly websiteId: string;
   readonly canonicalRedirectTarget?: string;
   readonly maintenanceMode: boolean;
@@ -188,6 +196,7 @@ export interface GameAvailabilityResolution {
 }
 
 export interface PlatformHierarchyDefinition {
+  readonly platform: PlatformDefinition;
   readonly organization: OrganizationDefinition;
   readonly tenants: readonly TenantDefinition[];
   readonly brands: readonly BrandDefinition[];

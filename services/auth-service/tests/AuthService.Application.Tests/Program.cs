@@ -292,10 +292,13 @@ static async Task VerifyCanonicalAuthenticationAuthorityAsync()
 
     var rotated = await authority.RotatePasswordAsync(new PasswordRotationRequest(identityId, password, "Canonical-Rotated-Password!2026", "rotate", identityId, null, null));
     Assert(rotated.Version == 2, "Credential rotation must append a new version.");
+    Assert(await authority.ValidateSessionAsync(secondLogin.Session.OpaqueToken, false) is null, "Password change must revoke the active canonical session.");
+    var postRotationLogin = await authority.LoginAsync(new CanonicalLoginRequest("canonical-admin", "Canonical-Rotated-Password!2026", "post-rotation-login", null, null, null));
+    Assert(postRotationLogin.Success && postRotationLogin.Session is not null, "Rotated credentials must establish a new session.");
     await AssertThrowsAsync(() => authority.RotatePasswordAsync(new PasswordRotationRequest(identityId, "Canonical-Rotated-Password!2026", password, "reuse", identityId, null, null)), "Password history must reject reuse.");
 
     await authority.TransitionAsync(new LifecycleTransitionRequest(identityId, CanonicalIdentityStatus.Active, CanonicalIdentityStatus.Disabled, identityId, "disable", "disable", null, null));
-    Assert(await authority.ValidateSessionAsync(secondLogin.Session.OpaqueToken, false) is null, "Disabling an account must revoke its session.");
+    Assert(await authority.ValidateSessionAsync(postRotationLogin.Session!.OpaqueToken, false) is null, "Disabling an account must revoke its session.");
     await authority.TransitionAsync(new LifecycleTransitionRequest(identityId, CanonicalIdentityStatus.Disabled, CanonicalIdentityStatus.Active, identityId, "reactivate", "reactivate", null, null));
     await authority.TransitionAsync(new LifecycleTransitionRequest(identityId, CanonicalIdentityStatus.Active, CanonicalIdentityStatus.Locked, identityId, "lock", "lock", null, null));
     await authority.TransitionAsync(new LifecycleTransitionRequest(identityId, CanonicalIdentityStatus.Locked, CanonicalIdentityStatus.Active, identityId, "unlock", "unlock", null, null));
@@ -502,6 +505,29 @@ static async Task VerifyAuthLoginRuntimeAsync()
     Assert(!oldRefreshReplay.Success && oldRefreshReplay.ReplayDetected, "Reused old refresh token must be treated as replay.");
     var replaySession = await runtime.ValidateSessionAsync(success.Session.Id);
     Assert(!replaySession.Valid && replaySession.Reason == "session_revoked", "Refresh replay must revoke the bound session.");
+    var replayAudit = await repository.ListByCorrelationId("runtime-refresh-replay");
+    Assert(replayAudit.Any(item =>
+        item.Action == "REFRESH_TOKEN_REPLAY" &&
+        item.Metadata.GetValueOrDefault("sessionId") == success.Session.Id.ToString() &&
+        item.Metadata.GetValueOrDefault("refreshTokenId") == refresh.RefreshTokenId.ToString() &&
+        item.Metadata.GetValueOrDefault("revocationReason") == "refresh_token_replay_detected"),
+        "Refresh replay must append session, token, and revocation evidence.");
+    var furtherRefresh = await tokens.RefreshAsync(rotated.RefreshToken!, "runtime-refresh-family-revoked");
+    Assert(!furtherRefresh.Success && furtherRefresh.ReplayDetected, "Replay must revoke every refresh token in the family.");
+
+    var parallelLogin = await runtime.LoginAsync(new LoginRuntimeRequest(identity.LoginId.Value, "Correct-Horse-2026!", "runtime-parallel-login"));
+    var parallelValidation = await runtime.ValidateSessionAsync(parallelLogin.Session!.Id);
+    var parallelRefresh = await tokens.IssueRefreshTokenForValidatedSessionAsync(parallelValidation, "runtime-parallel-login");
+    var parallelResults = await Task.WhenAll(
+        tokens.RefreshAsync(parallelRefresh.RefreshToken!, "runtime-parallel-a", default, "198.51.100.10", "device-a"),
+        tokens.RefreshAsync(parallelRefresh.RefreshToken!, "runtime-parallel-b", default, "203.0.113.20", "device-b"));
+    Assert(parallelResults.Count(result => result.Success) == 1, "Parallel refresh must have exactly one rotation winner.");
+    Assert(parallelResults.Count(result => result.ReplayDetected) == 1, "Parallel refresh loser must be treated as replay.");
+    var parallelSession = await runtime.ValidateSessionAsync(parallelLogin.Session.Id);
+    Assert(!parallelSession.Valid && parallelSession.Reason == "session_revoked", "Parallel refresh replay must revoke the bound session.");
+    var parallelWinner = parallelResults.Single(result => result.Success);
+    var parallelWinnerReplay = await tokens.RefreshAsync(parallelWinner.RefreshToken!, "runtime-parallel-family-revoked");
+    Assert(!parallelWinnerReplay.Success && parallelWinnerReplay.ReplayDetected, "Parallel replay must leave no reusable family token.");
 
     var secondLogin = await runtime.LoginAsync(new LoginRuntimeRequest(identity.LoginId.Value, "Correct-Horse-2026!", "runtime-second-login"));
     var secondValidation = await runtime.ValidateSessionAsync(secondLogin.Session!.Id);
@@ -900,16 +926,78 @@ sealed class TestAuthRuntimeRepository :
         return Task.FromResult(token);
     }
 
-    public Task<RefreshTokenRuntimeRecord?> MarkRefreshTokenRotated(Guid refreshTokenId, DateTimeOffset rotatedAt, CancellationToken cancellationToken = default)
+    public Task<RefreshTokenRotationResult> RotateRefreshToken(RefreshTokenRotationCommand rotation, CancellationToken cancellationToken = default)
     {
-        if (!refreshTokens.TryGetValue(refreshTokenId, out var token))
+        lock (refreshTokens)
         {
-            return Task.FromResult<RefreshTokenRuntimeRecord?>(null);
-        }
+            if (!refreshTokens.TryGetValue(rotation.ExistingRefreshTokenId, out var token) ||
+                token.RotatedAt is not null ||
+                token.RevokedAt is not null)
+            {
+                return Task.FromResult(RefreshTokenRotationResult.Conflict("refresh_token_already_rotated_or_revoked"));
+            }
 
-        var rotated = token with { RotatedAt = token.RotatedAt ?? rotatedAt };
-        refreshTokens[refreshTokenId] = rotated;
-        return Task.FromResult<RefreshTokenRuntimeRecord?>(rotated);
+            refreshTokens[rotation.ExistingRefreshTokenId] = token with { RotatedAt = rotation.RotatedAt };
+            var next = new RefreshTokenRuntimeRecord(
+                rotation.NewRefreshTokenId,
+                rotation.IdentityId,
+                rotation.SessionId,
+                rotation.NewTokenId,
+                rotation.FamilyId,
+                rotation.RotationCounter,
+                rotation.ExistingRefreshTokenId,
+                rotation.ReferenceHash,
+                rotation.RotatedAt,
+                rotation.ExpiresAt,
+                RotatedAt: null,
+                RevokedAt: null,
+                RevokedReason: null);
+            refreshTokens[next.RefreshTokenId] = next;
+            refreshTokenHashIndex[next.ReferenceHash] = next.RefreshTokenId;
+            return Task.FromResult(RefreshTokenRotationResult.Success(next));
+        }
+    }
+
+    public Task<RefreshReplayRevocationResult> RevokeRefreshTokenReplay(RefreshReplayRevocationCommand replay, CancellationToken cancellationToken = default)
+    {
+        lock (refreshTokens)
+        {
+            var count = 0;
+            foreach (var token in refreshTokens.Values.Where(token => token.FamilyId == replay.FamilyId).ToArray())
+            {
+                refreshTokens[token.RefreshTokenId] = token with
+                {
+                    RevokedAt = token.RevokedAt ?? replay.RevokedAt,
+                    RevokedReason = token.RevokedReason ?? replay.Reason
+                };
+                count++;
+            }
+
+            var session = RevokeSession(replay.SessionId, replay.RevokedAt, cancellationToken).GetAwaiter().GetResult();
+            var audit = AppendAuditEvent(new AuditEvent(
+                Guid.NewGuid(),
+                AuditEventCategory.Token,
+                replay.IdentityId,
+                replay.IdentityId,
+                "REFRESH_TOKEN_REPLAY",
+                replay.CorrelationId,
+                new Dictionary<string, string>
+                {
+                    ["sessionId"] = replay.SessionId.ToString(),
+                    ["refreshTokenId"] = replay.RefreshTokenId.ToString(),
+                    ["refreshTokenFamilyId"] = replay.FamilyId.ToString(),
+                    ["ipAddress"] = replay.IpAddress ?? string.Empty,
+                    ["userAgent"] = replay.UserAgent ?? string.Empty,
+                    ["revocationReason"] = replay.Reason
+                },
+                replay.RevokedAt), cancellationToken).GetAwaiter().GetResult();
+            return Task.FromResult(new RefreshReplayRevocationResult(
+                count,
+                0,
+                CanonicalSessionRevoked: session?.State == SessionState.Revoked,
+                LegacySessionRevoked: session?.State == SessionState.Revoked,
+                audit.Id));
+        }
     }
 
     public Task<int> RevokeRefreshTokensForSession(Guid sessionId, DateTimeOffset revokedAt, string reason, CancellationToken cancellationToken = default)
@@ -1040,6 +1128,10 @@ sealed class TestCanonicalAuthRepository : IAuthenticationAuthorityRepository
     public Task<PasswordCredentialVersion> RotatePassword(Guid identityId, PasswordCredentialVersion credential, AuthenticationAuditEvidence evidence, CancellationToken cancellationToken = default)
     {
         Credentials[identityId].Add(credential);
+        foreach (var session in Sessions.Values.Where(item => item.IdentityId == identityId && item.RevokedAt is null).ToArray())
+        {
+            Sessions[session.SessionId] = session with { RevokedAt = DateTimeOffset.UtcNow };
+        }
         Audit.Add(evidence);
         return Task.FromResult(credential);
     }

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { queryScalar } from "../migrations/lib/local-migration-utils.mjs";
 
 const appUrl = (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
 const authServiceUrl = (process.env.AUTH_SERVICE_URL || "http://localhost:5600").replace(/\/$/, "");
@@ -262,6 +263,10 @@ assert(
 
 const replay = await requestJson(`${authServiceUrl}/api/auth-service/refresh`, {
   method: "POST",
+  headers: {
+    "x-forwarded-for": "198.51.100.44",
+    "user-agent": "mosera-auth-replay-qa/same-device",
+  },
   body: JSON.stringify({ refreshToken: login.body.refreshToken, correlationId: "qa-auth-refresh-replay" }),
 });
 assert(
@@ -279,6 +284,105 @@ assert(replayRevokedMe.response.status === 401 && replayRevokedMe.body?.success 
   status: replayRevokedMe.response.status,
   body: replayRevokedMe.body,
 });
+
+const replayRevokedAccessToken = await requestJson(`${authServiceUrl}/api/auth-service/tokens/validate`, {
+  method: "POST",
+  body: JSON.stringify({ accessToken: refresh.body.accessToken }),
+});
+assert(
+  replayRevokedAccessToken.response.status === 401 && replayRevokedAccessToken.body?.valid === false,
+  "Refresh replay must make access tokens unusable through bound-session validation.",
+  { status: replayRevokedAccessToken.response.status, body: replayRevokedAccessToken.body }
+);
+
+const replayedFamilyRefresh = await requestJson(`${authServiceUrl}/api/auth-service/refresh`, {
+  method: "POST",
+  body: JSON.stringify({ refreshToken: refresh.body.refreshToken, correlationId: "qa-auth-refresh-family-revoked" }),
+});
+assert(
+  replayedFamilyRefresh.response.status === 401 &&
+    replayedFamilyRefresh.body?.success === false &&
+    replayedFamilyRefresh.body?.replayDetected === true,
+  "Replay must revoke every refresh token in the family.",
+  { status: replayedFamilyRefresh.response.status, body: replayedFamilyRefresh.body }
+);
+
+const replayAuditCount = Number(queryScalar(`
+select count(*)
+from auth_service.authentication_audit_evidence
+where correlation_id = 'qa-auth-refresh-replay'
+  and action = 'REFRESH_TOKEN_REPLAY'
+  and result = 'REVOKED'
+  and tenant_id is not null
+  and brand_id is not null
+  and subject_identity_id is not null
+  and session_id is not null
+  and refresh_token_id = '${login.body.refreshTokenId}'
+  and refresh_token_family_id is not null
+  and device_metadata is not null
+  and ip_address = '198.51.100.44'
+  and user_agent = 'mosera-auth-replay-qa/same-device'
+  and revocation_reason = 'refresh_token_replay_detected';
+`));
+assert(replayAuditCount === 1, "Refresh replay must append complete immutable authority evidence.", {
+  replayAuditCount,
+});
+
+const parallelLogin = await requestJson(`${appUrl}/api/auth/login`, {
+  method: "POST",
+  body: JSON.stringify({
+    username: seed.loginId,
+    password: seed.password,
+  }),
+});
+assert(
+  parallelLogin.response.status === 200 &&
+    parallelLogin.body?.success === true &&
+    parallelLogin.body?.sessionToken &&
+    parallelLogin.body?.refreshToken,
+  "Parallel refresh setup login must succeed.",
+  { status: parallelLogin.response.status, body: parallelLogin.body }
+);
+const parallelResults = await Promise.all([
+  requestJson(`${authServiceUrl}/api/auth-service/refresh`, {
+    method: "POST",
+    headers: { "x-forwarded-for": "198.51.100.45", "user-agent": "mosera-auth-replay-qa/device-a" },
+    body: JSON.stringify({ refreshToken: parallelLogin.body.refreshToken, correlationId: "qa-auth-parallel-a" }),
+  }),
+  requestJson(`${authServiceUrl}/api/auth-service/refresh`, {
+    method: "POST",
+    headers: { "x-forwarded-for": "203.0.113.46", "user-agent": "mosera-auth-replay-qa/device-b" },
+    body: JSON.stringify({ refreshToken: parallelLogin.body.refreshToken, correlationId: "qa-auth-parallel-b" }),
+  }),
+]);
+assert(
+  parallelResults.filter(({ response, body }) => response.status === 200 && body?.success === true).length === 1,
+  "Parallel refresh must have exactly one rotation winner.",
+  { parallelResults: parallelResults.map(({ response, body }) => ({ status: response.status, body })) }
+);
+assert(
+  parallelResults.filter(({ response, body }) => response.status === 401 && body?.replayDetected === true).length === 1,
+  "Parallel refresh loser must trigger replay revocation.",
+  { parallelResults: parallelResults.map(({ response, body }) => ({ status: response.status, body })) }
+);
+const parallelRevokedMe = await requestJson(`${appUrl}/api/auth/me`, {
+  headers: { authorization: `Bearer ${parallelLogin.body.sessionToken}` },
+});
+assert(
+  parallelRevokedMe.response.status === 401 && parallelRevokedMe.body?.success === false,
+  "Parallel replay must revoke the canonical session.",
+  { status: parallelRevokedMe.response.status, body: parallelRevokedMe.body }
+);
+const parallelWinner = parallelResults.find(({ response, body }) => response.status === 200 && body?.success === true);
+const parallelWinnerRefresh = await requestJson(`${authServiceUrl}/api/auth-service/refresh`, {
+  method: "POST",
+  body: JSON.stringify({ refreshToken: parallelWinner.body.refreshToken, correlationId: "qa-auth-parallel-family-revoked" }),
+});
+assert(
+  parallelWinnerRefresh.response.status === 401 && parallelWinnerRefresh.body?.replayDetected === true,
+  "Parallel replay must leave no reusable refresh token.",
+  { status: parallelWinnerRefresh.response.status, body: parallelWinnerRefresh.body }
+);
 
 const logoutLogin = await requestJson(`${appUrl}/api/auth/login`, {
   method: "POST",
@@ -350,6 +454,18 @@ const invalidPermission = await requestJson(`${appUrl}/api/auth/check-permission
 assert(invalidPermission.response.status === 401 && invalidPermission.body?.success === false, "Invalid Auth Service permission check must fail closed.", {
   status: invalidPermission.response.status,
   body: invalidPermission.body,
+});
+
+const orphanedRefreshSessionCount = Number(queryScalar(`
+select count(*)
+from auth_service.refresh_tokens r
+join auth_service.canonical_sessions s on s.id = r.session_id
+where r.revoked_at is null
+  and r.rotated_at is null
+  and s.revoked_at is not null;
+`));
+assert(orphanedRefreshSessionCount === 0, "No active refresh token may remain bound to a revoked canonical session.", {
+  orphanedRefreshSessionCount,
 });
 
 console.log(

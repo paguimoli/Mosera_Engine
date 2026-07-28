@@ -47,6 +47,7 @@ export class RabbitMqQueueConsumer {
   private connection: ChannelModel | null = null;
   private channel: Channel | null = null;
   private heartbeatIntervals = new Set<ReturnType<typeof setInterval>>();
+  private disconnectPromise: Promise<void> = Promise.resolve();
 
   async consume({
     routing,
@@ -265,6 +266,10 @@ export class RabbitMqQueueConsumer {
     this.connection = null;
   }
 
+  waitForDisconnect(): Promise<void> {
+    return this.disconnectPromise;
+  }
+
   private async getChannel(): Promise<Channel> {
     if (this.channel) {
       return this.channel;
@@ -276,8 +281,25 @@ export class RabbitMqQueueConsumer {
       throw new Error("RabbitMQ connection URL is not configured.");
     }
 
-    this.connection = await amqp.connect(config.connectionUrl);
-    this.channel = await this.connection.createChannel();
+    const connection = await amqp.connect(config.connectionUrl);
+    this.disconnectPromise = new Promise((resolve) => {
+      let disconnected = false;
+      const markDisconnected = () => {
+        if (disconnected) return;
+        disconnected = true;
+        resolve();
+      };
+      connection.on("error", (error) => {
+        logger.warn({
+          message: "RabbitMQ consumer connection error.",
+          metadata: { error: getErrorMessage(error) },
+        });
+        markDisconnected();
+      });
+      connection.on("close", markDisconnected);
+    });
+    this.connection = connection;
+    this.channel = await connection.createChannel();
 
     return this.channel;
   }

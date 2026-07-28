@@ -1,6 +1,7 @@
 import {
   assertPlatformResourceScope,
   requirePlatformManagementPermission,
+  withPlatformMutationAudit,
 } from "@/src/domains/platform-management/platform-management-auth";
 import {
   getPlatformRecord,
@@ -62,15 +63,23 @@ export async function POST(request: Request, { params }: RouteParams) {
       );
     }
 
-    assertPlatformResourceScope(
-      authorization,
-      resource,
-      "create",
-      await resolvePlatformResourceScope(resource, existing)
-    );
+    const scope = await resolvePlatformResourceScope(resource, existing);
+    assertPlatformResourceScope(authorization, resource, "create", scope);
 
     const body = await readObjectBody(request);
-    const result = await performPlatformLifecycleAction(resource, id, action, body);
+    const result = await performPlatformLifecycleAction(
+      resource,
+      id,
+      action,
+      withPlatformMutationAudit(
+        body,
+        request,
+        authorization,
+        resource,
+        action,
+        scope
+      )
+    );
 
     if (!result) {
       return Response.json(

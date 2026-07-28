@@ -165,11 +165,24 @@ order by r.code;
         using var command = connection.CreateCommand();
         command.CommandText = """
 select distinct claim_value
-from auth_service.identity_claims
-where identity_id = @identity_id
-  and lower(claim_type) = 'permission'
-  and revoked_at is null
-  and (expires_at is null or expires_at > now())
+from (
+  select claim_value
+  from auth_service.identity_claims
+  where identity_id = @identity_id
+    and lower(claim_type) = 'permission'
+    and revoked_at is null
+    and (expires_at is null or expires_at > now())
+  union
+  select jsonb_array_elements_text(
+    coalesce(role.metadata->'permissions', '[]'::jsonb)
+  )
+  from auth_service.identity_roles assignment
+  join auth_service.roles role on role.id = assignment.role_id
+  where assignment.identity_id = @identity_id
+    and assignment.effective_from <= now()
+    and (assignment.effective_to is null or assignment.effective_to > now())
+    and role.disabled_at is null
+) resolved_permissions(claim_value)
 order by claim_value;
 """;
         command.Parameters.AddWithValue("identity_id", identityId);
@@ -720,19 +733,256 @@ on conflict (id) do nothing;
             RevokedReason: null));
     }
 
-    public Task<RefreshTokenRuntimeRecord?> MarkRefreshTokenRotated(Guid refreshTokenId, DateTimeOffset rotatedAt, CancellationToken cancellationToken = default)
+    public Task<RefreshTokenRotationResult> RotateRefreshToken(
+        RefreshTokenRotationCommand rotation,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var connection = OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = """
+        using var transaction = connection.BeginTransaction();
+        using var claimCommand = connection.CreateCommand();
+        claimCommand.Transaction = transaction;
+        claimCommand.CommandText = """
 update auth_service.refresh_tokens
-set rotated_at = coalesce(rotated_at, @rotated_at)
-where id = @refresh_token_id;
+set rotated_at = @rotated_at
+where id = @refresh_token_id
+  and identity_id = @identity_id
+  and session_id = @session_id
+  and family_id = @family_id
+  and rotated_at is null
+  and revoked_at is null;
 """;
-        command.Parameters.AddWithValue("refresh_token_id", refreshTokenId);
-        command.Parameters.AddWithValue("rotated_at", rotatedAt);
-        command.ExecuteNonQuery();
-        return FindRefreshTokenRuntimeById(refreshTokenId);
+        claimCommand.Parameters.AddWithValue("refresh_token_id", rotation.ExistingRefreshTokenId);
+        claimCommand.Parameters.AddWithValue("identity_id", rotation.IdentityId);
+        claimCommand.Parameters.AddWithValue("session_id", rotation.SessionId);
+        claimCommand.Parameters.AddWithValue("family_id", rotation.FamilyId);
+        claimCommand.Parameters.AddWithValue("rotated_at", rotation.RotatedAt);
+        if (claimCommand.ExecuteNonQuery() != 1)
+        {
+            transaction.Rollback();
+            return Task.FromResult(RefreshTokenRotationResult.Conflict("refresh_token_already_rotated_or_revoked"));
+        }
+
+        using var tokenCommand = connection.CreateCommand();
+        tokenCommand.Transaction = transaction;
+        tokenCommand.CommandText = """
+insert into auth_service.tokens (
+  id, identity_id, token_type, token_format, issuer, audience, scopes,
+  opaque_reference_hash, issued_at, expires_at, metadata
+) values (
+  @id, @identity_id, 'REFRESH', 'OPAQUE_REFERENCE', 'lottery-auth-service', 'lottery-platform', '[]'::jsonb,
+  @opaque_reference_hash, @issued_at, @expires_at, @metadata
+);
+""";
+        tokenCommand.Parameters.AddWithValue("id", rotation.NewTokenId);
+        tokenCommand.Parameters.AddWithValue("identity_id", rotation.IdentityId);
+        tokenCommand.Parameters.AddWithValue("opaque_reference_hash", rotation.ReferenceHash);
+        tokenCommand.Parameters.AddWithValue("issued_at", rotation.RotatedAt);
+        tokenCommand.Parameters.AddWithValue("expires_at", rotation.ExpiresAt);
+        tokenCommand.Parameters.AddWithValue("metadata", NpgsqlDbType.Jsonb, JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["sessionId"] = rotation.SessionId.ToString(),
+            ["refreshTokenId"] = rotation.NewRefreshTokenId.ToString()
+        }));
+        tokenCommand.ExecuteNonQuery();
+
+        using var refreshCommand = connection.CreateCommand();
+        refreshCommand.Transaction = transaction;
+        refreshCommand.CommandText = """
+insert into auth_service.refresh_tokens (
+  id, identity_id, session_id, token_id, family_id, rotation_counter,
+  previous_refresh_token_id, opaque_reference_hash, issued_at, expires_at
+) values (
+  @id, @identity_id, @session_id, @token_id, @family_id, @rotation_counter,
+  @previous_refresh_token_id, @opaque_reference_hash, @issued_at, @expires_at
+);
+""";
+        refreshCommand.Parameters.AddWithValue("id", rotation.NewRefreshTokenId);
+        refreshCommand.Parameters.AddWithValue("identity_id", rotation.IdentityId);
+        refreshCommand.Parameters.AddWithValue("session_id", rotation.SessionId);
+        refreshCommand.Parameters.AddWithValue("token_id", rotation.NewTokenId);
+        refreshCommand.Parameters.AddWithValue("family_id", rotation.FamilyId);
+        refreshCommand.Parameters.AddWithValue("rotation_counter", rotation.RotationCounter);
+        refreshCommand.Parameters.AddWithValue("previous_refresh_token_id", rotation.ExistingRefreshTokenId);
+        refreshCommand.Parameters.AddWithValue("opaque_reference_hash", rotation.ReferenceHash);
+        refreshCommand.Parameters.AddWithValue("issued_at", rotation.RotatedAt);
+        refreshCommand.Parameters.AddWithValue("expires_at", rotation.ExpiresAt);
+        refreshCommand.ExecuteNonQuery();
+        transaction.Commit();
+
+        return Task.FromResult(RefreshTokenRotationResult.Success(new RefreshTokenRuntimeRecord(
+            rotation.NewRefreshTokenId,
+            rotation.IdentityId,
+            rotation.SessionId,
+            rotation.NewTokenId,
+            rotation.FamilyId,
+            rotation.RotationCounter,
+            rotation.ExistingRefreshTokenId,
+            rotation.ReferenceHash,
+            rotation.RotatedAt,
+            rotation.ExpiresAt,
+            RotatedAt: null,
+            RevokedAt: null,
+            RevokedReason: null)));
+    }
+
+    public Task<RefreshReplayRevocationResult> RevokeRefreshTokenReplay(
+        RefreshReplayRevocationCommand replay,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+
+        using (var lockCommand = connection.CreateCommand())
+        {
+            lockCommand.Transaction = transaction;
+            lockCommand.CommandText = """
+select id
+from auth_service.refresh_tokens
+where family_id = @family_id
+order by id
+for update;
+""";
+            lockCommand.Parameters.AddWithValue("family_id", replay.FamilyId);
+            using var reader = lockCommand.ExecuteReader();
+            if (!reader.Read())
+            {
+                throw new InvalidOperationException("refresh_token_family_not_found");
+            }
+        }
+
+        Guid tenantId;
+        Guid? brandId;
+        string? deviceMetadata;
+        using (var authorityCommand = connection.CreateCommand())
+        {
+            authorityCommand.Transaction = transaction;
+            authorityCommand.CommandText = """
+select p.tenant_id, p.brand_id, coalesce(s.device_metadata, s.user_agent)
+from auth_service.identity_profiles p
+left join auth_service.canonical_sessions s
+  on s.id = @session_id and s.identity_id = p.identity_id
+where p.identity_id = @identity_id
+for update of p;
+""";
+            authorityCommand.Parameters.AddWithValue("session_id", replay.SessionId);
+            authorityCommand.Parameters.AddWithValue("identity_id", replay.IdentityId);
+            using var reader = authorityCommand.ExecuteReader();
+            if (!reader.Read())
+            {
+                throw new InvalidOperationException("canonical_identity_authority_not_found");
+            }
+
+            tenantId = reader.GetGuid(0);
+            brandId = reader.IsDBNull(1) ? null : reader.GetGuid(1);
+            deviceMetadata = reader.IsDBNull(2) ? null : reader.GetString(2);
+        }
+
+        var refreshTokensRevoked = ExecuteReplayUpdate(
+            connection,
+            transaction,
+            """
+update auth_service.refresh_tokens
+set revoked_at = coalesce(revoked_at, @revoked_at),
+    revoked_reason = coalesce(revoked_reason, @reason)
+where family_id = @family_id;
+""",
+            replay);
+
+        var accessTokensRevoked = ExecuteReplayUpdate(
+            connection,
+            transaction,
+            """
+update auth_service.tokens
+set revoked_at = coalesce(revoked_at, @revoked_at)
+where token_type = 'ACCESS'
+  and identity_id = @identity_id
+  and metadata->>'sessionId' = @session_id_text;
+""",
+            replay);
+
+        var canonicalSessionRevoked = ExecuteReplayUpdate(
+            connection,
+            transaction,
+            """
+update auth_service.canonical_sessions
+set revoked_at = coalesce(revoked_at, @revoked_at),
+    revoked_reason = coalesce(revoked_reason, @reason)
+where id = @session_id
+  and identity_id = @identity_id;
+""",
+            replay) > 0;
+
+        var legacySessionRevoked = ExecuteReplayUpdate(
+            connection,
+            transaction,
+            """
+update auth_service.sessions
+set state = 'REVOKED',
+    revoked_at = coalesce(revoked_at, @revoked_at)
+where id = @session_id
+  and identity_id = @identity_id;
+""",
+            replay) > 0;
+
+        var auditEvidenceId = Guid.NewGuid();
+        using (var auditCommand = connection.CreateCommand())
+        {
+            auditCommand.Transaction = transaction;
+            auditCommand.CommandText = """
+insert into auth_service.authentication_audit_evidence (
+  id, tenant_id, brand_id, actor_identity_id, subject_identity_id, action, result,
+  reason, correlation_id, occurred_at, ip_address, user_agent, authority,
+  session_id, refresh_token_id, refresh_token_family_id, device_metadata, revocation_reason
+) values (
+  @id, @tenant_id, @brand_id, @identity_id, @identity_id, 'REFRESH_TOKEN_REPLAY',
+  'REVOKED', @reason, @correlation_id, @revoked_at, @ip_address, @user_agent, 'AUTH_SERVICE',
+  @session_id, @refresh_token_id, @family_id, @device_metadata, @reason
+);
+""";
+            auditCommand.Parameters.AddWithValue("id", auditEvidenceId);
+            auditCommand.Parameters.AddWithValue("tenant_id", tenantId);
+            auditCommand.Parameters.AddWithValue("brand_id", brandId is null ? DBNull.Value : brandId.Value);
+            auditCommand.Parameters.AddWithValue("identity_id", replay.IdentityId);
+            auditCommand.Parameters.AddWithValue("reason", replay.Reason);
+            auditCommand.Parameters.AddWithValue("correlation_id", replay.CorrelationId);
+            auditCommand.Parameters.AddWithValue("revoked_at", replay.RevokedAt);
+            auditCommand.Parameters.AddWithValue("ip_address", replay.IpAddress is null ? DBNull.Value : replay.IpAddress);
+            auditCommand.Parameters.AddWithValue("user_agent", replay.UserAgent is null ? DBNull.Value : replay.UserAgent);
+            auditCommand.Parameters.AddWithValue("session_id", replay.SessionId);
+            auditCommand.Parameters.AddWithValue("refresh_token_id", replay.RefreshTokenId);
+            auditCommand.Parameters.AddWithValue("family_id", replay.FamilyId);
+            auditCommand.Parameters.AddWithValue("device_metadata", deviceMetadata is null ? DBNull.Value : deviceMetadata);
+            auditCommand.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+        return Task.FromResult(new RefreshReplayRevocationResult(
+            refreshTokensRevoked,
+            accessTokensRevoked,
+            canonicalSessionRevoked,
+            legacySessionRevoked,
+            auditEvidenceId));
+    }
+
+    private static int ExecuteReplayUpdate(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string commandText,
+        RefreshReplayRevocationCommand replay)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = commandText;
+        command.Parameters.AddWithValue("refresh_token_id", replay.RefreshTokenId);
+        command.Parameters.AddWithValue("family_id", replay.FamilyId);
+        command.Parameters.AddWithValue("session_id", replay.SessionId);
+        command.Parameters.AddWithValue("session_id_text", replay.SessionId.ToString());
+        command.Parameters.AddWithValue("identity_id", replay.IdentityId);
+        command.Parameters.AddWithValue("revoked_at", replay.RevokedAt);
+        command.Parameters.AddWithValue("reason", replay.Reason);
+        return command.ExecuteNonQuery();
     }
 
     public Task<int> RevokeRefreshTokensForSession(Guid sessionId, DateTimeOffset revokedAt, string reason, CancellationToken cancellationToken = default)
@@ -1376,9 +1626,14 @@ public sealed class DisabledAuthRepository :
         throw new InvalidOperationException("Auth Service refresh-token persistence is disabled because DATABASE_URL is absent.");
     }
 
-    public Task<RefreshTokenRuntimeRecord?> MarkRefreshTokenRotated(Guid refreshTokenId, DateTimeOffset rotatedAt, CancellationToken cancellationToken = default)
+    public Task<RefreshTokenRotationResult> RotateRefreshToken(RefreshTokenRotationCommand command, CancellationToken cancellationToken = default)
     {
-        return Task.FromResult<RefreshTokenRuntimeRecord?>(null);
+        return Task.FromResult(RefreshTokenRotationResult.Conflict("refresh_token_persistence_disabled"));
+    }
+
+    public Task<RefreshReplayRevocationResult> RevokeRefreshTokenReplay(RefreshReplayRevocationCommand command, CancellationToken cancellationToken = default)
+    {
+        throw new InvalidOperationException("Auth Service refresh-token replay authority is disabled because DATABASE_URL is absent.");
     }
 
     public Task<int> RevokeRefreshTokensForSession(Guid sessionId, DateTimeOffset revokedAt, string reason, CancellationToken cancellationToken = default)

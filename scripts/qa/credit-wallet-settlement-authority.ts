@@ -200,6 +200,7 @@ async function main() {
     const scope = await seedScope(pool);
     const reservationId = await reserve(scope, 100);
     const originalFixture = await seedSettlementFixture(pool, {
+      tenantId: scope.tenantId, brandId: scope.brandId,
       reservationId, ticketId: scope.ticketId, amountMinor: 100,
       balanceImpactMinor: 25, ledgerRequired: true,
     });
@@ -259,6 +260,7 @@ async function main() {
       const missingScope = { ...scope, ticketId: randomUUID() };
       const missingReservation = await reserve(missingScope, 50);
       const missingLedgerFixture = await seedSettlementFixture(pool, {
+        tenantId: missingScope.tenantId, brandId: missingScope.brandId,
         reservationId: missingReservation, ticketId: missingScope.ticketId,
         amountMinor: 50, balanceImpactMinor: 10, ledgerRequired: true,
       });
@@ -270,6 +272,7 @@ async function main() {
     }
 
     const reversalFixture = await seedSettlementFixture(pool, {
+      tenantId: scope.tenantId, brandId: scope.brandId,
       reservationId, ticketId: scope.ticketId, amountMinor: 100,
       balanceImpactMinor: -25, outcome: "VOID", ledgerRequired: true,
       ledgerInstructionType: "LEDGER_REVERSAL", creditInstructionType: "CREDIT_REFUND",
@@ -283,6 +286,7 @@ async function main() {
       "Governed reversal must commit.", { reversal });
 
     const correctionFixture = await seedSettlementFixture(pool, {
+      tenantId: scope.tenantId, brandId: scope.brandId,
       reservationId, ticketId: scope.ticketId, amountMinor: 100,
       balanceImpactMinor: 15, ledgerRequired: true,
       provenance: { resettlementRole: "corrected", originalSettlementId: originalFixture.settlementId },

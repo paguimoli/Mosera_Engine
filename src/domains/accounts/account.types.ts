@@ -36,6 +36,9 @@ export type Account = {
   accountCode: string;
   displayName: string;
   parentAccountId?: string | null;
+  platformId: string;
+  organizationId: string;
+  tenantId: string;
   marketId: string;
   brandId: string;
   status: PersistedAccountStatus;
@@ -45,6 +48,9 @@ export type Account = {
   defaultFundingSource?: AccountDefaultFundingSource | null;
   weeklyAccountingMode?: AccountWeeklyAccountingMode | null;
   settlementMode?: AccountSettlementMode | null;
+  governanceManaged: true;
+  idempotencyKey?: string | null;
+  canonicalRequestHash?: string | null;
   createdAt: string;
   updatedAt?: string | null;
 };
@@ -55,7 +61,8 @@ export type CreateAccountInput = {
   displayName: string;
   parentAccountId?: string | null;
   marketId: string;
-  brandId: string;
+  brandId?: string;
+  idempotencyKey?: string | null;
   status?: PersistedAccountStatus;
   fundingModel?: AccountFundingModel | null;
   operatingMode?: AccountOperatingMode | null;

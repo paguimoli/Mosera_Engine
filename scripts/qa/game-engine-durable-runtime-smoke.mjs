@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { runPsql } from "../migrations/lib/local-migration-utils.mjs";
 
 const runningInContainer = existsSync("/.dockerenv");
 const gameEngineUrl =
@@ -60,14 +60,9 @@ async function requestJson(path) {
 }
 
 function psql(sql) {
-  const result = spawnSync(
-    "psql",
-    ["-X", "-v", "ON_ERROR_STOP=1", "-qAt", databaseUrl, "-c", sql],
-    {
-      encoding: "utf8",
-      env: process.env,
-    }
-  );
+  const result = runPsql(["-qAt", "-c", sql], {
+    env: { ...process.env, DATABASE_URL: databaseUrl },
+  });
 
   assert(result.status === 0, "Postgres verification query failed.", {
     sql,

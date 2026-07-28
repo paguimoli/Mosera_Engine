@@ -14,6 +14,7 @@ import {
   validateCreateBrandInput,
   validateUpdateBrandInput,
 } from "./brand.validation";
+import { assertLegacyPlatformDevelopmentMutationAllowed } from "../platform-management/platform-mutation-authority";
 
 export class DuplicateBrandCodeError extends Error {
   constructor(message = "Duplicate brand code.") {
@@ -40,6 +41,7 @@ export class BrandBusinessRuleError extends Error {
 }
 
 export async function createBrand(input: CreateBrandInput): Promise<Brand> {
+  assertLegacyPlatformDevelopmentMutationAllowed();
   const validation = validateCreateBrandInput(input);
 
   if (!validation.valid) {
@@ -66,6 +68,7 @@ export async function updateBrand(
   id: string,
   input: UpdateBrandInput
 ): Promise<Brand> {
+  assertLegacyPlatformDevelopmentMutationAllowed();
   const validation = validateUpdateBrandInput(input);
 
   if (!validation.valid) {
@@ -92,6 +95,7 @@ export async function updateBrand(
 }
 
 export async function setDefaultBrand(id: string): Promise<Brand> {
+  assertLegacyPlatformDevelopmentMutationAllowed();
   const brand = await findBrandById(id);
 
   if (!brand) {
@@ -102,6 +106,7 @@ export async function setDefaultBrand(id: string): Promise<Brand> {
 }
 
 export async function disableBrand(id: string): Promise<Brand> {
+  assertLegacyPlatformDevelopmentMutationAllowed();
   const brand = await findBrandById(id);
 
   if (!brand) {

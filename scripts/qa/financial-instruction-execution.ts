@@ -323,9 +323,7 @@ async function createSettlement(
 
   const playerId = randomUUID();
   const walletScope = await seedAccountWallet(pool, playerId, options.withWallet ?? true);
-  const reservationId = options.withCredit === false
-    ? null
-    : await seedCreditReservation(walletScope!, input.ticketId);
+  const reservationId = await seedCreditReservation(walletScope!, input.ticketId);
   const acceptedAt = new Date().toISOString();
   const contextReference = `accepted-wager-context:v1:${randomUUID()}`;
   const ingestionPayload = {
@@ -337,6 +335,8 @@ async function createSettlement(
     mathEvaluationCertificateHash: input.mathEvaluationCertificateHash,
     outcomeCertificateId: input.outcomeCertificateId,
     outcomeCertificateHash: input.outcomeCertificateHash,
+    tenantId: walletScope!.tenantId,
+    brandId: walletScope!.brandId,
     ticketId: input.ticketId,
     ticketLineId: input.ticketLineId,
     playerAccountReference: playerId,
@@ -352,6 +352,8 @@ async function createSettlement(
     mode: "DryRun",
     acceptedWagerFinancialContext: {
       contextReference,
+      tenantId: walletScope!.tenantId,
+      brandId: walletScope!.brandId,
       ticketId: input.ticketId,
       ticketLineId: input.ticketLineId,
       playerAccountReference: playerId,
@@ -359,14 +361,14 @@ async function createSettlement(
       currency: "USD",
       minorUnitPrecision: 2,
       roundingPolicyReference: "rounding-policy:v1",
-      creditReservationReference: reservationId
-        ? {
-            reservationId,
-            playerAccountReference: playerId,
-            ticketId: input.ticketId,
-            ticketLineId: input.ticketLineId,
-          }
-        : null,
+      creditReservationReference: {
+        reservationId,
+        tenantId: walletScope!.tenantId,
+        brandId: walletScope!.brandId,
+        playerAccountReference: playerId,
+        ticketId: input.ticketId,
+        ticketLineId: input.ticketLineId,
+      },
       acceptedAt,
     },
     settlementPolicy: { version: "settlement-policy:v1" },
@@ -504,6 +506,7 @@ async function main() {
     const creditFailureCredit = findInstruction(creditFailure, "CREDIT_APPLY");
     const ledgerOnly = await executeInstruction(creditFailureLedger.instructionId);
     assert(ledgerOnly.response.ok, "Ledger should succeed before Credit failure.", { status: ledgerOnly.response.status, body: ledgerOnly.body });
+    await pool.query("update public.financial_wallets set status = 'CLOSED' where id = $1;", [creditFailure.playerId]);
     const failedCredit = await executeInstruction(creditFailureCredit.instructionId);
     assert(failedCredit.response.status === 502, "Credit failure should preserve recoverable state.", { status: failedCredit.response.status, body: failedCredit.body });
     const failedCreditRetryBlocked = await executeInstruction(creditFailureCredit.instructionId);

@@ -140,6 +140,8 @@ function cancelBody(base: Record<string, unknown>, reservationId: string, amount
 async function captureBody(pool: Pool, base: Record<string, unknown>, reservationId: string,
   amount: number, impact = 0) {
   const fixture = await seedSettlementFixture(pool, {
+    tenantId: String(base.tenantId),
+    brandId: String(base.brandId),
     reservationId,
     ticketId: String(base.ticketId),
     amountMinor: amount,

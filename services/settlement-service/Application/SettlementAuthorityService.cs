@@ -38,14 +38,30 @@ public sealed class SettlementAuthorityService(
         var credit = await creditClient.CheckReadinessAsync(cancellationToken);
         var snapshot = await repository.GetOperationalSnapshotAsync(cancellationToken);
         var databaseConfigured = !string.IsNullOrWhiteSpace(configuration.Database.Url);
-        var markers = BuildCapabilityMarkers(ingestion, execution, instructions, recovery, resettlement);
+        var markers = BuildCapabilityMarkers(ingestion, execution, instructions, recovery, resettlement).ToList();
         var blockers = new List<string>();
+        var legacyIsolated = !configuration.Runtime.LegacyMutationRoutesEnabled;
+        if (!legacyIsolated)
+        {
+            markers.Remove("legacy-path-isolation");
+        }
+        if (snapshot.CanonicalScopeViolationCount == 0)
+        {
+            markers.Add("canonical-tenant-brand-scope");
+        }
+        if (snapshot.UnresolvedHistoricalEvidenceCount == 0)
+        {
+            markers.Add("governed-historical-evidence");
+        }
 
         AddBlockerUnless(blockers, ingestion.RepositoryReachable && ingestion.SettlementInputValidationReady, "SettlementInput ingestion is not ready.");
         AddBlockerUnless(blockers, ingestion.FinancialContextValidationReady, "Financial context validation is not ready.");
         AddBlockerUnless(blockers, execution.RepositoryReachable && execution.SettlementExecutionReady, "Authoritative SettlementRecord execution is not ready.");
         AddBlockerUnless(blockers, execution.SettlementPolicyReady, "Settlement policy readiness is missing.");
         AddBlockerUnless(blockers, databaseConfigured && execution.RepositoryReachable, "Durable settlement persistence is not reachable.");
+        AddBlockerUnless(blockers, execution.CanonicalDecisionTransactionReady, "Canonical settlement decision, financial intent, and outbox transaction is not ready.");
+        AddBlockerUnless(blockers, execution.MigrationReady, "Settlement migrations are not current.");
+        AddBlockerUnless(blockers, execution.OutboxReady, "Settlement outbox persistence is not ready.");
         AddBlockerUnless(blockers, ingestion.IdempotencyReady && instructions.IdempotencyExecutionReady, "Idempotency readiness is incomplete.");
         AddBlockerUnless(blockers, execution.SettlementReplayReady && recovery.ReplayReady, "Replay readiness is incomplete.");
         AddBlockerUnless(blockers, recovery.RecoveryReady && recovery.ResumeReady, "Batch/recovery readiness is incomplete.");
@@ -58,6 +74,13 @@ public sealed class SettlementAuthorityService(
         AddBlockerUnless(blockers, snapshot.UnresolvedFailedInstructions == 0, "Unresolved failed financial instructions block promotion.");
         AddBlockerUnless(blockers, snapshot.AwaitingVerificationItems == 0, "AwaitingVerification items block promotion.");
         AddBlockerUnless(blockers, snapshot.MissingImmutableReferenceItems == 0, "Missing immutable references block promotion.");
+        AddBlockerUnless(blockers, snapshot.OrphanedSettlementIntentCount == 0, "Orphaned settlement decision, financial intent, or outbox evidence blocks promotion.");
+        AddBlockerUnless(blockers, snapshot.CanonicalScopeViolationCount == 0, "Missing or conflicting canonical tenant/brand scope blocks promotion.");
+        AddBlockerUnless(blockers, snapshot.UnresolvedHistoricalEvidenceCount == 0, "Unclassified historical settlement evidence blocks promotion.");
+        if (mode != SettlementAuthorityMode.MONOLITH)
+        {
+            AddBlockerUnless(blockers, legacyIsolated, "Legacy settlement mutation routes are enabled.");
+        }
         AddBlockerUnless(blockers, mode != SettlementAuthorityMode.SERVICE, "Production SERVICE authority activation is intentionally blocked in this phase.");
         if (mode == SettlementAuthorityMode.SERVICE)
         {
@@ -69,8 +92,6 @@ public sealed class SettlementAuthorityService(
 
         var productionPostingEnabled = false;
         var authorityActivationEnabled = mode == SettlementAuthorityMode.SERVICE && blockers.Count == 0;
-        var legacyIsolated = mode != SettlementAuthorityMode.SERVICE ||
-            markers.Contains("legacy-path-isolation");
         var reportSeed = new
         {
             mode,
@@ -94,6 +115,9 @@ public sealed class SettlementAuthorityService(
             execution.RepositoryReachable && execution.SettlementExecutionReady,
             execution.SettlementPolicyReady,
             databaseConfigured && execution.RepositoryReachable,
+            execution.CanonicalDecisionTransactionReady,
+            execution.MigrationReady,
+            execution.OutboxReady,
             ingestion.IdempotencyReady && instructions.IdempotencyExecutionReady,
             execution.SettlementReplayReady && recovery.ReplayReady,
             recovery.RecoveryReady && recovery.ResumeReady,
@@ -103,10 +127,16 @@ public sealed class SettlementAuthorityService(
             instructions.PartialFailureRecoveryReady && recovery.RecoveryReady,
             recovery.InstructionReconciliationReady,
             resettlement.RepositoryReachable && resettlement.ResettlementValidationReady && resettlement.ReversalCalculationReady && resettlement.ReversalInstructionGenerationReady && resettlement.CorrectedSettlementCreationReady && resettlement.ResettlementRecoveryReady,
+            snapshot.CanonicalScopeViolationCount == 0,
+            snapshot.UnresolvedHistoricalEvidenceCount == 0,
             legacyIsolated,
             productionPostingEnabled,
             authorityActivationEnabled,
             blockers.Count == 0 && mode is SettlementAuthorityMode.SERVICE_SHADOW or SettlementAuthorityMode.SERVICE_DRY_RUN,
+            snapshot.OrphanedSettlementIntentCount,
+            snapshot.CanonicalScopeViolationCount,
+            snapshot.GovernedPromotionExclusionCount,
+            snapshot.UnresolvedHistoricalEvidenceCount,
             legacyIsolated ? "explicit_compatibility_only" : "not_isolated",
             productionPostingEnabled ? "enabled" : "disabled",
             authorityActivationEnabled ? "enabled" : "blocked",
@@ -270,6 +300,9 @@ public sealed class SettlementAuthorityService(
         if (execution.RepositoryReachable && execution.SettlementExecutionReady) markers.Add("authoritative-settlement-execution");
         if (execution.SettlementPolicyReady) markers.Add("settlement-policy");
         if (execution.RepositoryReachable) markers.Add("durable-settlement-persistence");
+        if (execution.CanonicalDecisionTransactionReady) markers.Add("canonical-decision-intent-outbox-transaction");
+        if (execution.MigrationReady) markers.Add("settlement-migrations-current");
+        if (execution.OutboxReady) markers.Add("settlement-outbox");
         if (ingestion.IdempotencyReady && instructions.IdempotencyExecutionReady) markers.Add("settlement-idempotency");
         if (execution.SettlementReplayReady && recovery.ReplayReady) markers.Add("settlement-replay");
         if (recovery.RecoveryReady && recovery.ResumeReady) markers.Add("settlement-recovery-resume");

@@ -112,6 +112,9 @@ public sealed class FinancialInstructionService(FinancialInstructionRepository r
             ["initialStatus"] = "Pending",
             ["ledgerPosting"] = "disabled",
             ["postingDisabled"] = true,
+            ["tenantId"] = settlementRecord.TenantId,
+            ["brandId"] = settlementRecord.BrandId,
+            ["scopeHash"] = settlementRecord.ScopeHash,
             ["settlementHash"] = settlementRecord.CanonicalSettlementHash,
             ["stateTransition"] = status == FinancialInstructionStatus.Ready ? "Pending->Ready" : "Pending->Skipped"
         };
@@ -122,6 +125,9 @@ public sealed class FinancialInstructionService(FinancialInstructionRepository r
         {
             ["amountMinor"] = amountMinor,
             ["canonicalSettlementHash"] = settlementRecord.CanonicalSettlementHash,
+            ["tenantId"] = settlementRecord.TenantId,
+            ["brandId"] = settlementRecord.BrandId,
+            ["scopeHash"] = settlementRecord.ScopeHash,
             ["currency"] = settlementRecord.Currency,
             ["idempotencyKey"] = idempotencyKey,
             ["instructionId"] = instructionId,

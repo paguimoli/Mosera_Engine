@@ -51,8 +51,78 @@ P0-007.13 keeps production Outcome Authority disabled. These procedures define f
 ## Outcome Supersession
 
 - Never edit original outcome/certificate records.
-- Create supersession evidence referencing the original certificate.
+- Publish a `Corrected` version referencing the exact current
+  `outcome_version_id`.
+- Confirm the corrected version uses a different verified Outcome Certificate
+  hash.
 - Preserve chain roots, signatures, operator, reason, and approval metadata.
+- Confirm one `outcome.corrected` and one `settlement.requested` event exist in
+  `public.outbox_events`.
+
+## Outcome Cancellation
+
+- Publish a `Cancelled` version referencing the exact current
+  `outcome_version_id`.
+- Do not attach a financial `SettlementInput` to the cancellation request.
+- Confirm one `outcome.cancelled` event and one `settlement.requested` event
+  were committed.
+- Treat cancellation as terminal. A new result requires a governed new draw,
+  not mutation of the cancelled chain.
+
+## Publication Recovery
+
+- Query `game_engine.canonical_outcome_versions` by draw and order by
+  `version_number`.
+- Confirm every version has exactly one linked outbox event.
+- Query `game_engine.outcome_settlement_requests`; at most one request may
+  exist per outcome version.
+- Retry with the original idempotency key and payload. The original durable
+  record must be returned.
+- Stop and investigate if the same idempotency key produces a canonical hash
+  conflict, a version skips its predecessor, or a non-current version attempts
+  Settlement emission.
+- Never insert directly into Settlement as a publication recovery shortcut.
+
+The Game Engine recovery loop and
+`POST /api/game-engine/outcome-publications/recover` perform two bounded,
+advisory-locked actions:
+
+1. create a missing `settlement.requested` record and outbox event for the
+   current canonical outcome version after verifying its exact
+   `SettlementInput`;
+2. requeue an old `PUBLISHED` request event that has no consumption receipt,
+   preserving the original outbox event identifier.
+
+Each action appends evidence to
+`game_engine.canonical_outcome_recovery_events`. Recovery never calls
+Settlement directly and stops after five unconfirmed requeues.
+
+## Worker Topology
+
+- `outbox-dispatcher` polls `public.outbox_events` and publishes to the existing
+  RabbitMQ topic exchange.
+- `worker-settlement` owns the Settlement workload queue and consumes
+  `settlement.requested`.
+- Both workers run compiled JavaScript from `worker-dist` through
+  `runtime-bootstrap.cjs`. Production startup does not invoke `npm` or load
+  TypeScript.
+- Consumers reconnect after RabbitMQ disconnects. The dispatcher reuses one
+  publisher connection and reconnects through the publisher adapter.
+- `game_engine.canonical_runtime_components` records current compiled-runtime
+  readiness; it is operational state, not authority evidence.
+
+## Replay And Completion
+
+- A worker receipt is unique by Settlement request and outbox event.
+- Redelivery with the same canonical message hash returns the existing receipt.
+- Conflicting redelivery, stale outcome versions, or mismatched certificate and
+  `SettlementInput` evidence fail closed.
+- Draw completion is appended only in the same transaction as the first valid
+  Settlement request consumption.
+- Restarting the dispatcher, Settlement worker, RabbitMQ, or Game Engine does
+  not create another request, receipt, or completion record.
+- Run `npm run qa:canonical-draw-orchestration` against the local integrated
+  runtime to exercise restarts, reconnect, duplicate delivery, and recovery.
 
 ## Crash Recovery
 
@@ -74,3 +144,9 @@ P0-007.13 keeps production Outcome Authority disabled. These procedures define f
 - Confirm provider, entropy, DRBG, signing, statistical, recovery, and custody sections are present.
 - Confirm production activation remains disabled.
 - Confirm no test/simulation provider is production eligible.
+- Run `npm run qa:canonical-outcome-pipeline`.
+- Run `npm run qa:canonical-draw-orchestration`.
+- Confirm readiness reports canonical persistence, advisory locking, shared
+  outbox, compiled workers, RabbitMQ consumption, replay protection,
+  missing-request recovery, and legacy publication disabled.
+- Confirm production Outcome Authority remains disabled.

@@ -8,6 +8,12 @@ type Check = {
 };
 
 type Outcome = "Win" | "Loss" | "Push" | "Void";
+type WalletScope = {
+  tenantId: string;
+  brandId: string;
+  playerId: string;
+  walletId: string;
+};
 
 const checks: Check[] = [];
 const settlementServiceUrl = trimTrailingSlash(process.env.SETTLEMENT_SERVICE_URL ?? "http://localhost:5400");
@@ -64,6 +70,31 @@ async function tableCount(pool: Pool, table: string) {
 }
 
 async function seedAccountWallet(pool: Pool, accountId: string) {
+  const organizationId = randomUUID();
+  const tenantId = randomUUID();
+  const brandId = randomUUID();
+  const suffix = randomUUID().replaceAll("-", "").slice(0, 12);
+  await pool.query(
+    `insert into platform.organizations
+       (id, organization_code, name, status, version, content_hash, audit_metadata)
+     values ($1, $2, $3, 'Active', '1.0.0', $4, '{"source":"qa:resettlement"}')`,
+    [organizationId, `qa-resettlement-org-${suffix}`, `QA Resettlement Org ${suffix}`, hash(`org:${suffix}`)]
+  );
+  await pool.query(
+    `insert into platform.tenants
+       (id, organization_id, tenant_code, name, status, default_language, default_currency,
+        default_timezone, credit_enabled, cashier_enabled, version, content_hash, audit_metadata)
+     values ($1, $2, $3, $4, 'Active', 'en', 'USD', 'UTC', true, false,
+       '1.0.0', $5, '{"source":"qa:resettlement"}')`,
+    [tenantId, organizationId, `qa-resettlement-tenant-${suffix}`,
+      `QA Resettlement Tenant ${suffix}`, hash(`tenant:${suffix}`)]
+  );
+  await pool.query(
+    `insert into platform.brands
+       (id, tenant_id, brand_code, name, display_name, status, version, content_hash, audit_metadata)
+     values ($1, $2, $3, $3, $3, 'Active', '1.0.0', $4, '{"source":"qa:resettlement"}')`,
+    [brandId, tenantId, `qa-resettlement-brand-${suffix}`, hash(`brand:${suffix}`)]
+  );
   await pool.query(
     `
 insert into public.accounts (id, account_type, account_code, display_name, status)
@@ -91,32 +122,35 @@ on conflict (id) do nothing;
 `,
     [accountId]
   );
+  await pool.query(
+    `insert into credit_wallet_service.wallet_scopes
+       (wallet_id, tenant_id, brand_id, player_id, instrument_code, currency, authority, audit_metadata)
+     values ($1, $2, $3, $4, 'CREDIT', 'USD', 'CREDIT_WALLET_SERVICE', '{"source":"qa:resettlement"}')`,
+    [accountId, tenantId, brandId, accountId]
+  );
+
+  return { tenantId, brandId, playerId: accountId, walletId: accountId } satisfies WalletScope;
 }
 
-async function seedCreditReservation(pool: Pool, playerId: string, ticketId: string) {
-  const reservationId = randomUUID();
-  await pool.query(
-    `
-insert into public.credit_reservations (
-  id,
-  player_id,
-  ticket_id,
-  amount,
-  currency,
-  status,
-  reserved_amount,
-  released_amount,
-  settled_amount,
-  remaining_exposure,
-  idempotency_key,
-  correlation_id,
-  metadata
-)
-values ($1, $2, $3, 100, 'USD', 'RESERVED', 100, 0, 0, 100, $4, $5, '{"source":"qa:resettlement"}'::jsonb);
-`,
-    [reservationId, playerId, ticketId, `qa-resettlement-reservation:${reservationId}`, `qa-resettlement-${randomUUID()}`]
+async function seedCreditReservation(pool: Pool, scope: WalletScope, ticketId: string) {
+  const operationId = randomUUID();
+  const result = await pool.query(
+    `select credit_wallet_service.reserve_wallet(
+       $1, $2, $3, $4, $5, 'CREDIT', $6, 100, 'USD', $7, $8,
+       '{"source":"qa:resettlement"}'::jsonb
+     ) as reservation`,
+    [
+      operationId,
+      scope.walletId,
+      scope.tenantId,
+      scope.brandId,
+      scope.playerId,
+      ticketId,
+      `qa-resettlement-reservation:${operationId}`,
+      `qa-resettlement:${operationId}`,
+    ]
   );
-  return reservationId;
+  return result.rows[0].reservation.id as string;
 }
 
 function buildStoredSettlementInput(outcome: Outcome, ticketId = randomUUID(), ticketLineId = randomUUID()) {
@@ -232,8 +266,8 @@ async function createOriginalSettlement(pool: Pool, outcome: Outcome) {
   await seedSettlementInput(pool, originalInput);
 
   const playerId = randomUUID();
-  await seedAccountWallet(pool, playerId);
-  const reservationId = await seedCreditReservation(pool, playerId, originalInput.ticketId);
+  const walletScope = await seedAccountWallet(pool, playerId);
+  const reservationId = await seedCreditReservation(pool, walletScope, originalInput.ticketId);
   const contextReference = `accepted-wager-context:v1:${randomUUID()}`;
   const acceptedAt = new Date().toISOString();
   const ingestionPayload = {
@@ -245,6 +279,8 @@ async function createOriginalSettlement(pool: Pool, outcome: Outcome) {
     mathEvaluationCertificateHash: originalInput.mathEvaluationCertificateHash,
     outcomeCertificateId: originalInput.outcomeCertificateId,
     outcomeCertificateHash: originalInput.outcomeCertificateHash,
+    tenantId: walletScope.tenantId,
+    brandId: walletScope.brandId,
     ticketId: originalInput.ticketId,
     ticketLineId: originalInput.ticketLineId,
     playerAccountReference: playerId,
@@ -260,6 +296,8 @@ async function createOriginalSettlement(pool: Pool, outcome: Outcome) {
     mode: "DryRun",
     acceptedWagerFinancialContext: {
       contextReference,
+      tenantId: walletScope.tenantId,
+      brandId: walletScope.brandId,
       ticketId: originalInput.ticketId,
       ticketLineId: originalInput.ticketLineId,
       playerAccountReference: playerId,
@@ -269,6 +307,8 @@ async function createOriginalSettlement(pool: Pool, outcome: Outcome) {
       roundingPolicyReference: "rounding-policy:v1",
       creditReservationReference: {
         reservationId,
+        tenantId: walletScope.tenantId,
+        brandId: walletScope.brandId,
         playerAccountReference: playerId,
         ticketId: originalInput.ticketId,
         ticketLineId: originalInput.ticketLineId,
@@ -427,6 +467,23 @@ async function main() {
     );
     assert(Number(reversalRecord.rows[0]?.net_result_amount_minor) === -Number(original.settlement.netResultAmountMinor), "reversal net result must negate original.");
     assert(correctedRecord.rows[0]?.settlement_input_id === corrected.settlementInputId, "corrected settlement should use corrected SettlementInput.");
+    assert(
+      reversalRecord.rows[0].tenant_id === original.settlement.tenantId &&
+        reversalRecord.rows[0].brand_id === original.settlement.brandId &&
+        reversalRecord.rows[0].scope_hash === original.settlement.scopeHash,
+      "reversal must inherit the complete original immutable scope.",
+      { reversal: reversalRecord.rows[0], original: original.settlement }
+    );
+    assert(
+      correctedRecord.rows[0].tenant_id === original.settlement.tenantId &&
+        correctedRecord.rows[0].brand_id === original.settlement.brandId &&
+        correctedRecord.rows[0].player_account_reference === original.settlement.playerAccountReference &&
+        correctedRecord.rows[0].ticket_id === original.settlement.ticketId &&
+        correctedRecord.rows[0].ticket_line_id === original.settlement.ticketLineId,
+      "corrected settlement must preserve original business scope while binding corrected outcome evidence.",
+      { corrected: correctedRecord.rows[0], original: original.settlement }
+    );
+    pass("reversal and resettlement preserve original tenant/brand scope");
     assert((await instructionCount(pool, execute.body.chain.reversalSettlementId)) === 2, "reversal instructions should be generated exactly once.");
     assert((await instructionCount(pool, execute.body.chain.correctedSettlementId)) === 2, "corrected instructions should be generated exactly once.");
     pass("reversal and corrected instructions generated");

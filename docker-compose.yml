@@ -6,7 +6,9 @@ x-worker-environment: &worker-environment
   RABBITMQ_URL: ${RABBITMQ_URL:-amqp://lottery:lottery_dev_password@rabbitmq:5672}
   RABBITMQ_EXCHANGE_NAME: ${RABBITMQ_EXCHANGE_NAME:-lottery.events}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+  DATABASE_URL: ${LOCAL_DATABASE_URL:-postgresql://lottery:lottery_dev_password@local-postgres:5432/lottery_local}
   WORKER_HEARTBEAT_INTERVAL_MS: ${WORKER_HEARTBEAT_INTERVAL_MS:-30000}
+  WORKER_RABBITMQ_RECONNECT_DELAY_MS: ${WORKER_RABBITMQ_RECONNECT_DELAY_MS:-1000}
   OUTBOX_DISPATCH_BATCH_SIZE: ${OUTBOX_DISPATCH_BATCH_SIZE:-50}
   OUTBOX_DISPATCH_IDLE_INTERVAL_MS: ${OUTBOX_DISPATCH_IDLE_INTERVAL_MS:-5000}
   OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS: ${OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS:-250}
@@ -20,6 +22,10 @@ x-worker-service: &worker-service
       condition: service_healthy
     redis:
       condition: service_healthy
+    local-postgres:
+      condition: service_healthy
+    migration-runner:
+      condition: service_completed_successfully
 
 x-dotnet-healthcheck: &dotnet-healthcheck
   test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health/ready >/dev/null || exit 1"]
@@ -41,6 +47,9 @@ services:
       - "3000:3000"
     environment:
       NODE_ENV: production
+      DEPLOYMENT_ENVIRONMENT: local
+      CREDIT_ONLY_LAUNCH_ENABLED: "true"
+      CASHIER_LAUNCH_ENABLED: "true"
       NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:54321}
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:-${SUPABASE_ANON_KEY:-dummy-publishable-key}}
       SUPABASE_URL: ${SUPABASE_URL:-${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:54321}}
@@ -84,39 +93,39 @@ services:
 
   outbox-dispatcher:
     <<: *worker-service
-    command: ["npm", "run", "worker:outbox-dispatcher"]
+    command: ["node", "scripts/workers/runtime-bootstrap.cjs", "scripts/workers/dispatch-outbox.js"]
 
   worker-critical-financial:
     <<: *worker-service
-    command: ["npm", "run", "worker:critical-financial"]
+    command: ["node", "scripts/workers/runtime-bootstrap.cjs", "scripts/workers/consume-workload.js", "CRITICAL_FINANCIAL"]
 
   worker-ticket-lifecycle:
     <<: *worker-service
-    command: ["npm", "run", "worker:ticket-lifecycle"]
+    command: ["node", "scripts/workers/runtime-bootstrap.cjs", "scripts/workers/consume-workload.js", "TICKET_LIFECYCLE"]
 
   worker-settlement:
     <<: *worker-service
-    command: ["npm", "run", "worker:settlement"]
+    command: ["node", "scripts/workers/runtime-bootstrap.cjs", "scripts/workers/consume-workload.js", "SETTLEMENT"]
 
   worker-accounting:
     <<: *worker-service
-    command: ["npm", "run", "worker:accounting"]
+    command: ["node", "scripts/workers/runtime-bootstrap.cjs", "scripts/workers/consume-workload.js", "ACCOUNTING"]
 
   worker-commission:
     <<: *worker-service
-    command: ["npm", "run", "worker:commission"]
+    command: ["node", "scripts/workers/runtime-bootstrap.cjs", "scripts/workers/consume-workload.js", "COMMISSION"]
 
   worker-reconciliation:
     <<: *worker-service
-    command: ["npm", "run", "worker:reconciliation"]
+    command: ["node", "scripts/workers/runtime-bootstrap.cjs", "scripts/workers/consume-workload.js", "RECONCILIATION"]
 
   worker-operational-access:
     <<: *worker-service
-    command: ["npm", "run", "worker:operational-access"]
+    command: ["node", "scripts/workers/runtime-bootstrap.cjs", "scripts/workers/consume-workload.js", "OPERATIONAL_ACCESS"]
 
   worker-reporting:
     <<: *worker-service
-    command: ["npm", "run", "worker:reporting"]
+    command: ["node", "scripts/workers/runtime-bootstrap.cjs", "scripts/workers/consume-workload.js", "REPORTING_LOW_PRIORITY"]
 
   dotnet-template-service:
     build:
@@ -224,7 +233,7 @@ services:
       - "5400:8080"
     environment:
       SERVICE_NAME: ${SETTLEMENT_SERVICE_NAME:-settlement-service}
-      ASPNETCORE_ENVIRONMENT: ${SETTLEMENT_SERVICE_ENVIRONMENT:-Production}
+      ASPNETCORE_ENVIRONMENT: ${SETTLEMENT_SERVICE_ENVIRONMENT:-Development}
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://lottery:lottery_dev_password@rabbitmq:5672}
       RABBITMQ_EXCHANGE_NAME: ${RABBITMQ_EXCHANGE_NAME:-lottery.events}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
@@ -232,6 +241,7 @@ services:
       LEDGER_SERVICE_URL: ${LEDGER_SERVICE_URL:-http://ledger-service:8080}
       CREDIT_SERVICE_URL: ${CREDIT_SERVICE_URL:-http://credit-wallet-service:8080}
       CREDIT_WALLET_INTERNAL_API_KEY: ${CREDIT_WALLET_INTERNAL_API_KEY:-local-credit-wallet-internal-key}
+      SETTLEMENT_LEGACY_MUTATIONS_ENABLED: ${SETTLEMENT_LEGACY_MUTATIONS_ENABLED:-true}
       SUPABASE_URL: ${SUPABASE_URL:-${NEXT_PUBLIC_SUPABASE_URL:-http://localhost:54321}}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-dummy-service-role-key}
     depends_on:
@@ -259,6 +269,9 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       GAME_ENGINE_SCHEMA: ${GAME_ENGINE_SCHEMA:-game_engine}
       DATABASE_URL: ${LOCAL_DATABASE_URL:-postgresql://lottery:lottery_dev_password@local-postgres:5432/lottery_local}
+      OUTCOME_CANONICAL_PIPELINE_ENABLED: ${OUTCOME_CANONICAL_PIPELINE_ENABLED:-true}
+      OUTCOME_LEGACY_PUBLICATION_ENABLED: ${OUTCOME_LEGACY_PUBLICATION_ENABLED:-false}
+      OUTCOME_CANONICAL_RECOVERY_ENABLED: ${OUTCOME_CANONICAL_RECOVERY_ENABLED:-true}
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -279,6 +292,7 @@ services:
     environment:
       DATABASE_URL: ${LOCAL_DATABASE_URL:-postgresql://lottery:lottery_dev_password@local-postgres:5432/lottery_local}
       ALLOW_DISPOSABLE_DB_MIGRATIONS: ${ALLOW_DISPOSABLE_DB_MIGRATIONS:-true}
+      MIGRATIONS_DOCKER_EXECUTION_MODE: container
     volumes:
       - .:/workspace
       - devtools_node_modules:/workspace/node_modules

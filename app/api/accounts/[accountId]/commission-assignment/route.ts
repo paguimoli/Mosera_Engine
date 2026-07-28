@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 
 import {
   AuthMiddlewareError,
-  requirePermission,
 } from "@/src/domains/auth/auth-middleware";
+import {
+  AccountScopeNotFoundError,
+  requireScopedAccount,
+} from "@/src/domains/accounts/account-scope-governance";
 import {
   assignCommissionPlanToAccount,
   CommissionBusinessRuleError,
@@ -45,7 +48,7 @@ export async function GET(request: Request, { params }: RouteParams) {
   const { accountId } = await params;
 
   try {
-    await requirePermission(request, "accounts.view");
+    await requireScopedAccount(request, accountId, "accounts.view");
     const activeAssignment = await getActiveCommissionAssignment(accountId);
     const assignments = await listAssignmentsForAccount(accountId);
 
@@ -57,6 +60,12 @@ export async function GET(request: Request, { params }: RouteParams) {
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {
       return authErrorResponse(error);
+    }
+    if (error instanceof AccountScopeNotFoundError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 404 }
+      );
     }
 
     return NextResponse.json(
@@ -93,7 +102,7 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
 
   try {
-    await requirePermission(request, "accounts.edit");
+    await requireScopedAccount(request, accountId, "accounts.edit");
     const assignment = await assignCommissionPlanToAccount({
       accountId,
       commissionPlanId,
@@ -110,6 +119,12 @@ export async function POST(request: Request, { params }: RouteParams) {
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {
       return authErrorResponse(error);
+    }
+    if (error instanceof AccountScopeNotFoundError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 404 }
+      );
     }
 
     if (error instanceof CommissionBusinessRuleError) {

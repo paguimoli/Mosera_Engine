@@ -411,11 +411,15 @@ public sealed class ResettlementService(
             ? null
             : new CreditReservationReferenceDto(
                 original.CreditReservationReference,
+                original.TenantId,
+                original.BrandId,
                 original.PlayerAccountReference,
                 original.TicketId,
                 original.TicketLineId);
         var acceptedContext = new AcceptedWagerFinancialContextDto(
             original.AcceptedWagerFinancialContextReference,
+            original.TenantId,
+            original.BrandId,
             original.TicketId,
             original.TicketLineId,
             original.PlayerAccountReference,
@@ -443,6 +447,8 @@ public sealed class ResettlementService(
             correctedInput.MathEvaluationCertificateHash,
             correctedInput.OutcomeCertificateId,
             correctedInput.OutcomeCertificateHash,
+            original.TenantId,
+            original.BrandId,
             original.TicketId,
             original.TicketLineId,
             original.PlayerAccountReference,

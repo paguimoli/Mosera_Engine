@@ -74,7 +74,7 @@ export type RuntimeBrandContext = {
   readonly organizationId: string;
   readonly tenantId: string;
   readonly brandId: string;
-  readonly marketId: string | null;
+  readonly marketId: string;
   readonly websiteId: string;
   readonly canonicalHostname: string | null;
   readonly canonicalRedirectRequired: boolean;
@@ -97,9 +97,10 @@ const resources: Record<PlatformResourceName, ResourceDefinition> = {
   organizations: {
     table: "platform.organizations",
     responseKey: "organization",
-    filters: ["organization_code", "status", "version", "content_hash"],
+    filters: ["platform_id", "organization_code", "status", "version", "content_hash"],
     fields: [
       field(["id"], "id", { defaultValue: () => randomUUID() }),
+      field(["platformId", "platform_id"], "platform_id"),
       field(["code", "organizationCode", "organization_code"], "organization_code", {
         required: true,
         normalize: "lower",
@@ -237,18 +238,16 @@ const resources: Record<PlatformResourceName, ResourceDefinition> = {
       field(["id"], "id", { defaultValue: () => randomUUID() }),
       field(["tenantId", "tenant_id"], "tenant_id", { required: true }),
       field(["brandId", "brand_id"], "brand_id", { required: true }),
-      field(["marketId", "market_id"], "market_id"),
+      field(["marketId", "market_id"], "market_id", { required: true }),
       field(["code", "websiteCode", "website_code"], "website_code", {
         required: true,
         normalize: "lower",
       }),
       field(["displayName", "display_name"], "display_name", { required: true }),
       field(["status"], "status", { defaultValue: lifecycleDefault }),
-      field(["defaultLanguage", "default_language"], "default_language", { defaultValue: "en" }),
-      field(["defaultCurrency", "default_currency"], "default_currency", { defaultValue: "USD" }),
-      field(["defaultTimezone", "default_timezone"], "default_timezone", {
-        defaultValue: "UTC",
-      }),
+      field(["defaultLanguage", "default_language"], "default_language"),
+      field(["defaultCurrency", "default_currency"], "default_currency"),
+      field(["defaultTimezone", "default_timezone"], "default_timezone"),
       field(["maintenanceMode", "maintenance_mode"], "maintenance_mode", {
         defaultValue: false,
         kind: "boolean",
@@ -546,6 +545,7 @@ function buildInsert(resource: PlatformResourceName, input: Record<string, unkno
       .map((_, index) => `$${index + 1}`)
       .join(", ")}) returning *`,
     params,
+    columns,
   };
 }
 
@@ -579,6 +579,25 @@ function serializeValue(value: unknown): unknown {
     );
   }
   return value;
+}
+
+function comparableInsertValue(
+  definition: ResourceDefinition,
+  column: string,
+  value: unknown
+) {
+  const fieldDefinition = definition.fields.find(
+    (candidate) => candidate.column === column
+  );
+
+  if (
+    fieldDefinition?.kind === "json" &&
+    typeof value === "string"
+  ) {
+    return JSON.parse(value) as unknown;
+  }
+
+  return serializeValue(value);
 }
 
 function timestampValue(value: unknown, fallback: string) {
@@ -766,12 +785,53 @@ export function isPlatformResourceName(resource: string): resource is PlatformRe
 }
 
 export async function createPlatformRecord(resource: PlatformResourceName, input: Record<string, unknown>) {
-  const { sql, params } = buildInsert(resource, input);
+  const definition = resourceDefinition(resource);
+  const { sql, params, columns } = buildInsert(resource, input);
 
   try {
     const result = await databasePool().query(sql, params);
     return mapRow(result.rows[0]);
   } catch (error) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      String(error.code) === "23505"
+    ) {
+      const contentHashIndex = columns.indexOf("content_hash");
+      const contentHash =
+        contentHashIndex >= 0 ? String(params[contentHashIndex]) : null;
+
+      if (contentHash) {
+        const existing = await databasePool().query(
+          `select * from ${definition.table} where content_hash = $1 limit 1`,
+          [contentHash]
+        );
+
+        if (
+          existing.rows[0] &&
+          columns.every((column, index) => {
+            if (
+              column === "id" ||
+              column === "effective_from" ||
+              column === "audit_metadata"
+            ) {
+              return true;
+            }
+
+            return (
+              stableStringify(serializeValue(existing.rows[0][column])) ===
+              stableStringify(
+                comparableInsertValue(definition, column, params[index])
+              )
+            );
+          })
+        ) {
+          return mapRow(existing.rows[0]);
+        }
+      }
+    }
+
     mapError(error);
   }
 }
@@ -1124,11 +1184,11 @@ export async function resolveRuntimeBrandContext(input: {
      join platform.tenants tenant on tenant.id = resolved.tenant_id
      join platform.organizations organization on organization.id = tenant.organization_id
      join platform.brands brand on brand.id = resolved.brand_id and brand.tenant_id = tenant.id
-     left join platform.markets market on market.id = resolved.market_id and market.brand_id = brand.id
+     join platform.markets market on market.id = resolved.market_id and market.brand_id = brand.id
      where resolved.hostname = $1
        and website.tenant_id = tenant.id
        and website.brand_id = brand.id
-       and (website.market_id is null or website.market_id = market.id)
+       and website.market_id = market.id
      limit 1`,
     [hostname]
   );
@@ -1140,7 +1200,7 @@ export async function resolveRuntimeBrandContext(input: {
 
   const tenantId = String(row.tenant_id);
   const brandId = String(row.brand_id);
-  const marketId = row.market_id ? String(row.market_id) : null;
+  const marketId = String(row.market_id);
   const websiteId = String(row.website_id);
   const theme = await resolveActiveDefaultTheme(tenantId, brandId);
   const assets = await resolveActiveBrandAssets(tenantId, brandId);
@@ -1167,21 +1227,9 @@ export async function resolveRuntimeBrandContext(input: {
     websiteId,
     canonicalHostname,
     canonicalRedirectRequired,
-    defaultLanguage:
-      nullableString(row.website_default_language) ??
-      nullableString(row.market_language) ??
-      nullableString(row.tenant_default_language) ??
-      "en",
-    defaultCurrency:
-      nullableString(row.website_default_currency) ??
-      nullableString(row.market_currency) ??
-      nullableString(row.tenant_default_currency) ??
-      "USD",
-    defaultTimezone:
-      nullableString(row.website_default_timezone) ??
-      nullableString(row.market_timezone) ??
-      nullableString(row.tenant_default_timezone) ??
-      "UTC",
+    defaultLanguage: nullableString(row.market_language) ?? "en",
+    defaultCurrency: nullableString(row.market_currency) ?? "USD",
+    defaultTimezone: nullableString(row.market_timezone) ?? "UTC",
     maintenanceMode,
     activeThemeReference: theme
       ? {
@@ -1409,9 +1457,23 @@ async function assertActivationDependencies(resource: PlatformResourceName, row:
       message: "Market activation requires an Active Brand.",
     },
     websites: {
-      sql: "select 1 from platform.brands where id = $1 and status = 'Active' limit 1",
-      params: [row.brand_id],
-      message: "Website activation requires an Active Brand.",
+      sql: `select 1
+            from platform.markets market
+            join platform.brands brand on brand.id = market.brand_id
+            join platform.tenants tenant on tenant.id = brand.tenant_id
+            join platform.organizations organization on organization.id = tenant.organization_id
+            join platform.platforms platform on platform.id = organization.platform_id
+            where market.id = $1
+              and market.brand_id = $2
+              and brand.tenant_id = $3
+              and market.status = 'Active'
+              and brand.status = 'Active'
+              and tenant.status = 'Active'
+              and organization.status = 'Active'
+              and platform.status = 'Active'
+            limit 1`,
+      params: [row.market_id, row.brand_id, row.tenant_id],
+      message: "Website activation requires an Active Platform, Organization, Tenant, Brand, and Market.",
     },
     domains: {
       sql: "select 1 from platform.websites where id = $1 and status = 'Active' limit 1",

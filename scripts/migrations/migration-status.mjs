@@ -9,7 +9,7 @@ let databaseError = null;
 
 if (guardrails.ok) {
   try {
-    appliedMigrations = historyRows({ allowFailure: true });
+    appliedMigrations = historyRows();
     databaseReachable = true;
   } catch (error) {
     databaseError = error.message;
@@ -39,3 +39,7 @@ printJson({
   knownConflicts: manifest.knownConflicts ?? [],
   appliedMigrations,
 });
+
+if (!guardrails.ok || !databaseReachable) {
+  process.exitCode = 1;
+}

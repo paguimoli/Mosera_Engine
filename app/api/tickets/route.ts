@@ -1,292 +1,194 @@
 import { NextResponse } from "next/server";
 
-import { supabase } from "@/app/lib/supabaseClient";
-import { createOutboxEvent } from "@/src/domains/outbox/outbox.service";
+import {
+  AuthMiddlewareError,
+  requirePermission,
+} from "@/src/domains/auth/auth-middleware";
+import {
+  assertAccountScope,
+} from "@/src/domains/accounts/account-scope-governance";
+import { findAccountById } from "@/src/domains/accounts/account.repository";
+import {
+  acceptCanonicalTicket,
+  CanonicalTicketRepositoryError,
+  listCanonicalTickets,
+} from "@/src/domains/tickets/canonical-ticket.repository";
+import {
+  canAccessTicketScope,
+} from "@/src/domains/tickets/canonical-ticket.authorization";
+import type {
+  AcceptCanonicalTicketInput,
+  CanonicalTicketItemInput,
+} from "@/src/domains/tickets/canonical-ticket.types";
 import { getOrCreateCorrelationId } from "@/src/lib/observability/correlation";
-import { logger } from "@/src/lib/observability/logger";
-import { supabaseServerAdmin } from "@/src/lib/supabase/server-admin-client";
 
-type TicketLeg = {
-  betType?: string;
-  numbers?: string;
-  amount?: number;
-  stakeMode?: string;
-  boxWayCount?: number;
-  spotCount?: number;
-  bullseyeEnabled?: boolean;
-  selectionMethod?: string;
-};
+export const runtime = "nodejs";
 
-type TicketRequestBody = {
-  organizationExternalId?: string;
-  playerExternalId?: string;
-  drawingExternalId?: string;
-  externalTicketId?: string;
-  sourceType?: string;
-  currency?: string;
-  legs?: TicketLeg[];
-};
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim() !== "";
-}
-
-function jsonError(message: string, status: number) {
-  return NextResponse.json({ accepted: false, error: message }, { status });
-}
-
-function isIntegerMinorUnitAmount(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value);
-}
-
-function getString(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-async function ensureTicketAcceptedOutboxEvent({
-  ticketId,
-  reservationId,
-  playerId,
-  stake,
-  currency,
-  correlationId,
-}: {
-  ticketId: string;
-  reservationId: string | null;
-  playerId: string;
-  stake: number;
-  currency: string;
-  correlationId: string;
-}) {
-  const { data, error } = await supabaseServerAdmin
-    .from("outbox_events")
-    .select("id")
-    .eq("event_type", "ticket.accepted")
-    .eq("aggregate_type", "ticket")
-    .eq("aggregate_id", ticketId)
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(error.message);
+function errorResponse(error: unknown) {
+  if (error instanceof AuthMiddlewareError) {
+    return NextResponse.json({ accepted: false, error: error.message }, { status: error.status });
   }
-
-  if (data) {
-    return;
+  if (error instanceof CanonicalTicketRepositoryError) {
+    const message = error.message;
+    const status =
+      error.code === "22P02" ||
+      message.includes("required") ||
+      message.includes("invalid") ||
+      message.includes("unavailable") ||
+      message.includes("does not") ||
+      message.includes("cutoff") ||
+      message.includes("mismatch")
+        ? 400
+        : message.includes("conflict")
+          ? 409
+          : 500;
+    return NextResponse.json({ accepted: false, error: message }, { status });
   }
+  return NextResponse.json(
+    { accepted: false, error: "Canonical Ticket operation failed." },
+    { status: 500 }
+  );
+}
 
-  await createOutboxEvent({
-    eventType: "ticket.accepted",
-    aggregateType: "ticket",
-    aggregateId: ticketId,
-    correlationId,
-    payload: {
-      ticketId,
-      reservationId,
-      playerId,
-      stake,
-      amount: stake,
-      currency,
-      correlationId,
-      createdAt: new Date().toISOString(),
-    },
+function requiredUuid(body: Record<string, unknown>, name: string) {
+  const value = body[name];
+  if (typeof value !== "string" || !UUID.test(value)) {
+    throw new CanonicalTicketRepositoryError(`${name} is required and must be a UUID.`);
+  }
+  return value;
+}
+
+function optionalUuid(body: Record<string, unknown>, name: string) {
+  const value = body[name];
+  if (value == null || value === "") return null;
+  if (typeof value !== "string" || !UUID.test(value)) {
+    throw new CanonicalTicketRepositoryError(`${name} must be a UUID when provided.`);
+  }
+  return value;
+}
+
+function parseItems(value: unknown): CanonicalTicketItemInput[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new CanonicalTicketRepositoryError("items must contain at least one wager.");
+  }
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new CanonicalTicketRepositoryError(`items[${index}] is invalid.`);
+    }
+    const input = item as Record<string, unknown>;
+    if (
+      typeof input.wagerType !== "string" ||
+      input.wagerType.trim() === "" ||
+      typeof input.wagerVersion !== "string" ||
+      input.wagerVersion.trim() === "" ||
+      !Number.isSafeInteger(input.stakeMinor) ||
+      Number(input.stakeMinor) <= 0 ||
+      (!Array.isArray(input.selections) &&
+        (!input.selections ||
+          typeof input.selections !== "object"))
+    ) {
+      throw new CanonicalTicketRepositoryError(`items[${index}] is invalid.`);
+    }
+    return {
+      wagerType: input.wagerType.trim(),
+      wagerVersion: input.wagerVersion.trim(),
+      selections: input.selections as unknown[] | Record<string, unknown>,
+      stakeMinor: Number(input.stakeMinor),
+    };
   });
 }
 
-export async function POST(request: Request) {
-  const correlationId = getOrCreateCorrelationId(request);
-  let body: TicketRequestBody;
-
+export async function GET(request: Request) {
   try {
-    body = await request.json();
-  } catch {
-    return jsonError("Invalid JSON body.", 400);
+    const context = await requirePermission(request, "tickets.read");
+    const url = new URL(request.url);
+    const requestedLimit = Number(url.searchParams.get("limit") ?? 100);
+    const tickets = await listCanonicalTickets(
+      Number.isSafeInteger(requestedLimit) ? requestedLimit : 100
+    );
+    return NextResponse.json({
+      tickets: tickets.filter((ticket) => canAccessTicketScope(context, ticket)),
+    });
+  } catch (error) {
+    return errorResponse(error);
   }
+}
 
-  if (!isNonEmptyString(body.organizationExternalId)) {
-    return jsonError("organizationExternalId is required.", 400);
-  }
+export async function POST(request: Request) {
+  try {
+    const context = await requirePermission(request, "tickets.create");
+    const body = (await request.json()) as Record<string, unknown>;
 
-  if (!isNonEmptyString(body.playerExternalId)) {
-    return jsonError("playerExternalId is required.", 400);
-  }
-
-  if (!isNonEmptyString(body.drawingExternalId)) {
-    return jsonError("drawingExternalId is required.", 400);
-  }
-
-  if (!isNonEmptyString(body.externalTicketId)) {
-    return jsonError("externalTicketId is required.", 400);
-  }
-
-  if (!Array.isArray(body.legs) || body.legs.length === 0) {
-    return jsonError("legs array is required.", 400);
-  }
-
-  for (const leg of body.legs) {
-    if (!isIntegerMinorUnitAmount(leg.amount) || leg.amount <= 0) {
-      return jsonError(
-        "Every leg amount must be a positive integer minor currency value.",
-        400
+    if (
+      "organizationExternalId" in body ||
+      "playerExternalId" in body ||
+      "drawingExternalId" in body ||
+      "legs" in body
+    ) {
+      return NextResponse.json(
+        {
+          accepted: false,
+          error: "Legacy external-ID ticket intake is retired.",
+          canonicalContract: "playerAccountId/playerProfileId/gameAvailabilityId/productId/manifestId/paytableDefinitionId/drawId/items",
+        },
+        { status: 410 }
       );
     }
-  }
 
-  const organizationExternalId = body.organizationExternalId.trim();
-  const playerExternalId = body.playerExternalId.trim();
-  const drawingExternalId = body.drawingExternalId.trim();
-  const externalTicketId = body.externalTicketId.trim();
-
-  const { data: organization, error: organizationError } = await supabase
-    .from("organizations")
-    .select("id")
-    .eq("external_organization_id", organizationExternalId)
-    .maybeSingle();
-
-  if (organizationError) {
-    console.error("Ticket intake organization lookup failed:", organizationError);
-    return jsonError("Organization lookup failed.", 500);
-  }
-
-  if (!organization) {
-    return jsonError("Organization not found.", 404);
-  }
-
-  const { data: player, error: playerError } = await supabase
-    .from("players")
-    .select("id")
-    .eq("organization_id", organization.id)
-    .eq("external_player_id", playerExternalId)
-    .maybeSingle();
-
-  if (playerError) {
-    console.error("Ticket intake player lookup failed:", playerError);
-    return jsonError("Player lookup failed.", 500);
-  }
-
-  if (!player) {
-    return jsonError("Player not found.", 404);
-  }
-
-  const { data: drawing, error: drawingError } = await supabase
-    .from("normalized_drawings")
-    .select("id")
-    .eq("external_id", drawingExternalId)
-    .maybeSingle();
-  const drawingErrorMessage = drawingError?.message ?? null;
-
-  if (drawingError) {
-    console.error("Ticket intake drawing lookup failed:", drawingError);
-    return jsonError("Drawing lookup failed.", 500);
-  }
-
-  if (!drawing) {
-    return NextResponse.json(
-      {
-        accepted: false,
-        error: "Drawing not found.",
-        drawingExternalId,
-        supabaseErrorMessage: drawingErrorMessage,
-        debugMessage: "Check normalized_drawings.external_id",
-      },
-      { status: 404 }
-    );
-  }
-
-  const { data: existingTicket, error: existingTicketError } = await supabase
-    .from("tickets")
-    .select("id")
-    .eq("organization_id", organization.id)
-    .eq("external_ticket_id", externalTicketId)
-    .maybeSingle();
-
-  if (existingTicketError) {
-    console.error(
-      "Ticket intake idempotency lookup failed:",
-      existingTicketError
-    );
-    return jsonError("Ticket idempotency lookup failed.", 500);
-  }
-
-  if (existingTicket) {
-    return NextResponse.json({
-      accepted: true,
-      duplicate: true,
-      ticketId: existingTicket.id,
-      externalTicketId,
-    });
-  }
-
-  const legs = body.legs.map((leg) => ({
-    ...leg,
-    spotCount: leg.spotCount,
-    bullseyeEnabled: leg.bullseyeEnabled,
-    selectionMethod: leg.selectionMethod,
-    boxWayCount: leg.boxWayCount,
-    stakeMode: leg.stakeMode,
-  }));
-  const totalAmount = legs.reduce(
-    (sum, leg) => sum + Number(leg.amount || 0),
-    0
-  );
-  const sourceType = body.sourceType || "api";
-  const currency = isNonEmptyString(body.currency)
-    ? body.currency.trim().toUpperCase()
-    : "USD";
-  const idempotencyKey =
-    request.headers.get("Idempotency-Key")?.trim() ||
-    `ticket:${organization.id}:${externalTicketId}`;
-
-  const { data: rpcPayload, error: rpcError } = await supabase.rpc(
-    "place_ticket_with_wallet_debit",
-    {
-      p_organization_id: organization.id,
-      p_player_id: player.id,
-      p_drawing_id: drawing.id,
-      p_external_ticket_id: externalTicketId,
-      p_source_type: sourceType || "api",
-      p_currency: currency || "USD",
-      p_total_amount: totalAmount,
-      p_legs: legs,
-      p_idempotency_key: idempotencyKey,
-      p_correlation_id: correlationId,
+    const playerAccountId = requiredUuid(body, "playerAccountId");
+    const playerAccount = await findAccountById(playerAccountId);
+    if (!playerAccount || playerAccount.accountType !== "PLAYER") {
+      return NextResponse.json(
+        { accepted: false, error: "Governed player account not found." },
+        { status: 404 }
+      );
     }
-  );
+    assertAccountScope(context, playerAccount);
 
-  if (rpcError) {
-    console.error("Ticket intake RPC failed:", rpcError);
-    return jsonError("Ticket RPC failed.", 500);
-  }
-
-  if (rpcPayload?.accepted === false) {
-    return NextResponse.json(rpcPayload, { status: 400 });
-  }
-
-  const ticketId = getString(rpcPayload?.ticketId);
-
-  if (ticketId && !rpcPayload?.duplicate) {
-    try {
-      await ensureTicketAcceptedOutboxEvent({
-        ticketId,
-        reservationId: getString(rpcPayload?.creditReservationId),
-        playerId: player.id,
-        stake: totalAmount,
-        currency,
-        correlationId,
-      });
-    } catch (error) {
-      logger.error({
-        message: "Ticket accepted without outbox event.",
-        correlationId,
-        metadata: {
-          ticketId,
-          error: error instanceof Error ? error.message : "Unknown outbox error.",
-        },
-      });
-
-      return jsonError("Ticket accepted outbox event failed.", 500);
+    const idempotencyKey = request.headers.get("Idempotency-Key")?.trim();
+    if (!idempotencyKey) {
+      throw new CanonicalTicketRepositoryError("Idempotency-Key header is required.");
     }
-  }
+    const currency =
+      typeof body.currency === "string" ? body.currency.trim().toUpperCase() : "";
+    if (!/^[A-Z]{3}$/.test(currency)) {
+      throw new CanonicalTicketRepositoryError("currency must be a three-letter code.");
+    }
 
-  return NextResponse.json(rpcPayload);
+    const input: AcceptCanonicalTicketInput = {
+      playerAccountId,
+      playerProfileId: requiredUuid(body, "playerProfileId"),
+      walletId: requiredUuid(body, "walletId"),
+      gameAvailabilityId: requiredUuid(body, "gameAvailabilityId"),
+      productId: requiredUuid(body, "productId"),
+      manifestId: requiredUuid(body, "manifestId"),
+      paytableDefinitionId: requiredUuid(body, "paytableDefinitionId"),
+      drawId: requiredUuid(body, "drawId"),
+      websiteId: optionalUuid(body, "websiteId"),
+      domainId: optionalUuid(body, "domainId"),
+      externalTicketId:
+        typeof body.externalTicketId === "string"
+          ? body.externalTicketId.trim() || null
+          : null,
+      currency,
+      items: parseItems(body.items),
+      idempotencyKey,
+      correlationId: getOrCreateCorrelationId(request),
+      causationId:
+        typeof body.causationId === "string" ? body.causationId.trim() || null : null,
+      actorReference: context.user.id,
+      salesChannel:
+        typeof body.salesChannel === "string"
+          ? body.salesChannel.trim() || "API"
+          : "API",
+    };
+
+    const result = await acceptCanonicalTicket(input);
+    return NextResponse.json(result, { status: result.duplicate ? 200 : 201 });
+  } catch (error) {
+    return errorResponse(error);
+  }
 }

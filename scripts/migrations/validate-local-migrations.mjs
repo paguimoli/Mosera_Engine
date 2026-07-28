@@ -189,6 +189,12 @@ const requiredTables = [
   "game_engine.math_evaluation_batch_items",
   "game_engine.math_evaluation_batch_attempts",
   "game_engine.settlement_input_records",
+  "game_engine.canonical_outcome_versions",
+  "game_engine.outcome_settlement_requests",
+  "game_engine.outcome_settlement_consumptions",
+  "game_engine.canonical_draw_completion_evidence",
+  "game_engine.canonical_outcome_recovery_events",
+  "game_engine.canonical_runtime_components",
   "game_engine.certification_packs",
   "game_engine.signing_providers",
   "game_engine.certificate_signatures",
@@ -228,6 +234,7 @@ const requiredTables = [
   "ledger_service.financial_posting_rules",
   "ledger_service.ledger_promotion_rehearsals",
   "ledger_service.ledger_authority_verifications",
+  "platform.platforms",
   "platform.organizations",
   "platform.tenants",
   "platform.brands",
@@ -828,6 +835,15 @@ addCheck("outcome_operational_controls_delete_trigger", triggerExists("game_engi
 addCheck("outcome_custody_events_validate_trigger", triggerExists("game_engine", "outcome_custody_events", "trg_validate_outcome_custody_event"));
 addCheck("outcome_custody_events_update_trigger", triggerExists("game_engine", "outcome_custody_events", "trg_prevent_outcome_custody_event_update"));
 addCheck("outcome_custody_events_delete_trigger", triggerExists("game_engine", "outcome_custody_events", "trg_prevent_outcome_custody_event_delete"));
+addCheck("platform_root_singleton", indexExists("platform", "platforms", "ux_platforms_singleton"));
+addCheck("platform_root_code_version_unique", indexExists("platform", "platforms", "ux_platforms_code_version"));
+addCheck("platform_root_content_hash_unique", indexExists("platform", "platforms", "ux_platforms_content_hash"));
+addCheck("platform_root_status_index", indexExists("platform", "platforms", "idx_platforms_status"));
+addCheck("platform_root_update_trigger", triggerExists("platform", "platforms", "trg_prevent_platform_update"));
+addCheck("platform_root_delete_trigger", triggerExists("platform", "platforms", "trg_prevent_platform_delete"));
+addCheck("platform_organizations_platform_id", columnExists("platform", "organizations", "platform_id"));
+addCheck("platform_organizations_platform_id_required", !columnIsNullable("platform", "organizations", "platform_id"));
+addCheck("platform_organizations_platform_code_index", indexExists("platform", "organizations", "idx_platform_organizations_platform_code"));
 addCheck("platform_organizations_code_version_unique", indexExists("platform", "organizations", "ux_platform_organizations_code_version"));
 addCheck("platform_organizations_content_hash_unique", indexExists("platform", "organizations", "ux_platform_organizations_content_hash"));
 addCheck("platform_organizations_code_index", indexExists("platform", "organizations", "idx_platform_organizations_code"));
@@ -853,15 +869,19 @@ addCheck("platform_markets_country_jurisdiction_index", indexExists("platform", 
 addCheck("platform_markets_jurisdiction_optional", columnIsNullable("platform", "markets", "jurisdiction"));
 addCheck("platform_markets_country_optional", columnIsNullable("platform", "markets", "country"));
 addCheck("platform_organizations_validate_trigger", triggerExists("platform", "organizations", "trg_validate_platform_organization"));
+addCheck("platform_organizations_parent_trigger", triggerExists("platform", "organizations", "trg_validate_canonical_organization_parent"));
 addCheck("platform_organizations_update_trigger", triggerExists("platform", "organizations", "trg_prevent_platform_organization_update"));
 addCheck("platform_organizations_delete_trigger", triggerExists("platform", "organizations", "trg_prevent_platform_organization_delete"));
 addCheck("platform_tenants_validate_trigger", triggerExists("platform", "tenants", "trg_validate_platform_tenant"));
+addCheck("platform_tenants_parent_trigger", triggerExists("platform", "tenants", "trg_validate_canonical_tenant_parent"));
 addCheck("platform_tenants_update_trigger", triggerExists("platform", "tenants", "trg_prevent_platform_tenant_update"));
 addCheck("platform_tenants_delete_trigger", triggerExists("platform", "tenants", "trg_prevent_platform_tenant_delete"));
 addCheck("platform_brands_validate_trigger", triggerExists("platform", "brands", "trg_validate_platform_brand"));
+addCheck("platform_brands_parent_trigger", triggerExists("platform", "brands", "trg_validate_canonical_brand_parent"));
 addCheck("platform_brands_update_trigger", triggerExists("platform", "brands", "trg_prevent_platform_brand_update"));
 addCheck("platform_brands_delete_trigger", triggerExists("platform", "brands", "trg_prevent_platform_brand_delete"));
 addCheck("platform_markets_validate_trigger", triggerExists("platform", "markets", "trg_validate_platform_market"));
+addCheck("platform_markets_parent_trigger", triggerExists("platform", "markets", "trg_validate_canonical_market_parent"));
 addCheck("platform_markets_update_trigger", triggerExists("platform", "markets", "trg_prevent_platform_market_update"));
 addCheck("platform_markets_delete_trigger", triggerExists("platform", "markets", "trg_prevent_platform_market_delete"));
 addCheck("platform_websites_brand_code_unique", indexExists("platform", "websites", "ux_platform_websites_brand_code_version"));
@@ -870,10 +890,12 @@ addCheck("platform_websites_tenant_brand_market_index", indexExists("platform", 
 addCheck("platform_websites_brand_code_index", indexExists("platform", "websites", "idx_platform_websites_brand_code"));
 addCheck("platform_websites_status_index", indexExists("platform", "websites", "idx_platform_websites_status"));
 addCheck("platform_websites_hash_index", indexExists("platform", "websites", "idx_platform_websites_hash"));
-addCheck("platform_websites_market_optional", columnIsNullable("platform", "websites", "market_id"));
+addCheck("platform_websites_market_required_for_new_rows", constraintExists("platform", "websites", "ck_platform_websites_market_required"));
 addCheck("platform_websites_validate_trigger", triggerExists("platform", "websites", "trg_validate_platform_website"));
+addCheck("platform_websites_parent_trigger", triggerExists("platform", "websites", "trg_validate_canonical_website_parent"));
 addCheck("platform_websites_update_trigger", triggerExists("platform", "websites", "trg_prevent_platform_website_update"));
 addCheck("platform_websites_delete_trigger", triggerExists("platform", "websites", "trg_prevent_platform_website_delete"));
+addCheck("platform_canonical_hierarchy_readiness", functionExists("platform", "canonical_hierarchy_readiness"));
 addCheck("platform_website_domains_hostname_unique", indexExists("platform", "website_domains", "ux_platform_website_domains_hostname_version"));
 addCheck("platform_website_domains_content_hash_unique", indexExists("platform", "website_domains", "ux_platform_website_domains_content_hash"));
 addCheck("platform_website_domains_canonical_website_unique", indexExists("platform", "website_domains", "ux_platform_website_domains_canonical_website"));
@@ -975,7 +997,13 @@ where code in (
 addCheck(
   "platform_super_admin_role_has_all_platform_permissions",
   queryScalar(`
-select coalesce(jsonb_array_length(metadata->'permissions'), 0) = 18
+select
+  coalesce(jsonb_array_length(metadata->'permissions'), 0) = 21
+  and metadata->'permissions' @> '[
+    "tickets.read",
+    "tickets.create",
+    "tickets.cancel"
+  ]'::jsonb
 from auth_service.roles
 where code = 'PLATFORM_SUPER_ADMIN'
   and metadata->>'platformManagementRole' = 'true';
@@ -985,8 +1013,13 @@ addCheck(
   "platform_operations_admin_excludes_organization_create",
   queryScalar(`
 select
-  coalesce(jsonb_array_length(metadata->'permissions'), 0) = 17
+  coalesce(jsonb_array_length(metadata->'permissions'), 0) = 20
   and not (metadata->'permissions' ? 'platform.organization.create')
+  and metadata->'permissions' @> '[
+    "tickets.read",
+    "tickets.create",
+    "tickets.cancel"
+  ]'::jsonb
 from auth_service.roles
 where code = 'PLATFORM_OPERATIONS_ADMIN'
   and metadata->>'platformManagementRole' = 'true';
@@ -996,11 +1029,13 @@ addCheck(
   "platform_read_only_auditor_has_read_permissions_only",
   queryScalar(`
 select
-  coalesce(jsonb_array_length(metadata->'permissions'), 0) = 9
+  coalesce(jsonb_array_length(metadata->'permissions'), 0) = 10
+  and metadata->'permissions' @> '["tickets.read"]'::jsonb
   and not exists (
     select 1
     from jsonb_array_elements_text(metadata->'permissions') permission(code)
     where permission.code not like 'platform.%.read'
+      and permission.code <> 'tickets.read'
   )
 from auth_service.roles
 where code = 'PLATFORM_READ_ONLY_AUDITOR'
@@ -1079,6 +1114,29 @@ addCheck("settlement_input_records_paytable_index", indexExists("game_engine", "
 addCheck("settlement_input_records_validate_trigger", triggerExists("game_engine", "settlement_input_records", "trg_validate_settlement_input_record"));
 addCheck("settlement_input_records_update_trigger", triggerExists("game_engine", "settlement_input_records", "trg_prevent_settlement_input_record_update"));
 addCheck("settlement_input_records_delete_trigger", triggerExists("game_engine", "settlement_input_records", "trg_prevent_settlement_input_record_delete"));
+addCheck("canonical_outcome_versions_draw_version_unique", indexExists("game_engine", "canonical_outcome_versions", "ux_canonical_outcome_versions_draw_version"));
+addCheck("canonical_outcome_versions_idempotency_unique", indexExists("game_engine", "canonical_outcome_versions", "ux_canonical_outcome_versions_idempotency"));
+addCheck("canonical_outcome_versions_current_index", indexExists("game_engine", "canonical_outcome_versions", "idx_canonical_outcome_versions_draw_current"));
+addCheck("canonical_outcome_versions_validate_trigger", triggerExists("game_engine", "canonical_outcome_versions", "trg_validate_canonical_outcome_version"));
+addCheck("canonical_outcome_versions_update_trigger", triggerExists("game_engine", "canonical_outcome_versions", "trg_prevent_canonical_outcome_version_update"));
+addCheck("canonical_outcome_versions_delete_trigger", triggerExists("game_engine", "canonical_outcome_versions", "trg_prevent_canonical_outcome_version_delete"));
+addCheck("outcome_settlement_requests_version_unique", indexExists("game_engine", "outcome_settlement_requests", "ux_outcome_settlement_requests_version"));
+addCheck("outcome_settlement_requests_idempotency_unique", indexExists("game_engine", "outcome_settlement_requests", "ux_outcome_settlement_requests_idempotency"));
+addCheck("outcome_settlement_requests_validate_trigger", triggerExists("game_engine", "outcome_settlement_requests", "trg_validate_outcome_settlement_request"));
+addCheck("outcome_settlement_requests_update_trigger", triggerExists("game_engine", "outcome_settlement_requests", "trg_prevent_outcome_settlement_request_update"));
+addCheck("outcome_settlement_requests_delete_trigger", triggerExists("game_engine", "outcome_settlement_requests", "trg_prevent_outcome_settlement_request_delete"));
+addCheck("outcome_settlement_consumptions_request_unique", indexExists("game_engine", "outcome_settlement_consumptions", "ux_outcome_settlement_consumptions_request"));
+addCheck("outcome_settlement_consumptions_outbox_unique", indexExists("game_engine", "outcome_settlement_consumptions", "ux_outcome_settlement_consumptions_outbox"));
+addCheck("outcome_settlement_consumptions_validate_trigger", triggerExists("game_engine", "outcome_settlement_consumptions", "trg_validate_outcome_settlement_consumption"));
+addCheck("outcome_settlement_consumptions_update_trigger", triggerExists("game_engine", "outcome_settlement_consumptions", "trg_prevent_outcome_settlement_consumption_update"));
+addCheck("outcome_settlement_consumptions_delete_trigger", triggerExists("game_engine", "outcome_settlement_consumptions", "trg_prevent_outcome_settlement_consumption_delete"));
+addCheck("canonical_draw_completion_version_unique", indexExists("game_engine", "canonical_draw_completion_evidence", "ux_canonical_draw_completion_version"));
+addCheck("canonical_draw_completion_validate_trigger", triggerExists("game_engine", "canonical_draw_completion_evidence", "trg_validate_canonical_draw_completion"));
+addCheck("canonical_draw_completion_update_trigger", triggerExists("game_engine", "canonical_draw_completion_evidence", "trg_prevent_canonical_draw_completion_update"));
+addCheck("canonical_draw_completion_delete_trigger", triggerExists("game_engine", "canonical_draw_completion_evidence", "trg_prevent_canonical_draw_completion_delete"));
+addCheck("canonical_outcome_recovery_version_index", indexExists("game_engine", "canonical_outcome_recovery_events", "idx_canonical_outcome_recovery_version"));
+addCheck("canonical_outcome_recovery_update_trigger", triggerExists("game_engine", "canonical_outcome_recovery_events", "trg_prevent_canonical_outcome_recovery_update"));
+addCheck("canonical_outcome_recovery_delete_trigger", triggerExists("game_engine", "canonical_outcome_recovery_events", "trg_prevent_canonical_outcome_recovery_delete"));
 addCheck("settlement_records_update_trigger", triggerExists("settlement_service", "settlement_records", "trg_prevent_settlement_record_update"));
 addCheck("settlement_records_delete_trigger", triggerExists("settlement_service", "settlement_records", "trg_prevent_settlement_record_delete"));
 addCheck("settlement_ledger_effects_update_trigger", triggerExists("settlement_service", "settlement_ledger_effects", "trg_prevent_settlement_ledger_effect_update"));
@@ -1253,6 +1311,48 @@ addCheck("auth_audit_evidence_immutable", triggerExists("auth_service", "authent
 addCheck("auth_login_attempt_evidence_immutable", triggerExists("auth_service", "authentication_login_attempts", "auth_login_attempts_update_guard"));
 addCheck("auth_password_reset_requests_immutable", triggerExists("auth_service", "password_reset_requests", "auth_password_reset_requests_update_guard"));
 addCheck("auth_physical_identity_delete_blocked", triggerExists("auth_service", "identities", "auth_identities_delete_guard"));
+addCheck("auth_refresh_replay_session_reference", columnExists("auth_service", "authentication_audit_evidence", "session_id"));
+addCheck("auth_refresh_replay_token_reference", columnExists("auth_service", "authentication_audit_evidence", "refresh_token_id"));
+addCheck("auth_refresh_replay_family_reference", columnExists("auth_service", "authentication_audit_evidence", "refresh_token_family_id"));
+addCheck("auth_refresh_replay_device_evidence", columnExists("auth_service", "authentication_audit_evidence", "device_metadata"));
+addCheck("auth_refresh_replay_revocation_reason", columnExists("auth_service", "authentication_audit_evidence", "revocation_reason"));
+addCheck("auth_refresh_replay_evidence_index", indexExists("auth_service", "authentication_audit_evidence", "idx_auth_audit_refresh_replay"));
+addCheck("settlement_request_tenant_scope", columnExists("settlement_service", "settlement_requests", "tenant_id"));
+addCheck("settlement_request_brand_scope", columnExists("settlement_service", "settlement_requests", "brand_id"));
+addCheck("settlement_request_scope_hash", columnExists("settlement_service", "settlement_requests", "scope_hash"));
+addCheck("settlement_record_scope_hash", columnExists("settlement_service", "authoritative_settlement_records", "scope_hash"));
+addCheck("settlement_instruction_scope_hash", columnExists("settlement_service", "financial_instructions", "scope_hash"));
+addCheck("settlement_evidence_classification_table", existsRegclass("settlement_service.settlement_evidence_classifications"));
+addCheck("settlement_promotion_exclusions_view", existsRegclass("settlement_service.settlement_promotion_exclusions"));
+addCheck("settlement_evidence_classification_update_guard", triggerExists("settlement_service", "settlement_evidence_classifications", "trg_prevent_settlement_evidence_classification_update"));
+addCheck("settlement_evidence_classification_delete_guard", triggerExists("settlement_service", "settlement_evidence_classifications", "trg_prevent_settlement_evidence_classification_delete"));
+addCheck("accounts_canonical_tenant_scope", columnExists("public", "accounts", "canonical_tenant_id"));
+addCheck("accounts_canonical_brand_scope", columnExists("public", "accounts", "canonical_brand_id"));
+addCheck("accounts_canonical_market_scope", columnExists("public", "accounts", "canonical_market_id"));
+addCheck("accounts_governance_managed", columnExists("public", "accounts", "governance_managed"));
+addCheck("accounts_governed_idempotency", indexExists("public", "accounts", "ux_accounts_governed_idempotency"));
+addCheck("accounts_scope_validation", triggerExists("public", "accounts", "trg_validate_governed_account"));
+addCheck("accounts_governance_event_append", triggerExists("public", "accounts", "trg_append_account_governance_event"));
+addCheck("player_profiles_table", existsRegclass("public.player_profiles"));
+addCheck("player_profiles_scope_validation", triggerExists("public", "player_profiles", "trg_validate_governed_player_profile"));
+addCheck("account_governance_events_table", existsRegclass("platform.account_governance_events"));
+addCheck("account_governance_events_update_guard", triggerExists("platform", "account_governance_events", "trg_account_governance_events_update_guard"));
+addCheck("account_governance_events_delete_guard", triggerExists("platform", "account_governance_events", "trg_account_governance_events_delete_guard"));
+addCheck("account_scope_readiness_function", functionExists("platform", "account_scope_governance_readiness"));
+addCheck("canonical_tickets_table", existsRegclass("ticket_authority.tickets"));
+addCheck("canonical_ticket_items_table", existsRegclass("ticket_authority.ticket_items"));
+addCheck("canonical_ticket_lifecycle_table", existsRegclass("ticket_authority.ticket_lifecycle_events"));
+addCheck("canonical_ticket_cancellations_table", existsRegclass("ticket_authority.ticket_cancellation_requests"));
+addCheck("canonical_ticket_correlations_table", existsRegclass("ticket_authority.ticket_correlations"));
+addCheck("canonical_ticket_recovery_table", existsRegclass("ticket_authority.ticket_recovery_events"));
+addCheck("canonical_ticket_idempotency", indexExists("ticket_authority", "tickets", "tickets_idempotency_key_key"));
+addCheck("canonical_ticket_snapshot_immutable", triggerExists("ticket_authority", "tickets", "tickets_update_guard"));
+addCheck("canonical_ticket_history_immutable", triggerExists("ticket_authority", "ticket_lifecycle_events", "ticket_lifecycle_update_guard"));
+addCheck("canonical_ticket_correlation_immutable", triggerExists("ticket_authority", "ticket_correlations", "ticket_correlations_update_guard"));
+addCheck("canonical_ticket_acceptance_function", functionExists("ticket_authority", "accept_ticket"));
+addCheck("canonical_ticket_cancellation_function", functionExists("ticket_authority", "cancel_ticket"));
+addCheck("canonical_ticket_correlation_function", functionExists("ticket_authority", "record_correlation"));
+addCheck("canonical_ticket_readiness_function", functionExists("ticket_authority", "ticket_readiness"));
 addCheck("game_engine_duplicate_create_conflict_resolved_or_blocked", true, {
   resolution: manifest.knownConflicts?.find((conflict) => conflict.id === "game_engine_evaluation_table_duplicate_create")?.resolution,
 });

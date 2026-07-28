@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 
 import {
   AuthMiddlewareError,
-  requirePermission,
 } from "@/src/domains/auth/auth-middleware";
+import {
+  AccountScopeNotFoundError,
+  requireScopedAccount,
+} from "@/src/domains/accounts/account-scope-governance";
 import { listLedgerEntriesForAccount } from "@/src/domains/ledger/ledger.entrypoints";
 
 export const runtime = "nodejs";
@@ -26,7 +29,7 @@ export async function GET(request: Request, { params }: RouteParams) {
   const { accountId } = await params;
 
   try {
-    await requirePermission(request, "ledger.view");
+    await requireScopedAccount(request, accountId, "ledger.view");
     const ledgerEntries = await listLedgerEntriesForAccount(accountId);
 
     return NextResponse.json({
@@ -36,6 +39,12 @@ export async function GET(request: Request, { params }: RouteParams) {
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {
       return authErrorResponse(error);
+    }
+    if (error instanceof AccountScopeNotFoundError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 404 }
+      );
     }
 
     return NextResponse.json(

@@ -4,12 +4,18 @@ import {
   AuthMiddlewareError,
   requirePermission,
 } from "@/src/domains/auth/auth-middleware";
-import { findAccountById } from "@/src/domains/accounts/account.repository";
+import {
+  AccountScopeNotFoundError,
+  accountMutationPermission,
+  assertAccountScope,
+  requireScopedAccount,
+} from "@/src/domains/accounts/account-scope-governance";
 import {
   AccountBusinessRuleError,
   AccountValidationError,
   disableAccount,
   DuplicateAccountCodeError,
+  resolveAccountScope,
   updateAccount,
 } from "@/src/domains/accounts/account.service";
 import type {
@@ -181,18 +187,11 @@ export async function GET(request: Request, { params }: RouteParams) {
   const { accountId } = await params;
 
   try {
-    await requirePermission(request, "accounts.view");
-    const account = await findAccountById(accountId);
-
-    if (!account) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Account not found.",
-        },
-        { status: 404 }
-      );
-    }
+    const { account } = await requireScopedAccount(
+      request,
+      accountId,
+      "accounts.view"
+    );
 
     return NextResponse.json({
       success: true,
@@ -201,6 +200,12 @@ export async function GET(request: Request, { params }: RouteParams) {
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {
       return authErrorResponse(error);
+    }
+    if (error instanceof AccountScopeNotFoundError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 404 }
+      );
     }
 
     return NextResponse.json(
@@ -230,14 +235,39 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   const input = getUpdateAccountInput(body as Record<string, unknown>);
 
   try {
-    await requirePermission(
+    const { account: existingAccount } = await requireScopedAccount(
       request,
-      input.status === "DISABLED" ? "accounts.disable" : "accounts.edit"
+      accountId,
+      "accounts.view"
     );
+    const reassigning =
+      input.parentAccountId !== undefined ||
+      input.marketId !== undefined ||
+      input.brandId !== undefined;
+    const action = reassigning
+      ? "reassign"
+      : input.status === "DISABLED"
+        ? "disable"
+        : "edit";
+    const context = await requirePermission(
+      request,
+      accountMutationPermission(existingAccount, action)
+    );
+    assertAccountScope(context, existingAccount);
+    if (input.marketId) {
+      assertAccountScope(context, await resolveAccountScope(input.marketId));
+    }
+
     const account =
       input.status === "DISABLED"
-        ? await disableAccount(accountId)
-        : await updateAccount(accountId, input);
+        ? await disableAccount(accountId, {
+            operatorId: context.user.id,
+            reason: "account disabled",
+          })
+        : await updateAccount(accountId, input, {
+            operatorId: context.user.id,
+            reason: reassigning ? "account reassigned" : "account updated",
+          });
 
     return NextResponse.json({
       success: true,
@@ -246,6 +276,12 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {
       return authErrorResponse(error);
+    }
+    if (error instanceof AccountScopeNotFoundError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 404 }
+      );
     }
 
     if (error instanceof AccountValidationError) {

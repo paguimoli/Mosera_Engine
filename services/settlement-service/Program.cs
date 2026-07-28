@@ -41,8 +41,11 @@ var app = builder.Build();
 app.UseMiddleware<CorrelationIdMiddleware>();
 
 app.MapHealthEndpoints();
-app.MapSettlementShadowEndpoints();
-app.MapSettlementPersistenceEndpoints();
+if (serviceConfiguration.Runtime.LegacyMutationRoutesEnabled)
+{
+    app.MapSettlementShadowEndpoints();
+    app.MapSettlementPersistenceEndpoints();
+}
 app.MapSettlementInputIngestionEndpoints();
 app.MapSettlementExecutionEndpoints();
 app.MapFinancialInstructionEndpoints();

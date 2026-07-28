@@ -218,6 +218,9 @@ public sealed class SettlementLedgerServiceClient
                 ["instructionId"] = instruction.InstructionId,
                 ["instructionType"] = instruction.InstructionType.ToString(),
                 ["canonicalPayloadHash"] = instruction.CanonicalPayloadHash,
+                ["tenantId"] = context.SettlementRecord.TenantId,
+                ["brandId"] = context.SettlementRecord.BrandId,
+                ["scopeHash"] = context.SettlementRecord.ScopeHash,
                 ["sourceService"] = "settlement-service"
             }
         }, options: JsonOptions);

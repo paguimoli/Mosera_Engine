@@ -56,6 +56,15 @@ export class RabbitMqQueuePublisher implements QueuePublisher {
     }
   }
 
+  async close(): Promise<void> {
+    const channel = this.channel;
+    const connection = this.connection;
+    this.channel = null;
+    this.connection = null;
+    await channel?.close().catch(() => undefined);
+    await connection?.close().catch(() => undefined);
+  }
+
   private async getChannel(): Promise<Channel> {
     if (this.channel) {
       return this.channel;
@@ -67,8 +76,17 @@ export class RabbitMqQueuePublisher implements QueuePublisher {
       throw new Error("RabbitMQ connection URL is not configured.");
     }
 
-    this.connection = await amqp.connect(config.connectionUrl);
-    this.channel = await this.connection.createChannel();
+    const connection = await amqp.connect(config.connectionUrl);
+    const reset = () => {
+      if (this.connection === connection) {
+        this.connection = null;
+        this.channel = null;
+      }
+    };
+    connection.on("error", reset);
+    connection.on("close", reset);
+    this.connection = connection;
+    this.channel = await connection.createChannel();
 
     return this.channel;
   }

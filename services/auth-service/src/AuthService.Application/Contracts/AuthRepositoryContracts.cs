@@ -97,7 +97,12 @@ public interface IRefreshTokenRepository
         DateTimeOffset issuedAt,
         DateTimeOffset expiresAt,
         CancellationToken cancellationToken = default);
-    Task<RefreshTokenRuntimeRecord?> MarkRefreshTokenRotated(Guid refreshTokenId, DateTimeOffset rotatedAt, CancellationToken cancellationToken = default);
+    Task<RefreshTokenRotationResult> RotateRefreshToken(
+        RefreshTokenRotationCommand command,
+        CancellationToken cancellationToken = default);
+    Task<RefreshReplayRevocationResult> RevokeRefreshTokenReplay(
+        RefreshReplayRevocationCommand command,
+        CancellationToken cancellationToken = default);
     Task<int> RevokeRefreshTokensForSession(Guid sessionId, DateTimeOffset revokedAt, string reason, CancellationToken cancellationToken = default);
     Task<int> RevokeRefreshTokenFamily(Guid familyId, DateTimeOffset revokedAt, string reason, CancellationToken cancellationToken = default);
 }
@@ -162,6 +167,48 @@ public sealed record RefreshTokenRuntimeRecord(
     DateTimeOffset? RotatedAt,
     DateTimeOffset? RevokedAt,
     string? RevokedReason);
+
+public sealed record RefreshTokenRotationCommand(
+    Guid ExistingRefreshTokenId,
+    Guid NewRefreshTokenId,
+    Guid IdentityId,
+    Guid SessionId,
+    Guid NewTokenId,
+    Guid FamilyId,
+    int RotationCounter,
+    string ReferenceHash,
+    DateTimeOffset RotatedAt,
+    DateTimeOffset ExpiresAt);
+
+public sealed record RefreshTokenRotationResult(
+    bool Rotated,
+    RefreshTokenRuntimeRecord? RefreshToken,
+    string? FailureReason)
+{
+    public static RefreshTokenRotationResult Success(RefreshTokenRuntimeRecord refreshToken) =>
+        new(true, refreshToken, null);
+
+    public static RefreshTokenRotationResult Conflict(string reason) =>
+        new(false, null, reason);
+}
+
+public sealed record RefreshReplayRevocationCommand(
+    Guid RefreshTokenId,
+    Guid FamilyId,
+    Guid SessionId,
+    Guid IdentityId,
+    DateTimeOffset RevokedAt,
+    string CorrelationId,
+    string? IpAddress,
+    string? UserAgent,
+    string Reason);
+
+public sealed record RefreshReplayRevocationResult(
+    int RefreshTokensRevoked,
+    int AccessTokensRevoked,
+    bool CanonicalSessionRevoked,
+    bool LegacySessionRevoked,
+    Guid AuditEvidenceId);
 
 public sealed record ServiceCredentialSecretBoundary(
     Guid ServiceAccountId,

@@ -4,6 +4,7 @@ import { Pool, type QueryResultRow } from "pg";
 import { logger } from "@/src/lib/observability/logger";
 import type { QueueMessage } from "@/src/lib/queue/queue.types";
 import type { QueueWorkloadCategory } from "@/src/lib/queue/queue-topology";
+import { handleCanonicalSettlementRequest } from "./canonical-settlement-request-handler";
 
 export type FinancialWorkerHandlingStatus =
   | "IN_PROGRESS"
@@ -561,6 +562,10 @@ export async function handleWorkloadMessage({
   message: QueueMessage;
   repository?: FinancialWorkerEventRepository;
 }): Promise<FinancialWorkerHandlingResult> {
+  if (category === "SETTLEMENT" && message.type === "settlement.requested") {
+    return handleCanonicalSettlementRequest(message);
+  }
+
   const resolvedRepository =
     repository ?? (await createFinancialWorkerEventRepository());
   const shouldCloseRepository = !repository;

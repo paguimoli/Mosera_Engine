@@ -9,7 +9,7 @@ const endpoints = [
     name: "app",
     url: process.env.APP_URL || "http://localhost:3000",
     livePath: "/api/health",
-    readyPath: null,
+    readyPath: "/api/health/ready",
     port: 3000,
     profile: "default",
     required: true,
@@ -223,11 +223,15 @@ async function fetchJson(name, url) {
 
 function normalizeDependencyStatus(value) {
   if (typeof value === "string") {
-    if (value === "ready" || value === "ok") return "READY";
-    if (value === "not_configured") return "NOT_CONFIGURED";
+    const normalized = value.toLowerCase();
+    if (normalized === "ready" || normalized === "ok") return "READY";
+    if (normalized === "not_configured") return "NOT_CONFIGURED";
     return "NOT_READY";
   }
   if (typeof value === "boolean") return value ? "READY" : "NOT_READY";
+  if (value && typeof value === "object" && "status" in value) {
+    return normalizeDependencyStatus(value.status);
+  }
   if (value && typeof value === "object" && "ready" in value) return value.ready ? "READY" : "NOT_READY";
   if (value && typeof value === "object" && "Ready" in value) return value.Ready ? "READY" : "NOT_READY";
 
@@ -237,6 +241,17 @@ function normalizeDependencyStatus(value) {
 function normalizeDependencies(body) {
   const dependencies = body?.dependencies;
   if (!dependencies || typeof dependencies !== "object") return [];
+
+  if (Array.isArray(dependencies)) {
+    return dependencies.map((value, index) => ({
+      name:
+        value && typeof value === "object" && typeof value.name === "string"
+          ? value.name
+          : String(index),
+      status: normalizeDependencyStatus(value),
+      raw: value,
+    }));
+  }
 
   return Object.entries(dependencies).map(([name, value]) => ({
     name,

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Pool } from "pg";
+import { createSettlementScopeFixture, type SettlementScopeFixture } from "./lib/settlement-scope-fixture";
 
 type Check = {
   name: string;
@@ -173,11 +174,14 @@ values (
   );
 }
 
-function buildIngestionRequest(input: ReturnType<typeof buildStoredSettlementInput>) {
+function buildIngestionRequest(
+  input: ReturnType<typeof buildStoredSettlementInput>,
+  scope: SettlementScopeFixture
+) {
   const acceptedAt = new Date().toISOString();
-  const playerAccountReference = `qa-player-${randomUUID()}`;
+  const playerAccountReference = scope.playerId;
   const contextReference = `accepted-wager-context:v1:${randomUUID()}`;
-  const creditReservationReference = `credit-reservation:${randomUUID()}`;
+  const creditReservationReference = scope.reservationId;
   const base = {
     settlementRequestId: randomUUID(),
     idempotencyKey: `qa-settlement-input-ingestion:${randomUUID()}`,
@@ -187,6 +191,8 @@ function buildIngestionRequest(input: ReturnType<typeof buildStoredSettlementInp
     mathEvaluationCertificateHash: input.mathEvaluationCertificateHash,
     outcomeCertificateId: input.outcomeCertificateId,
     outcomeCertificateHash: input.outcomeCertificateHash,
+    tenantId: scope.tenantId,
+    brandId: scope.brandId,
     ticketId: input.ticketId,
     ticketLineId: input.ticketLineId,
     playerAccountReference,
@@ -204,6 +210,8 @@ function buildIngestionRequest(input: ReturnType<typeof buildStoredSettlementInp
     mode: "DryRun",
     acceptedWagerFinancialContext: {
       contextReference,
+      tenantId: scope.tenantId,
+      brandId: scope.brandId,
       ticketId: input.ticketId,
       ticketLineId: input.ticketLineId,
       playerAccountReference,
@@ -213,6 +221,8 @@ function buildIngestionRequest(input: ReturnType<typeof buildStoredSettlementInp
       roundingPolicyReference: "rounding-policy:v1",
       creditReservationReference: {
         reservationId: creditReservationReference,
+        tenantId: scope.tenantId,
+        brandId: scope.brandId,
         playerAccountReference,
         ticketId: input.ticketId,
         ticketLineId: input.ticketLineId,
@@ -283,7 +293,8 @@ async function main() {
     const beforeCashierTransactions = await tableCount(pool, "public.cashier_transactions");
     const input = buildStoredSettlementInput();
     await seedSettlementInput(pool, input);
-    const payload = buildIngestionRequest(input);
+    const scope = await createSettlementScopeFixture(pool, input.ticketId, "qa-settlement-ingestion");
+    const payload = buildIngestionRequest(input, scope);
 
     const first = await ingest(payload);
     assert(first.response.ok, "valid SettlementInput ingestion succeeds.", {
@@ -309,6 +320,16 @@ async function main() {
       ...payload,
       idempotencyKey: `qa-mismatch-player:${randomUUID()}`,
       playerAccountReference: `other-player-${randomUUID()}`,
+    });
+    await expectBadRequest("cross-tenant settlement rejected", {
+      ...payload,
+      idempotencyKey: `qa-mismatch-tenant:${randomUUID()}`,
+      tenantId: randomUUID(),
+    });
+    await expectBadRequest("cross-brand settlement rejected", {
+      ...payload,
+      idempotencyKey: `qa-mismatch-brand:${randomUUID()}`,
+      brandId: randomUUID(),
     });
     await expectBadRequest("currency mismatch rejected", {
       ...payload,

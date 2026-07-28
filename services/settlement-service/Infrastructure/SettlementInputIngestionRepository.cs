@@ -135,6 +135,73 @@ where settlement_input_id = @settlement_input_id;
             correlationId);
     }
 
+    public async Task<CanonicalSettlementScopeDto> ResolveAuthoritativeScopeAsync(
+        SettlementInputIngestionRequest request,
+        StoredSettlementInputDto storedInput,
+        CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(request.CreditReservationReference, out var reservationId))
+        {
+            throw new SettlementInputIngestionValidationException(
+                ["A canonical Credit Wallet reservation UUID is required for settlement scope resolution."]);
+        }
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+select
+  reservation.tenant_id,
+  reservation.brand_id,
+  reservation.player_id,
+  reservation.id,
+  reservation.ticket_id
+from public.credit_reservations reservation
+join credit_wallet_service.wallet_scopes scope
+  on scope.wallet_id = reservation.wallet_id
+ and scope.tenant_id = reservation.tenant_id
+ and scope.brand_id = reservation.brand_id
+ and scope.player_id = reservation.player_id
+join platform.brands brand
+  on brand.id = reservation.brand_id
+ and brand.tenant_id = reservation.tenant_id
+where reservation.id = @reservation_id
+  and reservation.scope_model = 'CANONICAL';
+""";
+        command.Parameters.AddWithValue("reservation_id", reservationId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            throw new SettlementInputIngestionValidationException(
+                ["Authoritative Credit Wallet reservation scope was not found."]);
+        }
+
+        var tenantId = reader.GetGuid(0);
+        var brandId = reader.GetGuid(1);
+        var playerId = reader.GetGuid(2);
+        var ticketId = reader.GetString(4);
+        var gameReference = $"{storedInput.GameManifestId}:{storedInput.GameManifestVersion}";
+        var drawOutcomeReference = $"{storedInput.OutcomeCertificateId:N}:{storedInput.OutcomeCertificateHash}";
+        var scopeHash = SettlementInputIngestionService.HashCanonical(string.Join("|", [
+            tenantId.ToString("N"),
+            brandId.ToString("N"),
+            playerId.ToString("N"),
+            reservationId.ToString("N"),
+            ticketId,
+            gameReference,
+            drawOutcomeReference
+        ]));
+
+        return new CanonicalSettlementScopeDto(
+            tenantId,
+            brandId,
+            playerId,
+            reservationId,
+            ticketId,
+            gameReference,
+            drawOutcomeReference,
+            scopeHash);
+    }
+
     public async Task<SettlementIngestionReadiness> CheckReadinessAsync(CancellationToken cancellationToken)
     {
         if (!DurablePersistenceConfigured)
@@ -203,6 +270,11 @@ insert into settlement_service.settlement_requests (
   math_evaluation_certificate_hash,
   outcome_certificate_id,
   outcome_certificate_hash,
+  tenant_id,
+  brand_id,
+  game_reference,
+  draw_outcome_reference,
+  scope_hash,
   ticket_id,
   ticket_line_id,
   player_account_reference,
@@ -228,6 +300,11 @@ values (
   @math_evaluation_certificate_hash,
   @outcome_certificate_id,
   @outcome_certificate_hash,
+  @tenant_id,
+  @brand_id,
+  @game_reference,
+  @draw_outcome_reference,
+  @scope_hash,
   @ticket_id,
   @ticket_line_id,
   @player_account_reference,
@@ -253,6 +330,11 @@ values (
         command.Parameters.AddWithValue("math_evaluation_certificate_hash", request.MathEvaluationCertificateHash);
         command.Parameters.AddWithValue("outcome_certificate_id", request.OutcomeCertificateId);
         command.Parameters.AddWithValue("outcome_certificate_hash", request.OutcomeCertificateHash);
+        command.Parameters.AddWithValue("tenant_id", claim.Scope.TenantId);
+        command.Parameters.AddWithValue("brand_id", claim.Scope.BrandId);
+        command.Parameters.AddWithValue("game_reference", claim.Scope.GameReference);
+        command.Parameters.AddWithValue("draw_outcome_reference", claim.Scope.DrawOutcomeReference);
+        command.Parameters.AddWithValue("scope_hash", claim.Scope.ScopeHash);
         command.Parameters.AddWithValue("ticket_id", request.TicketId);
         command.Parameters.AddWithValue("ticket_line_id", request.TicketLineId);
         command.Parameters.AddWithValue("player_account_reference", request.PlayerAccountReference);

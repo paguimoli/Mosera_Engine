@@ -1,5 +1,71 @@
 # Market Configuration Architecture v1.0
 
+## 0. Canonical Platform Hierarchy
+
+The production configuration hierarchy is:
+
+`Platform -> Organization -> Tenant -> Brand -> Market -> Website`
+
+No other hierarchy level is canonical. Every lower-level record has exactly one
+durable parent:
+
+- Platform owns global defaults and global configuration.
+- Organization owns operator identity.
+- Tenant owns the operational and authorization boundary.
+- Brand owns customer-facing identity.
+- Market owns jurisdiction, currency, language, timezone, and regulatory
+  configuration.
+- Website owns domains, theme references, availability, activation, and
+  maintenance posture.
+
+The Platform root is an immutable singleton. Organizations reference that root;
+tenants reference one organization; brands reference one tenant; markets
+reference one brand; and every new website references one market. Historical
+pre-canonical websites without a market remain immutable evidence but are not
+eligible for active host resolution.
+
+Website locale columns are compatibility snapshots. Their values must match the
+canonical Market and cannot override it. Configuration changes use immutable
+versions and lifecycle supersession; physical deletion is prohibited.
+
+Canonical hierarchy readiness fails closed on missing parents, invalid
+tenant/brand/market relationships, active children under disabled parents,
+duplicate configuration identity, or invalid Authentication, Wallet, Ledger,
+Settlement, or Outcome scope references. Promotion requires migration 081,
+zero failed checks from `platform.canonical_hierarchy_readiness()`, and passing
+Platform and integrated runtime QA.
+
+Authority integration uses existing references:
+
+- Authentication identities and memberships bind tenant, brand, and market.
+- Credit Wallet reservations bind tenant and brand.
+- Ledger accounting periods bind brand and market.
+- Settlement requests bind tenant and brand.
+- Outcome/Game availability binds tenant, brand, market, website, and optional
+  immutable Game Manifest reference.
+
+### Mutation Authority
+
+`/api/platform-management/{resource}` is the only production create boundary
+for Organizations, Tenants, Brands, Markets, Websites, Domains, Themes, Brand
+Assets, and Game Availability. Metadata changes and status changes create
+immutable versions through the canonical lifecycle action route; there is no
+generic update or delete endpoint.
+
+Each retained mutation combines its resource permission with canonical scope
+resolved from Platform relationships. The server records actor, session,
+permission, scope, request/correlation identifiers, and immutable content
+evidence. Identical content-hash retries return the existing governed record;
+conflicting retries fail closed.
+
+Legacy `/api/brands/**` and `/api/markets/**` mutation handlers are retired with
+`410 Gone`. Their scoped reads remain temporarily available as deprecated read
+compatibility. Supabase-era default seed writers require
+`PLATFORM_LEGACY_DEVELOPMENT_MUTATIONS_ENABLED=true` and a disposable
+development/local/test environment; readiness fails if that gate is enabled
+outside those environments. Migration SQL remains runner-only and has no HTTP
+surface.
+
 ## 1. Market Principles
 
 Markets define operational defaults.
@@ -27,6 +93,15 @@ Time zone rules:
 - Store canonical values such as `America/Costa_Rica`, `America/New_York`, or `Asia/Ho_Chi_Minh`.
 
 Market status should support active, inactive, and archived states in future implementation.
+
+## Platform Innovation Backlog
+
+- delegated administration
+- reseller hierarchy
+- franchise hierarchy
+- multi-region configuration inheritance
+- white-label automation
+- self-service onboarding
 
 ## 3. Localization
 

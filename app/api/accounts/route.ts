@@ -9,8 +9,15 @@ import {
   createAccount,
   DuplicateAccountCodeError,
   AccountBusinessRuleError,
+  AccountRequestConflictError,
   listAccounts,
+  resolveAccountScope,
 } from "@/src/domains/accounts/account.service";
+import {
+  accountCreatePermission,
+  assertAccountScope,
+  filterAccountsByScope,
+} from "@/src/domains/accounts/account-scope-governance";
 import type {
   AccountBalanceAuthority,
   AccountDefaultFundingSource,
@@ -110,6 +117,8 @@ function getCreateAccountInput(
       getString(body.parentAccountId ?? body.parent_account_id) || null,
     marketId: getString(body.marketId ?? body.market_id),
     brandId: getString(body.brandId ?? body.brand_id),
+    idempotencyKey:
+      getString(body.idempotencyKey ?? body.idempotency_key) || null,
     status: getAccountStatus(body.status) ?? "ACTIVE",
     fundingModel: getFundingModel(body.fundingModel ?? body.funding_model),
     operatingMode: getOperatingMode(body.operatingMode ?? body.operating_mode),
@@ -130,12 +139,12 @@ function getCreateAccountInput(
 
 export async function GET(request: Request) {
   try {
-    await requirePermission(request, "accounts.view");
+    const context = await requirePermission(request, "accounts.view");
     const accounts = await listAccounts();
 
     return NextResponse.json({
       success: true,
-      accounts,
+      accounts: filterAccountsByScope(context, accounts),
     });
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {
@@ -166,10 +175,17 @@ export async function POST(request: Request) {
   }
 
   try {
-    await requirePermission(request, "accounts.create");
-    const account = await createAccount(
-      getCreateAccountInput(body as Record<string, unknown>)
+    const input = getCreateAccountInput(body as Record<string, unknown>);
+    const context = await requirePermission(
+      request,
+      accountCreatePermission(input.accountType)
     );
+    const scope = await resolveAccountScope(input.marketId);
+    assertAccountScope(context, scope);
+    const account = await createAccount(input, {
+      operatorId: context.user.id,
+      reason: "account created",
+    });
 
     return NextResponse.json({
       success: true,
@@ -189,6 +205,16 @@ export async function POST(request: Request) {
         {
           success: false,
           error: "Duplicate account code.",
+        },
+        { status: 409 }
+      );
+    }
+
+    if (error instanceof AccountRequestConflictError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: error.message,
         },
         { status: 409 }
       );

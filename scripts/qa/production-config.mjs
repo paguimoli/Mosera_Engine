@@ -46,6 +46,26 @@ const safeProductionEnvironment = {
   DEPLOYMENT_ENVIRONMENT: "production",
   NODE_ENV: "production",
   RELEASE_VERSION: "sha-1234567890abcdef",
+  LAUNCH_CONFIGURATION_VERSION: "P1-014.5-2026-07-25",
+  CREDIT_ONLY_LAUNCH_ENABLED: "true",
+  CASHIER_LAUNCH_ENABLED: "false",
+  PAYMENT_PROVIDER_INTEGRATION_ENABLED: "false",
+  PLAYER_CASH_DEPOSITS_ENABLED: "false",
+  PLAYER_CASH_WITHDRAWALS_ENABLED: "false",
+  EXTERNAL_INTEGRATIONS_ENABLED: "false",
+  PRODUCTION_UI_ENABLED: "false",
+  SELF_SERVICE_ONBOARDING_ENABLED: "false",
+  PLATFORM_HIERARCHY_MODE: "CANONICAL",
+  PLATFORM_LEGACY_DEVELOPMENT_MUTATIONS_ENABLED: "false",
+  CANONICAL_TICKET_PATH_ENABLED: "true",
+  TICKET_LEGACY_MUTATIONS_ENABLED: "false",
+  TICKET_SCOPE_ENFORCEMENT_ENABLED: "true",
+  TICKET_CORRELATION_CONTRACT_ENABLED: "true",
+  CANONICAL_DRAW_ORCHESTRATION_ENABLED: "true",
+  PRODUCT_LAUNCH_STATUS: "DISABLED_PENDING_BUSINESS_APPROVAL",
+  REQUIRED_WORKERS_ENABLED: "true",
+  AUDIT_RECORDING_ENABLED: "true",
+  READINESS_ENFORCEMENT_ENABLED: "true",
   SERVICE_NAME: "app",
   OTEL_SERVICE_NAME: "app",
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318",
@@ -87,6 +107,9 @@ const safeProductionEnvironment = {
   CREDIT_AUTHORITY: "MONOLITH",
   SETTLEMENT_AUTHORITY: "MONOLITH",
   ALLOW_MONOLITH_AUTHORITY_IN_PRODUCTION: "true",
+  OUTCOME_CANONICAL_PIPELINE_ENABLED: "false",
+  OUTCOME_LEGACY_PUBLICATION_ENABLED: "false",
+  OUTCOME_CANONICAL_RECOVERY_ENABLED: "true",
   CADDY_CLOUDFLARE_MODE: "origin",
 };
 
@@ -123,6 +146,48 @@ assert(!monolithWithoutApproval.ok, "MONOLITH authority must require an explicit
 const safeResult = runValidator(safeProductionEnvironment);
 assert(safeResult.ok, "Safe synthetic production environment must pass validation.", {
   result: safeResult,
+});
+
+const unsafeServiceAuthority = runValidator({
+  ...safeProductionEnvironment,
+  LEDGER_AUTHORITY: "SERVICE",
+});
+assert(!unsafeServiceAuthority.ok, "Pre-promotion launch baseline must reject SERVICE authority.", {
+  result: unsafeServiceAuthority,
+});
+
+const unsafeCashier = runValidator({
+  ...safeProductionEnvironment,
+  CASHIER_LAUNCH_ENABLED: "true",
+});
+assert(!unsafeCashier.ok, "Credit-only production must reject Cashier activation.", {
+  result: unsafeCashier,
+});
+
+const unsafeLegacyOutcome = runValidator({
+  ...safeProductionEnvironment,
+  OUTCOME_LEGACY_PUBLICATION_ENABLED: "true",
+});
+assert(!unsafeLegacyOutcome.ok, "Legacy Outcome publication must fail closed.", {
+  result: unsafeLegacyOutcome,
+});
+
+const missingCanonicalRecovery = runValidator({
+  ...safeProductionEnvironment,
+  OUTCOME_CANONICAL_RECOVERY_ENABLED: "false",
+});
+assert(!missingCanonicalRecovery.ok, "Canonical Outcome recovery must be explicit.", {
+  result: missingCanonicalRecovery,
+});
+
+const safeStagingResult = runValidator({
+  ...safeProductionEnvironment,
+  DEPLOYMENT_ENVIRONMENT: "staging",
+  NODE_ENV: "production",
+  OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=staging,service.version=sha-1234567890abcdef",
+});
+assert(safeStagingResult.ok, "Safe synthetic staging environment must pass launch validation.", {
+  result: safeStagingResult,
 });
 
 const missingObservability = runValidator({
@@ -192,6 +257,10 @@ console.log(JSON.stringify({
     unsafeProductionEnvFails: "PASS",
     localAuthorityRequiresExplicitException: "PASS",
     safeSyntheticProductionEnvPasses: "PASS",
+    safeSyntheticStagingEnvPasses: "PASS",
+    serviceAuthorityRejected: "PASS",
+    cashierActivationRejected: "PASS",
+    outcomeRecoveryBaseline: "PASS",
     observabilityEnvRequired: "PASS",
     otelCollectorValidation: "PASS",
     caddyHostnameValidation: "PASS",

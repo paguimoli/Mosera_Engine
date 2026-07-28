@@ -116,7 +116,7 @@ function insertWebsiteSql({
   id,
   tenantId,
   brandId,
-  marketId = null,
+  marketId,
   code,
   contentHash,
   status = "Active",
@@ -227,7 +227,7 @@ runSql(insertWebsiteSql({
   id: websiteId,
   tenantId,
   brandId,
-  marketId: null,
+  marketId,
   code: websiteCode,
   contentHash: `sha256:p0-006-2-website:${runId}`,
 }));
@@ -236,10 +236,22 @@ select count(*) from platform.websites
 where id = '${websiteId}' and tenant_id = '${tenantId}' and brand_id = '${brandId}' and website_code = ${sqlString(websiteCode)};
 `) === 1, { websiteId });
 
-addCheck("website without market allowed", rowCount(`
+addCheck("website binds exactly one market", rowCount(`
 select count(*) from platform.websites
-where id = '${websiteId}' and market_id is null;
+where id = '${websiteId}' and market_id = '${marketId}';
 `) === 1, { websiteId });
+
+const missingMarket = runSql(insertWebsiteSql({
+  id: randomUUID(),
+  tenantId,
+  brandId,
+  marketId: null,
+  code: `missing-market-${runId}`,
+  contentHash: `sha256:p1-013-1-missing-market:${runId}`,
+}), { allowFailure: true });
+addCheck("website without market rejected", missingMarket.status !== 0, {
+  stderr: missingMarket.stderr.trim(),
+});
 
 runSql(insertDomainSql({
   id: canonicalDomainId,
@@ -295,7 +307,7 @@ select count(*) from platform.active_host_resolutions
 where hostname = ${sqlString(baseHostname)}
   and tenant_id = '${tenantId}'
   and brand_id = '${brandId}'
-  and market_id is null
+  and market_id = '${marketId}'
   and website_id = '${websiteId}'
   and canonical = true
   and canonical_redirect_target is null
@@ -372,6 +384,7 @@ const invalidBrandTenant = runSql(insertWebsiteSql({
   id: randomUUID(),
   tenantId: randomUUID(),
   brandId,
+  marketId,
   code: `wrong-tenant-${runId}`,
   contentHash: `sha256:p0-006-2-wrong-tenant:${runId}`,
 }), { allowFailure: true });

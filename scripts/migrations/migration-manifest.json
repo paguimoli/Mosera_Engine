@@ -720,6 +720,121 @@
       "reason": "Adds canonical tenant-scoped identities, Argon2id-only credential history, single-session authority, lifecycle evidence, and immutable authentication audit without promoting AUTH_AUTHORITY."
     },
     {
+      "id": "077_add_refresh_replay_revocation_evidence",
+      "path": "scripts/migrations/local/077_add_refresh_replay_revocation_evidence.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "auth_service"
+      ],
+      "reason": "Adds structured immutable refresh-token replay evidence linking the revoked token family, canonical session, account scope, device, network metadata, and revocation reason."
+    },
+    {
+      "id": "078_add_settlement_scope_and_evidence_governance",
+      "path": "scripts/migrations/local/078_add_settlement_scope_and_evidence_governance.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "settlement_service",
+        "platform"
+      ],
+      "reason": "Adds immutable tenant/brand scope propagation, database-enforced cross-scope protection, and append-only historical evidence classification for Settlement Authority promotion readiness."
+    },
+    {
+      "id": "079_add_canonical_outcome_publication",
+      "path": "scripts/migrations/local/079_add_canonical_outcome_publication.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine",
+        "public"
+      ],
+      "reason": "Adds immutable canonical outcome versioning and one outbox-backed Settlement request per published, corrected, or cancelled outcome without invoking or promoting Settlement Authority."
+    },
+    {
+      "id": "080_add_canonical_draw_orchestration",
+      "path": "scripts/migrations/local/080_add_canonical_draw_orchestration.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine",
+        "public"
+      ],
+      "reason": "Adds append-only Settlement consumption, canonical draw completion, and recovery evidence plus operational compiled-worker readiness without changing authority defaults."
+    },
+    {
+      "id": "081_add_canonical_platform_hierarchy",
+      "path": "scripts/migrations/local/081_add_canonical_platform_hierarchy.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "platform"
+      ],
+      "reason": "Adds the immutable Platform root, exact canonical parent chain, market-bound websites, and fail-closed cross-authority hierarchy readiness without changing authority behavior."
+    },
+    {
+      "id": "082_add_account_player_agent_scope_governance",
+      "path": "scripts/migrations/local/082_add_account_player_agent_scope_governance.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "platform",
+        "public"
+      ],
+      "reason": "Adds canonical tenant, brand, and market scope governance for managed Accounts, Players, and Agent hierarchy records with immutable reassignment evidence and fail-closed readiness."
+    },
+    {
+      "id": "083_add_canonical_ticket_lifecycle",
+      "path": "scripts/migrations/local/083_add_canonical_ticket_lifecycle.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ticket_authority",
+        "public"
+      ],
+      "reason": "Adds canonical immutable Ticket acceptance snapshots, lifecycle and correlation evidence, atomic Credit Wallet reservation and cancellation boundaries, and fail-closed ticket readiness."
+    },
+    {
+      "id": "084_align_ticket_game_lifecycle_states",
+      "path": "scripts/migrations/local/084_align_ticket_game_lifecycle_states.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ticket_authority"
+      ],
+      "reason": "Aligns canonical Ticket manifest and paytable acceptance with the existing Game Engine ProductionActive lifecycle vocabulary without rewriting applied migration 083."
+    },
+    {
+      "id": "085_fix_ticket_hierarchy_uuid_aggregation",
+      "path": "scripts/migrations/local/085_fix_ticket_hierarchy_uuid_aggregation.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ticket_authority"
+      ],
+      "reason": "Makes canonical Agent hierarchy snapshot aggregation portable on PostgreSQL by aggregating UUID representations without changing hierarchy semantics."
+    },
+    {
+      "id": "086_align_ticket_cancellation_wallet_contract",
+      "path": "scripts/migrations/local/086_align_ticket_cancellation_wallet_contract.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ticket_authority"
+      ],
+      "reason": "Aligns canonical Ticket cancellation with the frozen Credit Wallet cancellation contract, including currency, text ticket reference, and audit metadata."
+    },
+    {
+      "id": "087_bind_ticket_cancellation_to_wallet_operation",
+      "path": "scripts/migrations/local/087_bind_ticket_cancellation_to_wallet_operation.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ticket_authority",
+        "credit_wallet_service",
+        "public"
+      ],
+      "reason": "Binds canonical Ticket cancellation atomically to the Credit Wallet operation request, attempt, terminal result, and reservation release evidence chain."
+    },
+    {
+      "id": "088_seed_launch_ticket_permissions",
+      "path": "scripts/migrations/local/088_seed_launch_ticket_permissions.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "auth_service"
+      ],
+      "reason": "Seeds the frozen canonical Ticket permission catalog and assigns least-privilege Ticket permissions to the existing approved Platform roles."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

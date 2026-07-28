@@ -6,7 +6,7 @@ Phase 24.1 selects and implements the canonical local migration runner for dispo
 
 ## Runner Decision
 
-The canonical runner for this phase is raw SQL executed by Node scripts through the PostgreSQL `psql` client from the `devtools` container.
+The canonical runner is raw SQL executed by Node scripts through PostgreSQL's `psql` client inside Docker. Host commands discover the PostgreSQL Compose service and use `docker compose exec`; the one-shot migration runner uses its container-local client. A host installation of PostgreSQL or `psql` is not required.
 
 This is intentionally small:
 
@@ -17,7 +17,7 @@ This is intentionally small:
 
 ## Disposable Database
 
-`docker-compose.yml` defines `local-postgres` behind the `devtools` profile. It uses:
+`docker-compose.yml` defines `local-postgres`. It uses:
 
 - database: `lottery_local`;
 - user: `lottery`;
@@ -25,11 +25,12 @@ This is intentionally small:
 - volume: `local_postgres_disposable_data`;
 - healthcheck: `pg_isready`.
 
-The `devtools` service receives:
+The migration runner receives:
 
 ```bash
 DATABASE_URL=postgresql://lottery:lottery_dev_password@local-postgres:5432/lottery_local
 ALLOW_DISPOSABLE_DB_MIGRATIONS=true
+MIGRATIONS_DOCKER_EXECUTION_MODE=container
 ```
 
 This database is safe to reset and is not the active Supabase project.
@@ -95,47 +96,43 @@ Re-runs are idempotent: already-applied migrations with matching checksums are s
 
 ## Commands
 
-Start the disposable database:
+Start the disposable database from the repository root:
 
 ```bash
-docker compose --profile devtools up -d local-postgres
-```
-
-Build devtools:
-
-```bash
-docker compose --profile devtools build devtools
+docker compose up -d local-postgres
 ```
 
 Inspect status:
 
 ```bash
-docker compose --profile devtools run --rm devtools npm run migrations:status
+npm run migrations:status
 ```
 
 Apply local migrations:
 
 ```bash
-docker compose --profile devtools run --rm devtools npm run migrations:local:run
+npm run migrations:local:run
 ```
 
 Validate local migrations:
 
 ```bash
-docker compose --profile devtools run --rm devtools npm run migrations:local:validate
+npm run migrations:local:validate
 ```
 
 Reset only the disposable schemas:
 
 ```bash
-docker compose --profile devtools run --rm devtools npm run migrations:local:reset
+npm run migrations:local:reset
 ```
 
 Run Phase 24.1 QA:
 
 ```bash
-docker compose --profile devtools run --rm devtools npm run qa:local-migrations
+npm run qa:local-migrations
 ```
+
+The commands fail with an actionable message when Docker is unavailable, the Compose service cannot be identified, or PostgreSQL is not running. `MIGRATIONS_POSTGRES_SERVICE` may select a nonstandard Compose service. CI may provide the dynamically assigned service-container ID through `MIGRATIONS_POSTGRES_CONTAINER`; container IDs are never committed.
 
 ## Production Blocks
 

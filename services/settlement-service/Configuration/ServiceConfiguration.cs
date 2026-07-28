@@ -5,6 +5,7 @@ public sealed record ServiceConfiguration(
     string Environment,
     DatabaseConfiguration Database,
     ServiceIntegrationConfiguration Integrations,
+    SettlementRuntimeConfiguration Runtime,
     RabbitMqConfiguration RabbitMQ,
     RedisConfiguration Redis,
     SupabaseConfiguration Supabase)
@@ -15,6 +16,16 @@ public sealed record ServiceConfiguration(
         var environmentName = System.Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
             ?? environment.EnvironmentName;
 
+        var isProduction = string.Equals(environmentName, "Production", StringComparison.OrdinalIgnoreCase);
+        var legacyMutationRoutesEnabled = GetBooleanEnvironmentValue(
+            "SETTLEMENT_LEGACY_MUTATIONS_ENABLED",
+            !isProduction);
+        if (isProduction && legacyMutationRoutesEnabled)
+        {
+            throw new InvalidOperationException(
+                "SETTLEMENT_LEGACY_MUTATIONS_ENABLED must be false in production.");
+        }
+
         return new ServiceConfiguration(
             serviceName,
             environmentName,
@@ -23,6 +34,7 @@ public sealed record ServiceConfiguration(
                 GetEnvironmentValue("LEDGER_SERVICE_URL", string.Empty),
                 GetEnvironmentValue("CREDIT_SERVICE_URL", string.Empty),
                 GetEnvironmentValue("CREDIT_WALLET_INTERNAL_API_KEY", string.Empty)),
+            new SettlementRuntimeConfiguration(legacyMutationRoutesEnabled),
             new RabbitMqConfiguration(
                 GetEnvironmentValue("RABBITMQ_URL", string.Empty),
                 GetEnvironmentValue("RABBITMQ_EXCHANGE_NAME", "lottery.events")),
@@ -38,6 +50,16 @@ public sealed record ServiceConfiguration(
 
         return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
     }
+
+    private static bool GetBooleanEnvironmentValue(string name, bool fallback)
+    {
+        var value = System.Environment.GetEnvironmentVariable(name);
+        return string.IsNullOrWhiteSpace(value)
+            ? fallback
+            : bool.TryParse(value, out var parsed)
+                ? parsed
+                : throw new InvalidOperationException($"{name} must be true or false.");
+    }
 }
 
 public sealed record RabbitMqConfiguration(string Url, string ExchangeName);
@@ -48,6 +70,8 @@ public sealed record ServiceIntegrationConfiguration(
     string LedgerServiceUrl,
     string CreditServiceUrl,
     string CreditWalletInternalApiKey);
+
+public sealed record SettlementRuntimeConfiguration(bool LegacyMutationRoutesEnabled);
 
 public sealed record RedisConfiguration(string Url);
 

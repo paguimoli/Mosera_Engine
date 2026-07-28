@@ -327,9 +327,7 @@ async function createSettlement(
 
   const playerId = randomUUID();
   const walletScope = await seedAccountWallet(pool, playerId, options.withWallet ?? true);
-  const reservationId = options.withCredit === false
-    ? null
-    : await seedCreditReservation(walletScope!, input.ticketId);
+  const reservationId = await seedCreditReservation(walletScope!, input.ticketId);
   const contextReference = `accepted-wager-context:v1:${randomUUID()}`;
   const acceptedAt = new Date().toISOString();
   const ingestionPayload = {
@@ -341,6 +339,8 @@ async function createSettlement(
     mathEvaluationCertificateHash: input.mathEvaluationCertificateHash,
     outcomeCertificateId: input.outcomeCertificateId,
     outcomeCertificateHash: input.outcomeCertificateHash,
+    tenantId: walletScope!.tenantId,
+    brandId: walletScope!.brandId,
     ticketId: input.ticketId,
     ticketLineId: input.ticketLineId,
     playerAccountReference: playerId,
@@ -356,6 +356,8 @@ async function createSettlement(
     mode: "DryRun",
     acceptedWagerFinancialContext: {
       contextReference,
+      tenantId: walletScope!.tenantId,
+      brandId: walletScope!.brandId,
       ticketId: input.ticketId,
       ticketLineId: input.ticketLineId,
       playerAccountReference: playerId,
@@ -363,14 +365,14 @@ async function createSettlement(
       currency: "USD",
       minorUnitPrecision: 2,
       roundingPolicyReference: "rounding-policy:v1",
-      creditReservationReference: reservationId
-        ? {
-            reservationId,
-            playerAccountReference: playerId,
-            ticketId: input.ticketId,
-            ticketLineId: input.ticketLineId,
-          }
-        : null,
+      creditReservationReference: {
+        reservationId,
+        tenantId: walletScope!.tenantId,
+        brandId: walletScope!.brandId,
+        playerAccountReference: playerId,
+        ticketId: input.ticketId,
+        ticketLineId: input.ticketLineId,
+      },
       acceptedAt,
     },
     settlementPolicy: { version: "settlement-policy:v1" },

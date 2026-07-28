@@ -122,6 +122,9 @@ public sealed record InstructionReconciliationRequest(
 public sealed record FinancialInstructionDto(
     Guid InstructionId,
     Guid SettlementId,
+    Guid TenantId,
+    Guid BrandId,
+    string ScopeHash,
     FinancialInstructionType InstructionType,
     FinancialInstructionStatus InstructionStatus,
     string CanonicalPayloadHash,

@@ -36,8 +36,30 @@ function runStep(name, command, args, options = {}) {
 }
 
 runStep("devtools_has_node_runtime", "node", ["--version"]);
-runStep("devtools_has_psql_client", "psql", ["--version"]);
+runStep("docker_runtime_available", "docker", ["version", "--format", "{{.Server.Version}}"]);
+runStep("docker_compose_available", "docker", ["compose", "version"]);
 runStep("migration_manifest_status", "node", ["scripts/migrations/migration-status.mjs"], { captureOutput: true });
+runStep("missing_docker_fails_gracefully", "node", ["scripts/migrations/migration-status.mjs"], {
+  expectFailure: true,
+  env: {
+    MIGRATIONS_DOCKER_COMMAND: "__mosera_missing_docker__",
+    MIGRATIONS_POSTGRES_CONTAINER: "",
+  },
+});
+runStep("missing_postgres_service_fails_gracefully", "node", ["scripts/migrations/migration-status.mjs"], {
+  expectFailure: true,
+  env: {
+    MIGRATIONS_POSTGRES_CONTAINER: "",
+    MIGRATIONS_POSTGRES_SERVICE: "__mosera_missing_postgres__",
+  },
+});
+runStep("stopped_postgres_service_fails_gracefully", "node", ["scripts/migrations/migration-status.mjs"], {
+  expectFailure: true,
+  env: {
+    MIGRATIONS_POSTGRES_CONTAINER: "",
+    MIGRATIONS_POSTGRES_SERVICE: "migration-runner",
+  },
+});
 runStep("guardrails_block_supabase_url", "node", ["scripts/migrations/run-local-migrations.mjs"], {
   expectFailure: true,
   env: {

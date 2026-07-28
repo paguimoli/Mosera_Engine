@@ -15,12 +15,16 @@ import {
   getNumber,
   getString,
   readJsonObject,
+  requireCashierLaunchMutationEnabled,
   validationErrorResponse,
 } from "../cashier-route.helpers";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
+  const disabled = requireCashierLaunchMutationEnabled();
+  if (disabled) return disabled;
+
   const { payload, response } = await readJsonObject(request);
 
   if (response) {

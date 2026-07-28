@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 
 import {
   AuthMiddlewareError,
-  requirePermission,
 } from "@/src/domains/auth/auth-middleware";
+import {
+  AccountScopeNotFoundError,
+  requireScopedAccount,
+} from "@/src/domains/accounts/account-scope-governance";
 import {
   provisionWalletsForAccount,
   WalletBusinessRuleError,
@@ -40,7 +43,7 @@ export async function POST(request: Request, { params }: RouteParams) {
   const { accountId } = await params;
 
   try {
-    await requirePermission(request, "accounts.edit");
+    await requireScopedAccount(request, accountId, "accounts.edit");
     const wallets = await provisionWalletsForAccount(accountId);
 
     return NextResponse.json({
@@ -50,6 +53,12 @@ export async function POST(request: Request, { params }: RouteParams) {
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {
       return authErrorResponse(error);
+    }
+    if (error instanceof AccountScopeNotFoundError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 404 }
+      );
     }
 
     if (error instanceof WalletValidationError) {

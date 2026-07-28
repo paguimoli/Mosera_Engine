@@ -25,6 +25,7 @@ ENV SUPABASE_ANON_KEY=dummy-anon-key
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
+RUN npm run build:workers
 
 FROM node:20-bookworm-slim AS prod-deps
 
@@ -56,6 +57,8 @@ COPY --from=build --chown=node:node /app/postcss.config.mjs ./postcss.config.mjs
 COPY --from=build --chown=node:node /app/app ./app
 COPY --from=build --chown=node:node /app/scripts ./scripts
 COPY --from=build --chown=node:node /app/src ./src
+COPY --from=build --chown=node:node /app/worker-dist ./worker-dist
+COPY --from=build --chown=node:node /app/tsconfig.workers.json ./tsconfig.workers.json
 
 RUN apt-get update \
     && apt-get upgrade -y \

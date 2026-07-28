@@ -152,6 +152,7 @@ public sealed class SettlementCreditWalletServiceClient
         {
             throw new SettlementIntegrationException("Credit reservation player does not match Settlement instruction player.");
         }
+        EnsureReservationScope(record, reservation);
 
         var role = GetProvenanceString(context.Instruction.Provenance, "resettlementRole");
         var originalSettlementId = ParseOptionalGuid(
@@ -216,7 +217,10 @@ public sealed class SettlementCreditWalletServiceClient
                 ["settlementRequestId"] = record.SettlementRequestId,
                 ["instructionId"] = context.Instruction.InstructionId,
                 ["instructionType"] = context.Instruction.InstructionType.ToString(),
-                ["canonicalPayloadHash"] = context.Instruction.CanonicalPayloadHash
+                ["canonicalPayloadHash"] = context.Instruction.CanonicalPayloadHash,
+                ["tenantId"] = record.TenantId,
+                ["brandId"] = record.BrandId,
+                ["scopeHash"] = record.ScopeHash
             }
         }, options: JsonOptions);
 
@@ -256,6 +260,7 @@ public sealed class SettlementCreditWalletServiceClient
         {
             throw new SettlementIntegrationException("Credit reservation player does not match Settlement release instruction player.");
         }
+        EnsureReservationScope(record, reservation);
         var client = httpClientFactory.CreateClient();
         client.BaseAddress = new Uri(NormalizeBaseUrl(configuration.Integrations.CreditServiceUrl));
         using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/credit-wallets/internal/operations");
@@ -281,7 +286,10 @@ public sealed class SettlementCreditWalletServiceClient
             {
                 ["settlementId"] = record.SettlementId,
                 ["instructionId"] = context.Instruction.InstructionId,
-                ["instructionType"] = context.Instruction.InstructionType.ToString()
+                ["instructionType"] = context.Instruction.InstructionType.ToString(),
+                ["tenantId"] = record.TenantId,
+                ["brandId"] = record.BrandId,
+                ["scopeHash"] = record.ScopeHash
             }
         }, options: JsonOptions);
 
@@ -401,6 +409,19 @@ public sealed class SettlementCreditWalletServiceClient
         return Guid.TryParse(value, out var parsed)
             ? parsed
             : throw new SettlementIntegrationException($"{fieldName} must be a GUID for Credit Wallet integration.");
+    }
+
+    private static void EnsureReservationScope(
+        SettlementRecordResponse record,
+        WalletReservationContext reservation)
+    {
+        if (reservation.TenantId != record.TenantId ||
+            reservation.BrandId != record.BrandId ||
+            reservation.PlayerId != ToGuid(record.PlayerAccountReference, "playerAccountReference"))
+        {
+            throw new SettlementIntegrationException(
+                "Credit Wallet reservation scope does not match the canonical settlement scope.");
+        }
     }
 
     private async Task<WalletReservationContext> GetReservationContextAsync(

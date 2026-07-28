@@ -1,5 +1,3 @@
-import { findBrandById } from "../brands/brand.repository";
-import { findMarketById } from "../markets/market.repository";
 import { validateAccountParentRule } from "./account-hierarchy.rules";
 import type {
   Account,
@@ -9,11 +7,15 @@ import type {
 } from "./account.types";
 import {
   createAccount as createAccountRecord,
+  type AccountGovernanceContext,
+  AccountIdempotencyConflictError,
+  AccountRepositoryError,
   disableAccount as disableAccountRecord,
   findAccountByCode,
   findAccountById,
   listAccounts as listAccountRecords,
   listChildren as listChildRecords,
+  resolveCanonicalMarketScope,
   updateAccount as updateAccountRecord,
 } from "./account.repository";
 import {
@@ -44,6 +46,13 @@ export class AccountBusinessRuleError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "AccountBusinessRuleError";
+  }
+}
+
+export class AccountRequestConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AccountRequestConflictError";
   }
 }
 
@@ -81,30 +90,6 @@ export function wouldCreateHierarchyCycle(
   }
 
   return getDescendantAccountIds(accounts, accountId).includes(newParentId);
-}
-
-async function assertMarketIsActive(marketId: string) {
-  const market = await findMarketById(marketId);
-
-  if (!market) {
-    throw new AccountBusinessRuleError("Market not found.");
-  }
-
-  if (market.status !== "ACTIVE") {
-    throw new AccountBusinessRuleError("Market must be active.");
-  }
-}
-
-async function assertBrandIsActive(brandId: string) {
-  const brand = await findBrandById(brandId);
-
-  if (!brand) {
-    throw new AccountBusinessRuleError("Brand not found.");
-  }
-
-  if (brand.status !== "ACTIVE") {
-    throw new AccountBusinessRuleError("Brand must be active.");
-  }
 }
 
 async function getValidatedParentAccount(
@@ -187,7 +172,33 @@ function enforceAccountConfigurationRules({
   }
 }
 
-export async function createAccount(input: CreateAccountInput): Promise<Account> {
+export async function resolveAccountScope(marketId: string) {
+  const scope = await resolveCanonicalMarketScope(marketId);
+  if (!scope) {
+    throw new AccountBusinessRuleError(
+      "Market must belong to an active canonical Platform hierarchy."
+    );
+  }
+  return scope;
+}
+
+function translateRepositoryError(error: unknown): never {
+  if (error instanceof AccountIdempotencyConflictError) {
+    throw new AccountRequestConflictError(error.message);
+  }
+  if (error instanceof AccountRepositoryError) {
+    throw new AccountBusinessRuleError(error.message);
+  }
+  throw error;
+}
+
+export async function createAccount(
+  input: CreateAccountInput,
+  context: AccountGovernanceContext = {
+    operatorId: "system",
+    reason: "account created",
+  }
+): Promise<Account> {
   const validation = validateCreateAccountInput(input);
 
   if (!validation.valid) {
@@ -201,17 +212,29 @@ export async function createAccount(input: CreateAccountInput): Promise<Account>
     throw new DuplicateAccountCodeError();
   }
 
-  await assertMarketIsActive(normalized.marketId);
-  await assertBrandIsActive(normalized.brandId);
+  const scope = await resolveAccountScope(normalized.marketId);
+  if (normalized.brandId && normalized.brandId !== scope.brandId) {
+    throw new AccountBusinessRuleError(
+      "Brand scope must match the canonical Market relationship."
+    );
+  }
   enforceAccountConfigurationRules({ input: normalized });
   await enforceHierarchyRules({ input: normalized });
 
-  return createAccountRecord(normalized);
+  try {
+    return await createAccountRecord(normalized, scope, context);
+  } catch (error) {
+    return translateRepositoryError(error);
+  }
 }
 
 export async function updateAccount(
   id: string,
-  input: UpdateAccountInput
+  input: UpdateAccountInput,
+  context: AccountGovernanceContext = {
+    operatorId: "system",
+    reason: "account updated",
+  }
 ): Promise<Account> {
   const validation = validateUpdateAccountInput(input);
 
@@ -235,21 +258,35 @@ export async function updateAccount(
     }
   }
 
-  if (normalized.marketId) {
-    await assertMarketIsActive(normalized.marketId);
-  }
-
-  if (normalized.brandId) {
-    await assertBrandIsActive(normalized.brandId);
+  const scope = normalized.marketId
+    ? await resolveAccountScope(normalized.marketId)
+    : undefined;
+  if (
+    normalized.brandId &&
+    normalized.brandId !== (scope?.brandId ?? existingAccount.brandId)
+  ) {
+    throw new AccountBusinessRuleError(
+      "Brand scope must match the canonical Market relationship."
+    );
   }
 
   enforceAccountConfigurationRules({ input: normalized, existingAccount });
   await enforceHierarchyRules({ input: normalized, existingAccount });
 
-  return updateAccountRecord(id, normalized);
+  try {
+    return await updateAccountRecord(id, normalized, scope, context);
+  } catch (error) {
+    return translateRepositoryError(error);
+  }
 }
 
-export async function disableAccount(id: string): Promise<Account> {
+export async function disableAccount(
+  id: string,
+  context: AccountGovernanceContext = {
+    operatorId: "system",
+    reason: "account disabled",
+  }
+): Promise<Account> {
   const account = await findAccountById(id);
 
   if (!account) {
@@ -266,7 +303,11 @@ export async function disableAccount(id: string): Promise<Account> {
     );
   }
 
-  return disableAccountRecord(id);
+  try {
+    return await disableAccountRecord(id, context);
+  } catch (error) {
+    return translateRepositoryError(error);
+  }
 }
 
 export async function listAccounts(): Promise<Account[]> {

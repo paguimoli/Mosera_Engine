@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using SettlementService.Application;
 using SettlementService.Configuration;
@@ -17,6 +19,11 @@ public sealed record SettlementRequestExecutionContext(
     string MathEvaluationCertificateHash,
     Guid OutcomeCertificateId,
     string OutcomeCertificateHash,
+    Guid TenantId,
+    Guid BrandId,
+    string GameReference,
+    string DrawOutcomeReference,
+    string ScopeHash,
     string TicketId,
     string TicketLineId,
     string PlayerAccountReference,
@@ -49,6 +56,11 @@ select
   request.math_evaluation_certificate_hash,
   request.outcome_certificate_id,
   request.outcome_certificate_hash,
+  request.tenant_id,
+  request.brand_id,
+  request.game_reference,
+  request.draw_outcome_reference,
+  request.scope_hash,
   request.ticket_id,
   request.ticket_line_id,
   request.player_account_reference,
@@ -102,6 +114,11 @@ where request.settlement_request_id = @settlement_request_id;
     {
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await AcquireRequestLockAsync(
+            connection,
+            transaction,
+            request.SettlementRequestId,
+            cancellationToken);
 
         var existing = await GetRecordByRequestIdAsync(connection, transaction, request.SettlementRequestId, cancellationToken);
         if (existing is not null)
@@ -122,6 +139,17 @@ where request.settlement_request_id = @settlement_request_id;
                 throw new SettlementExecutionConflictException("Conflicting settlement execution payload for completed request.");
             }
 
+            await FinancialInstructionRepository.EnsureCanonicalInstructionsAsync(
+                connection,
+                transaction,
+                existing,
+                cancellationToken);
+            await EnsureOutboxEventAsync(
+                connection,
+                transaction,
+                existing,
+                correlationId,
+                cancellationToken);
             var duplicateAttemptId = Guid.NewGuid();
             var duplicateHash = await AppendAttemptAsync(
                 connection,
@@ -144,6 +172,23 @@ where request.settlement_request_id = @settlement_request_id;
         }
 
         await InsertRecordAsync(connection, transaction, request, computation, cancellationToken);
+        var record = await GetRecordByRequestIdAsync(
+            connection,
+            transaction,
+            request.SettlementRequestId,
+            cancellationToken)
+            ?? throw new InvalidOperationException("SettlementRecord insert did not read back.");
+        await FinancialInstructionRepository.EnsureCanonicalInstructionsAsync(
+            connection,
+            transaction,
+            record,
+            cancellationToken);
+        await EnsureOutboxEventAsync(
+            connection,
+            transaction,
+            record,
+            correlationId,
+            cancellationToken);
         var attemptId = Guid.NewGuid();
         var attemptHash = await AppendAttemptAsync(
             connection,
@@ -156,8 +201,6 @@ where request.settlement_request_id = @settlement_request_id;
             cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
-        var record = await GetRecordByRequestIdAsync(request.SettlementRequestId, cancellationToken)
-            ?? throw new InvalidOperationException("SettlementRecord insert did not read back.");
         return new SettlementExecutionResult(
             SettlementExecutionStatus.Completed,
             false,
@@ -233,10 +276,13 @@ where request.settlement_request_id = @settlement_request_id;
             return new SettlementExecutionReadiness(
                 false,
                 false,
-                true,
-                true,
                 false,
                 true,
+                false,
+                false,
+                false,
+                false,
+                false,
                 true,
                 ["DATABASE_URL is not configured for Settlement execution."]);
         }
@@ -247,12 +293,44 @@ where request.settlement_request_id = @settlement_request_id;
             await using var command = connection.CreateCommand();
             command.CommandText = """
 select
+  (
   to_regclass('settlement_service.authoritative_settlement_records') is not null
   and to_regclass('settlement_service.settlement_execution_attempts') is not null
   and to_regclass('settlement_service.settlement_requests') is not null
-  and to_regclass('game_engine.settlement_input_records') is not null;
+  and to_regclass('settlement_service.financial_instructions') is not null
+  and to_regclass('settlement_service.financial_instruction_attempts') is not null
+  and to_regclass('settlement_service.settlement_evidence_classifications') is not null
+  and to_regclass('settlement_service.settlement_promotion_exclusions') is not null
+  and to_regclass('game_engine.settlement_input_records') is not null
+  ) as schema_ready,
+  (
+    select count(*) = 8
+    from platform_migrations.migration_history
+    where migration_id in (
+      '048_add_settlement_input_ingestion',
+      '049_add_authoritative_settlement_execution',
+      '050_add_financial_instruction_state_machine',
+      '051_add_financial_instruction_execution',
+      '052_add_settlement_recovery_reconciliation',
+      '053_add_resettlement_reversal_chains',
+      '054_add_settlement_authority_promotion_rehearsals',
+      '078_add_settlement_scope_and_evidence_governance'
+    )
+    and status = 'APPLIED'
+  ) as migrations_ready,
+  to_regclass('public.outbox_events') is not null as outbox_ready;
 """;
-            var ready = await command.ExecuteScalarAsync(cancellationToken) is true;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            await reader.ReadAsync(cancellationToken);
+            var schemaReady = reader.GetBoolean(reader.GetOrdinal("schema_ready"));
+            var migrationsReady = reader.GetBoolean(reader.GetOrdinal("migrations_ready"));
+            var outboxReady = reader.GetBoolean(reader.GetOrdinal("outbox_ready"));
+            var ready = schemaReady && migrationsReady && outboxReady;
+            var blockers = new List<string>();
+            if (!schemaReady) blockers.Add("Settlement execution or financial instruction tables are missing.");
+            if (!migrationsReady) blockers.Add("Canonical Settlement migrations, including scope governance migration 078, are not current.");
+            if (!outboxReady) blockers.Add("The durable outbox table is unavailable.");
+
             return new SettlementExecutionReadiness(
                 true,
                 ready,
@@ -261,19 +339,110 @@ select
                 ready,
                 ready,
                 true,
-                ready ? [] : ["Settlement execution tables are missing."]);
+                migrationsReady,
+                outboxReady,
+                true,
+                blockers);
         }
         catch (Exception error) when (error is NpgsqlException or InvalidOperationException or OperationCanceledException)
         {
             return new SettlementExecutionReadiness(
                 true,
                 false,
+                false,
                 true,
-                true,
+                false,
+                false,
+                false,
                 false,
                 false,
                 true,
                 [error.Message]);
+        }
+    }
+
+    private static async Task AcquireRequestLockAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid settlementRequestId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "select pg_advisory_xact_lock(hashtextextended(@scope, 0));";
+        command.Parameters.AddWithValue("scope", $"settlement-request:{settlementRequestId:N}");
+        await command.ExecuteScalarAsync(cancellationToken);
+    }
+
+    private static async Task EnsureOutboxEventAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        SettlementRecordResponse record,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        var eventId = CreateDeterministicGuid($"settlement-decision-outbox:{record.SettlementId:N}");
+        var payload = new SortedDictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["canonicalSettlementHash"] = record.CanonicalSettlementHash,
+            ["tenantId"] = record.TenantId,
+            ["brandId"] = record.BrandId,
+            ["gameReference"] = record.GameReference,
+            ["drawOutcomeReference"] = record.DrawOutcomeReference,
+            ["scopeHash"] = record.ScopeHash,
+            ["currency"] = record.Currency,
+            ["grossPayoutAmountMinor"] = record.GrossPayoutAmountMinor,
+            ["mathEvaluationCertificateHash"] = record.MathEvaluationCertificateHash,
+            ["outcomeCertificateHash"] = record.OutcomeCertificateHash,
+            ["playerAccountReference"] = record.PlayerAccountReference,
+            ["settlementId"] = record.SettlementId,
+            ["settlementOutcome"] = record.SettlementOutcome,
+            ["settlementRequestId"] = record.SettlementRequestId,
+            ["ticketId"] = record.TicketId,
+            ["ticketLineId"] = record.TicketLineId
+        };
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+insert into public.outbox_events (
+  id,
+  event_type,
+  aggregate_type,
+  aggregate_id,
+  payload,
+  status,
+  correlation_id
+)
+values (
+  @id,
+  'settlement.decision.recorded',
+  'settlement',
+  @aggregate_id,
+  cast(@payload as jsonb),
+  'PENDING',
+  @correlation_id
+)
+on conflict (id) do nothing;
+
+select count(*) = 1
+from public.outbox_events
+where id = @id
+  and event_type = 'settlement.decision.recorded'
+  and aggregate_type = 'settlement'
+  and aggregate_id = @aggregate_id
+  and payload ->> 'canonicalSettlementHash' = @canonical_settlement_hash;
+""";
+        command.Parameters.AddWithValue("id", eventId);
+        command.Parameters.AddWithValue("aggregate_id", record.SettlementId.ToString());
+        command.Parameters.AddWithValue("payload", JsonSerializer.Serialize(payload, JsonOptions));
+        command.Parameters.AddWithValue("correlation_id", correlationId);
+        command.Parameters.AddWithValue("canonical_settlement_hash", record.CanonicalSettlementHash);
+
+        if (await command.ExecuteScalarAsync(cancellationToken) is not true)
+        {
+            throw new SettlementExecutionConflictException(
+                "Settlement outbox evidence conflicts with the canonical settlement decision.");
         }
     }
 
@@ -296,6 +465,11 @@ insert into settlement_service.authoritative_settlement_records (
   math_evaluation_certificate_hash,
   outcome_certificate_id,
   outcome_certificate_hash,
+  tenant_id,
+  brand_id,
+  game_reference,
+  draw_outcome_reference,
+  scope_hash,
   ticket_id,
   ticket_line_id,
   player_account_reference,
@@ -320,6 +494,11 @@ values (
   @math_evaluation_certificate_hash,
   @outcome_certificate_id,
   @outcome_certificate_hash,
+  @tenant_id,
+  @brand_id,
+  @game_reference,
+  @draw_outcome_reference,
+  @scope_hash,
   @ticket_id,
   @ticket_line_id,
   @player_account_reference,
@@ -344,6 +523,11 @@ values (
         command.Parameters.AddWithValue("math_evaluation_certificate_hash", request.MathEvaluationCertificateHash);
         command.Parameters.AddWithValue("outcome_certificate_id", request.OutcomeCertificateId);
         command.Parameters.AddWithValue("outcome_certificate_hash", request.OutcomeCertificateHash);
+        command.Parameters.AddWithValue("tenant_id", request.TenantId);
+        command.Parameters.AddWithValue("brand_id", request.BrandId);
+        command.Parameters.AddWithValue("game_reference", request.GameReference);
+        command.Parameters.AddWithValue("draw_outcome_reference", request.DrawOutcomeReference);
+        command.Parameters.AddWithValue("scope_hash", request.ScopeHash);
         command.Parameters.AddWithValue("ticket_id", request.TicketId);
         command.Parameters.AddWithValue("ticket_line_id", request.TicketLineId);
         command.Parameters.AddWithValue("player_account_reference", request.PlayerAccountReference);
@@ -494,6 +678,11 @@ where settlement_request_id = @settlement_request_id;
             reader.GetString(reader.GetOrdinal("math_evaluation_certificate_hash")),
             reader.GetGuid(reader.GetOrdinal("outcome_certificate_id")),
             reader.GetString(reader.GetOrdinal("outcome_certificate_hash")),
+            reader.GetGuid(reader.GetOrdinal("tenant_id")),
+            reader.GetGuid(reader.GetOrdinal("brand_id")),
+            reader.GetString(reader.GetOrdinal("game_reference")),
+            reader.GetString(reader.GetOrdinal("draw_outcome_reference")),
+            reader.GetString(reader.GetOrdinal("scope_hash")),
             reader.GetString(reader.GetOrdinal("ticket_id")),
             reader.GetString(reader.GetOrdinal("ticket_line_id")),
             reader.GetString(reader.GetOrdinal("player_account_reference")),
@@ -519,6 +708,11 @@ where settlement_request_id = @settlement_request_id;
             reader.GetString(reader.GetOrdinal("math_evaluation_certificate_hash")),
             reader.GetGuid(reader.GetOrdinal("outcome_certificate_id")),
             reader.GetString(reader.GetOrdinal("outcome_certificate_hash")),
+            reader.GetGuid(reader.GetOrdinal("tenant_id")),
+            reader.GetGuid(reader.GetOrdinal("brand_id")),
+            reader.GetString(reader.GetOrdinal("game_reference")),
+            reader.GetString(reader.GetOrdinal("draw_outcome_reference")),
+            reader.GetString(reader.GetOrdinal("scope_hash")),
             reader.GetString(reader.GetOrdinal("ticket_id")),
             reader.GetString(reader.GetOrdinal("ticket_line_id")),
             reader.GetString(reader.GetOrdinal("player_account_reference")),
@@ -539,5 +733,11 @@ where settlement_request_id = @settlement_request_id;
     {
         var parameter = command.Parameters.Add(name, type);
         parameter.Value = value ?? DBNull.Value;
+    }
+
+    private static Guid CreateDeterministicGuid(string value)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
+        return new Guid(bytes[..16]);
     }
 }

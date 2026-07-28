@@ -11,4 +11,5 @@ export type QueueMessage<
 
 export interface QueuePublisher {
   publish(message: QueueMessage): Promise<void>;
+  close?(): Promise<void>;
 }

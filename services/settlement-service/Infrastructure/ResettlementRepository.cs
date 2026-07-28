@@ -16,6 +16,8 @@ public sealed record ResettlementSettlementRequestContext(
     string MathEvaluationCertificateHash,
     Guid OutcomeCertificateId,
     string OutcomeCertificateHash,
+    Guid TenantId,
+    Guid BrandId,
     string TicketId,
     string TicketLineId,
     string PlayerAccountReference,
@@ -91,6 +93,8 @@ select
   math_evaluation_certificate_hash,
   outcome_certificate_id,
   outcome_certificate_hash,
+  tenant_id,
+  brand_id,
   ticket_id,
   ticket_line_id,
   player_account_reference,
@@ -122,6 +126,8 @@ where settlement_request_id = @settlement_request_id;
             reader.GetString(reader.GetOrdinal("math_evaluation_certificate_hash")),
             reader.GetGuid(reader.GetOrdinal("outcome_certificate_id")),
             reader.GetString(reader.GetOrdinal("outcome_certificate_hash")),
+            reader.GetGuid(reader.GetOrdinal("tenant_id")),
+            reader.GetGuid(reader.GetOrdinal("brand_id")),
             reader.GetString(reader.GetOrdinal("ticket_id")),
             reader.GetString(reader.GetOrdinal("ticket_line_id")),
             reader.GetString(reader.GetOrdinal("player_account_reference")),
@@ -182,6 +188,9 @@ insert into settlement_service.resettlement_requests (
   resettlement_request_id,
   idempotency_key,
   canonical_request_hash,
+  tenant_id,
+  brand_id,
+  scope_hash,
   original_settlement_id,
   original_settlement_hash,
   original_settlement_input_id,
@@ -203,6 +212,9 @@ values (
   @resettlement_request_id,
   @idempotency_key,
   @canonical_request_hash,
+  (select tenant_id from settlement_service.authoritative_settlement_records where settlement_id = @original_settlement_id),
+  (select brand_id from settlement_service.authoritative_settlement_records where settlement_id = @original_settlement_id),
+  (select scope_hash from settlement_service.authoritative_settlement_records where settlement_id = @original_settlement_id),
   @original_settlement_id,
   @original_settlement_hash,
   @original_settlement_input_id,
@@ -297,6 +309,9 @@ values (
 insert into settlement_service.resettlement_records (
   resettlement_record_id,
   resettlement_request_id,
+  tenant_id,
+  brand_id,
+  scope_hash,
   lifecycle_state,
   original_settlement_id,
   original_settlement_hash,
@@ -311,6 +326,9 @@ insert into settlement_service.resettlement_records (
 values (
   @resettlement_record_id,
   @resettlement_request_id,
+  @tenant_id,
+  @brand_id,
+  @scope_hash,
   'Completed',
   @original_settlement_id,
   @original_settlement_hash,
@@ -325,6 +343,9 @@ values (
 """;
         command.Parameters.AddWithValue("resettlement_record_id", recordId);
         command.Parameters.AddWithValue("resettlement_request_id", request.ResettlementRequestId);
+        command.Parameters.AddWithValue("tenant_id", original.TenantId);
+        command.Parameters.AddWithValue("brand_id", original.BrandId);
+        command.Parameters.AddWithValue("scope_hash", original.ScopeHash);
         command.Parameters.AddWithValue("original_settlement_id", original.SettlementId);
         command.Parameters.AddWithValue("original_settlement_hash", original.CanonicalSettlementHash);
         command.Parameters.AddWithValue("original_settlement_input_id", original.SettlementInputId);
@@ -394,6 +415,11 @@ values (
             original.MathEvaluationCertificateHash,
             original.OutcomeCertificateId,
             original.OutcomeCertificateHash,
+            original.TenantId,
+            original.BrandId,
+            original.GameReference,
+            original.DrawOutcomeReference,
+            original.ScopeHash,
             original.TicketId,
             original.TicketLineId,
             original.PlayerAccountReference,
@@ -553,6 +579,9 @@ insert into settlement_service.financial_instructions (
   instruction_id,
   settlement_id,
   settlement_request_id,
+  tenant_id,
+  brand_id,
+  scope_hash,
   instruction_type,
   instruction_status,
   canonical_payload_hash,
@@ -569,6 +598,9 @@ values (
   @instruction_id,
   @settlement_id,
   @settlement_request_id,
+  @tenant_id,
+  @brand_id,
+  @scope_hash,
   @instruction_type,
   @instruction_status,
   @canonical_payload_hash,
@@ -585,6 +617,9 @@ values (
         command.Parameters.AddWithValue("instruction_id", definition.InstructionId);
         command.Parameters.AddWithValue("settlement_id", settlementRecord.SettlementId);
         command.Parameters.AddWithValue("settlement_request_id", settlementRecord.SettlementRequestId);
+        command.Parameters.AddWithValue("tenant_id", settlementRecord.TenantId);
+        command.Parameters.AddWithValue("brand_id", settlementRecord.BrandId);
+        command.Parameters.AddWithValue("scope_hash", settlementRecord.ScopeHash);
         command.Parameters.AddWithValue("instruction_type", definition.InstructionType.ToString());
         command.Parameters.AddWithValue("instruction_status", definition.InstructionStatus.ToString());
         command.Parameters.AddWithValue("canonical_payload_hash", definition.CanonicalPayloadHash);
@@ -616,6 +651,11 @@ insert into settlement_service.settlement_requests (
   math_evaluation_certificate_hash,
   outcome_certificate_id,
   outcome_certificate_hash,
+  tenant_id,
+  brand_id,
+  game_reference,
+  draw_outcome_reference,
+  scope_hash,
   ticket_id,
   ticket_line_id,
   player_account_reference,
@@ -641,6 +681,11 @@ select
   math_evaluation_certificate_hash,
   outcome_certificate_id,
   outcome_certificate_hash,
+  tenant_id,
+  brand_id,
+  game_reference,
+  draw_outcome_reference,
+  scope_hash,
   ticket_id,
   ticket_line_id,
   player_account_reference,
@@ -706,6 +751,11 @@ on conflict (settlement_request_id) do nothing;
         string mathEvaluationCertificateHash,
         Guid outcomeCertificateId,
         string outcomeCertificateHash,
+        Guid tenantId,
+        Guid brandId,
+        string gameReference,
+        string drawOutcomeReference,
+        string scopeHash,
         string ticketId,
         string ticketLineId,
         string playerAccountReference,
@@ -728,6 +778,7 @@ insert into settlement_service.authoritative_settlement_records (
   settlement_id, settlement_request_id, settlement_input_id, settlement_input_hash,
   math_evaluation_certificate_id, math_evaluation_certificate_hash,
   outcome_certificate_id, outcome_certificate_hash,
+  tenant_id, brand_id, game_reference, draw_outcome_reference, scope_hash,
   ticket_id, ticket_line_id, player_account_reference, currency, minor_unit_precision,
   stake_amount_minor, gross_payout_amount_minor, net_result_amount_minor,
   settlement_outcome, policy_version, canonical_settlement_hash, idempotency_key,
@@ -736,6 +787,7 @@ insert into settlement_service.authoritative_settlement_records (
   @settlement_id, @settlement_request_id, @settlement_input_id, @settlement_input_hash,
   @math_evaluation_certificate_id, @math_evaluation_certificate_hash,
   @outcome_certificate_id, @outcome_certificate_hash,
+  @tenant_id, @brand_id, @game_reference, @draw_outcome_reference, @scope_hash,
   @ticket_id, @ticket_line_id, @player_account_reference, @currency, @minor_unit_precision,
   @stake_amount_minor, @gross_payout_amount_minor, @net_result_amount_minor,
   @settlement_outcome, @policy_version, @canonical_settlement_hash, @idempotency_key,
@@ -750,6 +802,11 @@ insert into settlement_service.authoritative_settlement_records (
         command.Parameters.AddWithValue("math_evaluation_certificate_hash", mathEvaluationCertificateHash);
         command.Parameters.AddWithValue("outcome_certificate_id", outcomeCertificateId);
         command.Parameters.AddWithValue("outcome_certificate_hash", outcomeCertificateHash);
+        command.Parameters.AddWithValue("tenant_id", tenantId);
+        command.Parameters.AddWithValue("brand_id", brandId);
+        command.Parameters.AddWithValue("game_reference", gameReference);
+        command.Parameters.AddWithValue("draw_outcome_reference", drawOutcomeReference);
+        command.Parameters.AddWithValue("scope_hash", scopeHash);
         command.Parameters.AddWithValue("ticket_id", ticketId);
         command.Parameters.AddWithValue("ticket_line_id", ticketLineId);
         command.Parameters.AddWithValue("player_account_reference", playerAccountReference);
@@ -867,6 +924,9 @@ insert into settlement_service.resettlement_events (
             reader.GetGuid(reader.GetOrdinal("resettlement_request_id")),
             reader.GetString(reader.GetOrdinal("idempotency_key")),
             reader.GetString(reader.GetOrdinal("canonical_request_hash")),
+            reader.GetGuid(reader.GetOrdinal("tenant_id")),
+            reader.GetGuid(reader.GetOrdinal("brand_id")),
+            reader.GetString(reader.GetOrdinal("scope_hash")),
             reader.GetGuid(reader.GetOrdinal("original_settlement_id")),
             reader.GetString(reader.GetOrdinal("original_settlement_hash")),
             reader.GetGuid(reader.GetOrdinal("original_settlement_input_id")),
@@ -890,6 +950,9 @@ insert into settlement_service.resettlement_events (
         return new ResettlementChainDto(
             reader.GetGuid(reader.GetOrdinal("resettlement_record_id")),
             reader.GetGuid(reader.GetOrdinal("resettlement_request_id")),
+            reader.GetGuid(reader.GetOrdinal("tenant_id")),
+            reader.GetGuid(reader.GetOrdinal("brand_id")),
+            reader.GetString(reader.GetOrdinal("scope_hash")),
             Enum.Parse<ResettlementLifecycleState>(reader.GetString(reader.GetOrdinal("lifecycle_state"))),
             reader.GetGuid(reader.GetOrdinal("original_settlement_id")),
             reader.GetString(reader.GetOrdinal("original_settlement_hash")),
@@ -929,6 +992,11 @@ insert into settlement_service.resettlement_events (
             reader.GetString(reader.GetOrdinal("math_evaluation_certificate_hash")),
             reader.GetGuid(reader.GetOrdinal("outcome_certificate_id")),
             reader.GetString(reader.GetOrdinal("outcome_certificate_hash")),
+            reader.GetGuid(reader.GetOrdinal("tenant_id")),
+            reader.GetGuid(reader.GetOrdinal("brand_id")),
+            reader.GetString(reader.GetOrdinal("game_reference")),
+            reader.GetString(reader.GetOrdinal("draw_outcome_reference")),
+            reader.GetString(reader.GetOrdinal("scope_hash")),
             reader.GetString(reader.GetOrdinal("ticket_id")),
             reader.GetString(reader.GetOrdinal("ticket_line_id")),
             reader.GetString(reader.GetOrdinal("player_account_reference")),

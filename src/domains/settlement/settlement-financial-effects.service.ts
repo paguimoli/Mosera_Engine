@@ -3,7 +3,7 @@ import type {
   LedgerDirection,
   LedgerEntry,
   LedgerTransactionType,
-} from "../ledger/ledger.types";
+} from "../ledger/ledger.entrypoints";
 import type { SettlementRecord } from "./settlement.types";
 
 export type SettlementLedgerEffectCommand = CreateLedgerEntryInput;

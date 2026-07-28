@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import * as collectionRoute from "../../app/api/platform-management/[resource]/route";
 import * as runtimeContextRoute from "../../app/api/platform-management/runtime-context/route";
 import { setPlatformManagementAuthOverrideForTesting } from "../../src/domains/platform-management/platform-management-auth";
+import { performPlatformLifecycleAction } from "../../src/domains/platform-management/platform-management.repository";
 
 type JsonObject = Record<string, unknown>;
 
@@ -108,13 +109,9 @@ async function createBaseHierarchy(runId: string, label: string, options: {
   readonly brandStatus?: string;
   readonly websiteStatus?: string;
   readonly websiteMaintenance?: boolean;
-  readonly websiteHasMarket?: boolean;
   readonly domainStatus?: string;
   readonly canonicalHostname?: string;
   readonly aliasHostname?: string;
-  readonly websiteLanguage?: string;
-  readonly websiteCurrency?: string;
-  readonly websiteTimezone?: string;
 } = {}) {
   const organization = await create("organizations", {
     code: `${label}-org-${runId}`,
@@ -145,30 +142,27 @@ async function createBaseHierarchy(runId: string, label: string, options: {
     code: `${label}-brand-${runId}`,
     name: `${label} Brand`,
     displayName: `${label} Brand`,
-    status: options.brandStatus ?? "Active",
+    status: "Active",
     version: "1.0.0",
     contentHash: hash(`${label}:brand`, runId),
   });
   const brandId = recordId(brand.json, "brand");
 
-  let marketId: string | null = null;
-  if (options.websiteHasMarket !== false) {
-    const market = await create("markets", {
-      brandId,
-      code: `${label}-market-${runId}`,
-      name: `${label} Market`,
-      displayName: `${label} Market`,
-      country: null,
-      jurisdiction: null,
-      language: "fr",
-      currency: "EUR",
-      timezone: "UTC",
-      status: "Active",
-      version: "1.0.0",
-      contentHash: hash(`${label}:market`, runId),
-    });
-    marketId = recordId(market.json, "market");
-  }
+  const market = await create("markets", {
+    brandId,
+    code: `${label}-market-${runId}`,
+    name: `${label} Market`,
+    displayName: `${label} Market`,
+    country: null,
+    jurisdiction: null,
+    language: "fr",
+    currency: "EUR",
+    timezone: "UTC",
+    status: "Active",
+    version: "1.0.0",
+    contentHash: hash(`${label}:market`, runId),
+  });
+  const marketId = recordId(market.json, "market");
 
   const website = await create("websites", {
     tenantId,
@@ -177,9 +171,9 @@ async function createBaseHierarchy(runId: string, label: string, options: {
     code: `${label}-site-${runId}`,
     displayName: `${label} Website`,
     status: options.websiteStatus ?? "Active",
-    defaultLanguage: options.websiteLanguage ?? "es",
-    defaultCurrency: options.websiteCurrency ?? "CRC",
-    defaultTimezone: options.websiteTimezone ?? "America/Costa_Rica",
+    defaultLanguage: "fr",
+    defaultCurrency: "EUR",
+    defaultTimezone: "UTC",
     maintenanceMode: options.websiteMaintenance ?? false,
     version: "1.0.0",
     contentHash: hash(`${label}:website`, runId),
@@ -243,6 +237,15 @@ async function createBaseHierarchy(runId: string, label: string, options: {
     version: "1.0.0",
     contentHash: hash(`${label}:asset`, runId),
   });
+
+  if (options.brandStatus === "Suspended") {
+    await performPlatformLifecycleAction("brands", brandId, "suspend", {
+      version: "1.0.1",
+      reason: "runtime hierarchy inactive-parent QA",
+      operator: "qa:runtime-brand-context",
+      contentHash: hash(`${label}:brand:suspended`, runId),
+    });
+  }
 
   return {
     organizationId,
@@ -347,27 +350,31 @@ async function main() {
       { status: inactiveParentContext.response.status, body: inactiveParentContext.json }
     );
 
-    const noMarket = await createBaseHierarchy(runId, "no-market", {
-      websiteHasMarket: false,
+    const missingMarketWebsite = await create("websites", {
+      tenantId: base.tenantId,
+      brandId: base.brandId,
+      code: `missing-market-site-${runId}`,
+      displayName: "Missing Market Website",
+      status: "Active",
+      version: "1.0.0",
+      contentHash: hash("missing-market:website", runId),
     });
-    const noMarketContextResponse = await runtimeContext(noMarket.canonicalHostname);
-    const noMarketContext = context(noMarketContextResponse.json);
     addCheck(
-      "website without market resolves",
-      noMarketContextResponse.response.status === 200 && noMarketContext?.marketId === null,
-      { status: noMarketContextResponse.response.status, body: noMarketContextResponse.json }
+      "website without market fails closed",
+      missingMarketWebsite.response.status === 400 && missingMarketWebsite.json.success === false,
+      { status: missingMarketWebsite.response.status, body: missingMarketWebsite.json }
     );
     addCheck(
       "jurisdiction omitted resolves",
-      noMarketContextResponse.response.status === 200 && noMarketContext?.tenantId === noMarket.tenantId,
-      { context: noMarketContext ?? {} }
+      canonical.response.status === 200 && canonicalContext?.tenantId === base.tenantId,
+      { context: canonicalContext ?? {} }
     );
 
     addCheck(
       "locale/currency/timezone precedence works",
-      canonicalContext?.defaultLanguage === "es" &&
-        canonicalContext?.defaultCurrency === "CRC" &&
-        canonicalContext?.defaultTimezone === "America/Costa_Rica",
+      canonicalContext?.defaultLanguage === "fr" &&
+        canonicalContext?.defaultCurrency === "EUR" &&
+        canonicalContext?.defaultTimezone === "UTC",
       { context: canonicalContext ?? {} }
     );
 
@@ -449,11 +456,12 @@ async function main() {
     const crossTenantWebsite = await create("websites", {
       tenantId: other.tenantId,
       brandId: base.brandId,
+      marketId: base.marketId,
       code: `cross-tenant-site-${runId}`,
       displayName: "Cross Tenant Website",
       status: "Active",
-      defaultLanguage: "en",
-      defaultCurrency: "USD",
+      defaultLanguage: "fr",
+      defaultCurrency: "EUR",
       defaultTimezone: "UTC",
       version: "1.0.0",
       contentHash: hash("cross-tenant-website", runId),

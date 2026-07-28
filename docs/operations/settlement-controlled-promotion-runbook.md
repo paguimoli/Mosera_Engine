@@ -1,8 +1,49 @@
 # Settlement Controlled Promotion Runbook
 
+> Historical control record: the current P1 Settlement Authority does not
+> permit `SETTLEMENT_AUTHORITY=SERVICE`. The promotion commands described below
+> document the earlier monolith-era rehearsal workflow and must not be used as
+> production cutover authority. Current promotion criteria and rollback rules
+> are defined in `docs/architecture/service-contract-settlement.md` and exposed
+> by `/v1/settlement/authority/readiness`.
+
+## Current P1 Rehearsal
+
+Run the current evidence sequence against a clean disposable database:
+
+```bash
+npm run migrations:local:run
+npm run qa:settlement-input-ingestion
+npm run qa:settlement-execution
+npm run qa:financial-instructions
+npm run qa:settlement-recovery
+npm run qa:resettlement
+npm run qa:settlement-evidence-classification
+npm run qa:settlement-clean-promotion-rehearsal
+```
+
+The runtime must use `SETTLEMENT_AUTHORITY=MONOLITH`,
+`SETTLEMENT_PRODUCTION_POSTING_ENABLED=false`, and
+`SETTLEMENT_LEGACY_MUTATIONS_ENABLED=false`.
+
+The rehearsal passes only when canonical tenant/brand scope is consistent,
+orphan and unresolved historical counts are zero, Ledger/Credit readiness
+passes, all selected comparisons match, and append-only rehearsal evidence is
+stored. A passing rehearsal does not switch authority.
+
+Historical exclusions require append-only classification evidence. Unknown,
+inconsistent, or production-shaped records remain promotion blockers.
+
+Rollback remains an explicit switch to `MONOLITH`. Operators must stop new
+SERVICE commands, drain or classify in-flight instructions, reconcile target
+services, preserve all evidence, then validate MONOLITH readiness. There is no
+automatic fallback.
+
 ## Purpose
 
-This runbook describes the operator checklist for simulating and executing controlled Settlement authority promotion and rollback.
+This runbook preserves the earlier operator checklist for settlement promotion
+and rollback evidence. Promotion execution is superseded; simulation history
+remains useful for audit.
 
 Phase 15.0 executes Settlement authority promotion only. Ledger and Credit remain `MONOLITH`.
 

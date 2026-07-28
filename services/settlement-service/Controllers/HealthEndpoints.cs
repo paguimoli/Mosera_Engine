@@ -65,17 +65,35 @@ public static class HealthEndpoints
                 ["financialInstructions"] = financialInstructionsReady.RepositoryReachable ? "ready" : "not_ready",
                 ["settlementRecovery"] = settlementRecoveryReady.RepositoryReachable ? "ready" : "not_ready",
                 ["resettlement"] = resettlementReady.RepositoryReachable ? "ready" : "not_ready",
+                ["settlementMigrations"] = settlementExecutionReady.MigrationReady ? "ready" : "not_ready",
+                ["settlementOutbox"] = settlementExecutionReady.OutboxReady ? "ready" : "not_ready",
+                ["canonicalDecisionTransaction"] = settlementExecutionReady.CanonicalDecisionTransactionReady ? "ready" : "not_ready",
+                ["ledgerService"] = settlementAuthorityReady.LedgerService.Ready ? "ready" : "not_ready",
+                ["creditWalletService"] = settlementAuthorityReady.CreditWalletService.Ready ? "ready" : "not_ready",
                 ["rabbitmq"] = rabbitMqReady.Ready ? "ready" : "not_ready",
                 ["redis"] = redisReady.Ready ? "ready" : "not_ready"
             };
+            var authorityModeReady = settlementAuthorityReady.AuthorityMode switch
+            {
+                SettlementAuthorityMode.MONOLITH => true,
+                SettlementAuthorityMode.SERVICE_SHADOW or SettlementAuthorityMode.SERVICE_DRY_RUN =>
+                    settlementAuthorityReady.ServiceAuthorityPromotionAllowed,
+                SettlementAuthorityMode.SERVICE => settlementAuthorityReady.AuthorityActivationEnabled,
+                _ => false
+            };
             var ready = rabbitMqReady.Ready &&
                 redisReady.Ready &&
-                (!databaseConfigured || databaseReady.Ready) &&
-                (!databaseConfigured || settlementInputIngestionReady.RepositoryReachable) &&
-                (!databaseConfigured || settlementExecutionReady.RepositoryReachable) &&
-                (!databaseConfigured || financialInstructionsReady.RepositoryReachable) &&
-                (!databaseConfigured || settlementRecoveryReady.RepositoryReachable) &&
-                (!databaseConfigured || resettlementReady.RepositoryReachable);
+                databaseConfigured &&
+                databaseReady.Ready &&
+                settlementInputIngestionReady.RepositoryReachable &&
+                settlementExecutionReady.RepositoryReachable &&
+                settlementExecutionReady.CanonicalDecisionTransactionReady &&
+                settlementExecutionReady.MigrationReady &&
+                settlementExecutionReady.OutboxReady &&
+                financialInstructionsReady.RepositoryReachable &&
+                settlementRecoveryReady.RepositoryReachable &&
+                resettlementReady.RepositoryReachable &&
+                authorityModeReady;
 
             var response = new SettlementHealthResponse(
                 ready ? "ok" : "error",

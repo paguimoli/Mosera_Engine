@@ -15,6 +15,7 @@ import {
   validateCreateMarketInput,
   validateUpdateMarketInput,
 } from "./market.validation";
+import { assertLegacyPlatformDevelopmentMutationAllowed } from "../platform-management/platform-mutation-authority";
 
 export class DuplicateMarketCodeError extends Error {
   constructor(message = "Duplicate market code.") {
@@ -53,6 +54,7 @@ export function hasDuplicateMarketCode(
 }
 
 export async function createMarket(input: CreateMarketInput): Promise<Market> {
+  assertLegacyPlatformDevelopmentMutationAllowed();
   const validation = validateCreateMarketInput(input);
 
   if (!validation.valid) {
@@ -79,6 +81,7 @@ export async function updateMarket(
   id: string,
   input: UpdateMarketInput
 ): Promise<Market> {
+  assertLegacyPlatformDevelopmentMutationAllowed();
   const validation = validateUpdateMarketInput(input);
 
   if (!validation.valid) {
@@ -105,6 +108,7 @@ export async function updateMarket(
 }
 
 export async function setDefaultMarket(id: string): Promise<Market> {
+  assertLegacyPlatformDevelopmentMutationAllowed();
   const market = await findMarketById(id);
 
   if (!market) {
@@ -115,6 +119,7 @@ export async function setDefaultMarket(id: string): Promise<Market> {
 }
 
 export async function disableMarket(id: string): Promise<Market> {
+  assertLegacyPlatformDevelopmentMutationAllowed();
   const market = await findMarketById(id);
 
   if (!market) {

@@ -1,5 +1,18 @@
 # Outstanding Requirements Register v1
 
+## P1-014.5 Launch Configuration Freeze
+
+The backend is **READY FOR BACKEND FREEZE** under launch configuration
+`P1-014.5-2026-07-25`. The credit-only operating model is enforced, authority
+promotion is deferred, and products are explicitly disabled pending business
+approval. Remaining work is deployment approval and controlled authority or
+product promotion, not new backend launch functionality.
+
+> Backend completion status is maintained in
+> `docs/project/backend-completion-summary-v1.md`. That document is the
+> authoritative P1-014 inventory, launch-gap register, API classification, and
+> Backend Freeze checklist.
+
 ## 1. Purpose
 
 This register is the standing project governance record for remaining work,
@@ -19,6 +32,9 @@ runtime readiness into controlled launch preparation.
 | P0-003 | Service Authority Promotion | Ledger, Credit Wallet, and Settlement Service capability baselines, dry runs, controlled authority switches, and guardrail evidence have been built without changing production defaults. | Authority defaults must remain conservative until launch readiness evidence and operator approvals are complete. |
 | P0-004 | Production Infrastructure | Production compose split, Caddy reverse proxy, config enforcement, managed service wiring, CI/CD/GHCR pipeline, migration governance, observability baseline, production runtime QA, queue/DLQ operations, and container/network hardening have been implemented. | No production deployment is enabled. Real managed credentials, secret manager integration, staging rehearsal, and deployment evidence remain required. |
 | P0-005 | Outcome, RNG, Math, and Certification Governance | Outcome Authority ADRs, immutable manifest/certificate schemas, Outcome DSL, Math/RTP governance, RNG provider evidence, dry-run Outcome pipeline, dry-run Math Evaluation certificates, and Certification Pack v1 export storage have been implemented. | Production signing, production RNG authority activation, lab certification workflow, and UI/API export surfaces remain future work. |
+| P0-006 | Platform Management Foundation | Immutable Platform, Organization, Tenant, Brand, Market, and Website hierarchy; domains, themes/assets, availability, scoped APIs/RBAC, lifecycle, runtime context, and fail-closed hierarchy readiness are implemented. | UI, onboarding automation, and parked hierarchy expansions remain deferred. |
+| P1-014.3 | Canonical Ticket Lifecycle | Exact Platform/Account/Agent, Product/Game/Manifest/Paytable, availability, and draw versions are captured in immutable Ticket snapshots. Acceptance, Credit reservation, lifecycle evidence, and outbox are atomic; scoped reads, cancellation, downstream correlations, recovery, and readiness are implemented. | Launch configuration freeze remains a Backend Freeze blocker. |
+| P1-014.4 | Legacy Platform Mutation Retirement | The canonical Platform Management API is the sole production writer. Legacy Brand/Market writes return `410`, development seed writers are explicitly gated, retained reads are classified separately, and readiness fails on an enabled bypass. | Deprecated Brand/Market reads and local seed tooling can be removed after all non-launch consumers migrate. |
 
 ## 3. Current Core Services
 
@@ -37,11 +53,10 @@ runtime readiness into controlled launch preparation.
 
 ## 4. Remaining P0 Work
 
-The following P0 areas remain open after P0-005:
+The following P0 areas remain open after the Platform Management foundation:
 
 | P0 Item | Name | Objective | Exit Criteria |
 | --- | --- | --- | --- |
-| P0-006 | Platform Management Foundation | Build the operator-facing foundation needed to manage the platform safely before any broader launch. | Admin workflows, configuration governance, launch-mode controls, evidence views, and operational approval paths are available and QA-backed. |
 | P0-007 | Launch Product Configuration | Freeze the first launch product set, markets, rules, limits, risk posture, and operational defaults. | Launch configuration can be exported, reviewed, approved, and reproduced. |
 | P0-008 | Staging Rehearsal | Run the production-like topology against staging credentials and staging managed services. | Migration, startup, rollback, observability, queue, and runtime QA evidence is captured. |
 | P0-009 | Production Deployment Readiness | Prepare the first production deployment without enabling public launch. | Images, secrets, DNS, TLS, migrations, runbooks, backup/PITR, and incident procedures are approved. |
@@ -49,9 +64,17 @@ The following P0 areas remain open after P0-005:
 
 ## 5. P0-006 Platform Management Foundation
 
-P0-006 should focus on management capabilities rather than new product behavior.
+The durable configuration foundation is complete. Its canonical hierarchy is:
 
-Required foundations:
+`Platform -> Organization -> Tenant -> Brand -> Market -> Website`
+
+Each entity has one parent, append-only versions, lifecycle governance, scoped
+authorization, and readiness validation. New websites require an exact Market;
+pre-canonical unscoped websites remain historical but cannot resolve as active.
+Authentication, Wallet, Ledger, Settlement, and Outcome references are checked
+without changing those authorities.
+
+Remaining management-surface work:
 
 - platform status dashboard for service health, readiness, authority posture, and production blockers
 - launch configuration register for markets, games, limits, payment posture, and operational mode
@@ -62,6 +85,17 @@ Required foundations:
 - read-only production diagnostics where safe
 - explicit disabled-state UI for deferred features
 - release/runbook links surfaced from the operator workspace
+
+Mutation authority is frozen as follows:
+
+- production create: `POST /api/platform-management/{resource}`
+- production metadata change: immutable
+  `POST /api/platform-management/{resource}/{id}/lifecycle/supersede`
+- production state change: explicit `activate`, `suspend`, `retire`, or
+  `cancel` lifecycle action
+- legacy `/api/brands/**` and `/api/markets/**` writes: retired with `410`
+- Supabase-era default Brand/Market seeds: disposable development only
+- SQL migrations: controlled migration runner only, never production HTTP
 
 P0-006 must not hide incomplete production capabilities behind polished UI. If a
 capability is not launch-ready, the management surface should say so clearly.
@@ -226,6 +260,31 @@ promoted through planning:
 - player-friendly ticket proof/evidence receipt
 - mobile agent console
 - localized market launch templates
+- self-service tenant onboarding
+- delegated Brand administration
+- white-label provisioning automation
+- hierarchy templates
+- bulk Market cloning
+- domain verification automation
+- advanced theme inheritance
+- multi-region configuration inheritance
+- reseller or franchise hierarchy
+- platform configuration UI
+
+### Ticket Innovation Backlog
+
+Recorded for later planning and intentionally excluded from launch-critical
+Ticket scope:
+
+- operator ticket investigation workspace
+- advanced bulk ticket operations
+- predictive fraud scoring
+- player-facing ticket visualization enhancements
+- ticket transfer or gifting
+- advanced dispute workflows
+- offline retail synchronization
+- barcode/QR enrichment beyond launch need
+- high-volume archival projections
 
 ## 15. Register Maintenance
 

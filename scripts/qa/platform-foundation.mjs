@@ -124,6 +124,10 @@ const marketCode = `market-${runId}`;
 const version = "1.0.0";
 
 addCheck("platform schema exists", queryScalar("select exists(select 1 from information_schema.schemata where schema_name = 'platform');") === "t");
+addCheck("canonical Platform root exists", rowCount(`
+select count(*) from platform.platforms
+where id = '00000000-0000-4000-8000-000000000001' and status = 'Active';
+`) === 1);
 addCheck("organizations table exists", existsRegclass("platform.organizations"));
 addCheck("tenants table exists", existsRegclass("platform.tenants"));
 addCheck("brands table exists", existsRegclass("platform.brands"));
@@ -137,7 +141,10 @@ runSql(insertOrganizationSql({
 }));
 addCheck("organization creation persists", rowCount(`
 select count(*) from platform.organizations
-where id = '${organizationId}' and organization_code = ${sqlString(organizationCode)} and status = 'Active';
+where id = '${organizationId}'
+  and platform_id = '00000000-0000-4000-8000-000000000001'
+  and organization_code = ${sqlString(organizationCode)}
+  and status = 'Active';
 `) === 1, { organizationId });
 
 runSql(insertTenantSql({
@@ -267,6 +274,8 @@ where id = '${marketId}';
 addCheck("append-only delete enforcement", deleteAttempt.status !== 0, { stderr: deleteAttempt.stderr.trim() });
 
 const requiredIndexes = [
+  "ux_platforms_singleton",
+  "idx_platform_organizations_platform_code",
   "idx_platform_organizations_code",
   "idx_platform_tenants_parent_code",
   "idx_platform_brands_parent_code",

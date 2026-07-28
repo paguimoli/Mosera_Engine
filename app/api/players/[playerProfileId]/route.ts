@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 
 import {
   AuthMiddlewareError,
-  requirePermission,
 } from "@/src/domains/auth/auth-middleware";
+import {
+  AccountScopeNotFoundError,
+  requireScopedAccount,
+} from "@/src/domains/accounts/account-scope-governance";
 import { findPlayerProfileById } from "@/src/domains/players/player-profile.repository";
 import {
   disablePlayerProfile,
@@ -106,7 +109,6 @@ export async function GET(request: Request, { params }: RouteParams) {
   const { playerProfileId } = await params;
 
   try {
-    await requirePermission(request, "players.view");
     const playerProfile = await findPlayerProfileById(playerProfileId);
 
     if (!playerProfile) {
@@ -118,6 +120,7 @@ export async function GET(request: Request, { params }: RouteParams) {
         { status: 404 }
       );
     }
+    await requireScopedAccount(request, playerProfile.accountId, "players.view");
 
     return NextResponse.json({
       success: true,
@@ -126,6 +129,12 @@ export async function GET(request: Request, { params }: RouteParams) {
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {
       return authErrorResponse(error);
+    }
+    if (error instanceof AccountScopeNotFoundError) {
+      return NextResponse.json(
+        { success: false, error: "Player profile not found." },
+        { status: 404 }
+      );
     }
 
     return NextResponse.json(
@@ -155,10 +164,23 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   const input = getUpdatePlayerProfileInput(body as Record<string, unknown>);
 
   try {
-    await requirePermission(
+    const existingProfile = await findPlayerProfileById(playerProfileId);
+    if (!existingProfile) {
+      return NextResponse.json(
+        { success: false, error: "Player profile not found." },
+        { status: 404 }
+      );
+    }
+    const permission =
+      input.status === "DISABLED" ? "players.disable" : "players.edit";
+    await requireScopedAccount(
       request,
-      input.status === "DISABLED" ? "players.disable" : "players.edit"
+      existingProfile.accountId,
+      permission
     );
+    if (input.accountId && input.accountId !== existingProfile.accountId) {
+      await requireScopedAccount(request, input.accountId, permission);
+    }
     const playerProfile =
       input.status === "DISABLED"
         ? await disablePlayerProfile(playerProfileId)
@@ -173,6 +195,12 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {
       return authErrorResponse(error);
+    }
+    if (error instanceof AccountScopeNotFoundError) {
+      return NextResponse.json(
+        { success: false, error: "Player profile not found." },
+        { status: 404 }
+      );
     }
 
     if (error instanceof PlayerProfileValidationError) {

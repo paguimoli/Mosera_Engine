@@ -95,6 +95,26 @@ where @account_type = 'EMERGENCY' and r.code = 'PLATFORM_SUPER_ADMIN' and r.disa
             if (await lockCommand.ExecuteScalarAsync(cancellationToken) is null) throw new InvalidOperationException("identity_not_found");
         }
         await InsertCredential(connection, transaction, credential, cancellationToken);
+        await using (var sessions = connection.CreateCommand())
+        {
+            sessions.Transaction = transaction;
+            sessions.CommandText = """
+update auth_service.canonical_sessions
+set revoked_at = now(), revoked_reason = 'password_changed'
+where identity_id = @identity_id and revoked_at is null;
+update auth_service.sessions
+set state = 'REVOKED', revoked_at = now()
+where identity_id = @identity_id and revoked_at is null;
+update auth_service.refresh_tokens
+set revoked_at = coalesce(revoked_at, now()), revoked_reason = coalesce(revoked_reason, 'password_changed')
+where identity_id = @identity_id and revoked_at is null;
+update auth_service.tokens
+set revoked_at = coalesce(revoked_at, now())
+where identity_id = @identity_id and revoked_at is null;
+""";
+            sessions.Parameters.AddWithValue("identity_id", identityId);
+            await sessions.ExecuteNonQueryAsync(cancellationToken);
+        }
         await InsertAudit(connection, transaction, evidence, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return credential;
@@ -272,7 +292,17 @@ where identity_id = @identity_id and revoked_at is null;
         await using (var revokeLegacy = connection.CreateCommand())
         {
             revokeLegacy.Transaction = transaction;
-            revokeLegacy.CommandText = "update auth_service.sessions set state = 'REVOKED', revoked_at = now() where identity_id = @identity_id and state = 'ACTIVE' and revoked_at is null";
+            revokeLegacy.CommandText = """
+update auth_service.sessions
+set state = 'REVOKED', revoked_at = now()
+where identity_id = @identity_id and state = 'ACTIVE' and revoked_at is null;
+update auth_service.refresh_tokens
+set revoked_at = coalesce(revoked_at, now()), revoked_reason = coalesce(revoked_reason, 'session_replaced')
+where identity_id = @identity_id;
+update auth_service.tokens
+set revoked_at = coalesce(revoked_at, now())
+where identity_id = @identity_id;
+""";
             revokeLegacy.Parameters.AddWithValue("identity_id", identity.IdentityId);
             await revokeLegacy.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -356,8 +386,22 @@ where session_token_hash = @token_hash and revoked_at is null and idle_expires_a
         await using (var legacy = connection.CreateCommand())
         {
             legacy.Transaction = transaction;
-            legacy.CommandText = "update auth_service.sessions set state = 'REVOKED', revoked_at = now() where id in (select id from auth_service.canonical_sessions where session_token_hash = @token_hash) and revoked_at is null";
+            legacy.CommandText = """
+update auth_service.sessions
+set state = 'REVOKED', revoked_at = now()
+where id in (select id from auth_service.canonical_sessions where session_token_hash = @token_hash)
+  and revoked_at is null;
+update auth_service.refresh_tokens
+set revoked_at = coalesce(revoked_at, now()), revoked_reason = coalesce(revoked_reason, @reason)
+where session_id in (select id from auth_service.canonical_sessions where session_token_hash = @token_hash);
+update auth_service.tokens
+set revoked_at = coalesce(revoked_at, now())
+where metadata->>'sessionId' in (
+  select id::text from auth_service.canonical_sessions where session_token_hash = @token_hash
+);
+""";
             legacy.Parameters.AddWithValue("token_hash", tokenHash);
+            legacy.Parameters.AddWithValue("reason", evidence.Reason);
             await legacy.ExecuteNonQueryAsync(cancellationToken);
         }
         if (count > 0) await InsertAudit(connection, transaction, evidence, cancellationToken);
@@ -381,8 +425,19 @@ where session_token_hash = @token_hash and revoked_at is null and idle_expires_a
         await using (var legacy = connection.CreateCommand())
         {
             legacy.Transaction = transaction;
-            legacy.CommandText = "update auth_service.sessions set state = 'REVOKED', revoked_at = now() where identity_id = @identity_id and revoked_at is null";
+            legacy.CommandText = """
+update auth_service.sessions
+set state = 'REVOKED', revoked_at = now()
+where identity_id = @identity_id and revoked_at is null;
+update auth_service.refresh_tokens
+set revoked_at = coalesce(revoked_at, now()), revoked_reason = coalesce(revoked_reason, @reason)
+where identity_id = @identity_id;
+update auth_service.tokens
+set revoked_at = coalesce(revoked_at, now())
+where identity_id = @identity_id;
+""";
             legacy.Parameters.AddWithValue("identity_id", identityId);
+            legacy.Parameters.AddWithValue("reason", evidence.Reason);
             await legacy.ExecuteNonQueryAsync(cancellationToken);
         }
         await InsertAudit(connection, transaction, evidence with { Reason = $"{evidence.Reason};revoked_count:{count}" }, cancellationToken);
@@ -407,9 +462,21 @@ where session_token_hash = @token_hash and revoked_at is null and idle_expires_a
         await using (var legacy = connection.CreateCommand())
         {
             legacy.Transaction = transaction;
-            legacy.CommandText = "update auth_service.sessions set state = 'REVOKED', revoked_at = now() where id = @session_id and identity_id = @identity_id and revoked_at is null";
+            legacy.CommandText = """
+update auth_service.sessions
+set state = 'REVOKED', revoked_at = now()
+where id = @session_id and identity_id = @identity_id and revoked_at is null;
+update auth_service.refresh_tokens
+set revoked_at = coalesce(revoked_at, now()), revoked_reason = coalesce(revoked_reason, @reason)
+where session_id = @session_id and identity_id = @identity_id;
+update auth_service.tokens
+set revoked_at = coalesce(revoked_at, now())
+where identity_id = @identity_id and metadata->>'sessionId' = @session_id_text;
+""";
             legacy.Parameters.AddWithValue("session_id", sessionId);
+            legacy.Parameters.AddWithValue("session_id_text", sessionId.ToString());
             legacy.Parameters.AddWithValue("identity_id", evidence.SubjectIdentityId!.Value);
+            legacy.Parameters.AddWithValue("reason", evidence.Reason);
             await legacy.ExecuteNonQueryAsync(cancellationToken);
         }
         if (count > 0) await InsertAudit(connection, transaction, evidence, cancellationToken);

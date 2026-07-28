@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 
 import {
   AuthMiddlewareError,
-  requirePermission,
 } from "@/src/domains/auth/auth-middleware";
+import {
+  AccountScopeNotFoundError,
+  requireScopedAccount,
+} from "@/src/domains/accounts/account-scope-governance";
 import {
   CreditReservationValidationError,
   getPlayerCreditSummary,
@@ -32,7 +35,7 @@ export async function GET(request: Request, { params }: RouteParams) {
   const correlationId = getOrCreateCorrelationId(request);
 
   try {
-    await requirePermission(request, "accounts.view");
+    await requireScopedAccount(request, playerId, "accounts.view");
     const summary = await getPlayerCreditSummary(playerId);
 
     return NextResponse.json({
@@ -43,6 +46,12 @@ export async function GET(request: Request, { params }: RouteParams) {
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {
       return authErrorResponse(error);
+    }
+    if (error instanceof AccountScopeNotFoundError) {
+      return NextResponse.json(
+        { success: false, error: error.message, correlationId },
+        { status: 404 }
+      );
     }
 
     if (error instanceof CreditReservationValidationError) {

@@ -5,7 +5,10 @@ public sealed record ServiceConfiguration(
     string Environment,
     RabbitMqConfiguration RabbitMq,
     RedisConfiguration Redis,
-    GameEngineSchemaConfiguration Schema)
+    GameEngineSchemaConfiguration Schema,
+    bool CanonicalOutcomePipelineEnabled,
+    bool LegacyOutcomePublicationEnabled,
+    bool CanonicalOutcomeRecoveryEnabled)
 {
     public static ServiceConfiguration FromEnvironment(IHostEnvironment environment)
     {
@@ -16,7 +19,19 @@ public sealed record ServiceConfiguration(
                 GetEnvironmentValue("RABBITMQ_URL", string.Empty),
                 GetEnvironmentValue("RABBITMQ_EXCHANGE_NAME", "lottery.events")),
             new RedisConfiguration(GetEnvironmentValue("REDIS_URL", string.Empty)),
-            new GameEngineSchemaConfiguration(GetEnvironmentValue("GAME_ENGINE_SCHEMA", "game_engine")));
+            new GameEngineSchemaConfiguration(GetEnvironmentValue("GAME_ENGINE_SCHEMA", "game_engine")),
+            string.Equals(
+                System.Environment.GetEnvironmentVariable("OUTCOME_CANONICAL_PIPELINE_ENABLED"),
+                "true",
+                StringComparison.OrdinalIgnoreCase),
+            string.Equals(
+                System.Environment.GetEnvironmentVariable("OUTCOME_LEGACY_PUBLICATION_ENABLED"),
+                "true",
+                StringComparison.OrdinalIgnoreCase),
+            string.Equals(
+                System.Environment.GetEnvironmentVariable("OUTCOME_CANONICAL_RECOVERY_ENABLED"),
+                "true",
+                StringComparison.OrdinalIgnoreCase));
     }
 
     private static string GetEnvironmentValue(string name, string fallback)

@@ -6,6 +6,12 @@ import {
 import { dispatchPendingOutboxEvents } from "@/src/domains/workers/outbox-dispatcher.service";
 import { createCorrelationId } from "@/src/lib/observability/correlation";
 import { logger } from "@/src/lib/observability/logger";
+import { createQueuePublisher } from "@/src/lib/queue/queue.publisher-factory";
+import {
+  closeCompiledWorkerRuntimePool,
+  recordCompiledWorkerRuntime,
+  startCompiledWorkerHeartbeat,
+} from "@/src/domains/workers/worker-runtime-readiness";
 
 const workerName = "outbox_dispatcher";
 const workloadCategory = "REPORTING_LOW_PRIORITY" as const;
@@ -69,6 +75,16 @@ process.once("SIGTERM", requestShutdown);
 process.once("SIGINT", requestShutdown);
 
 async function main() {
+  await recordCompiledWorkerRuntime({
+    componentName: "outbox-dispatcher",
+    status: "READY",
+    metadata: { workloadCategory },
+  });
+  const stopRuntimeHeartbeat = startCompiledWorkerHeartbeat({
+    componentName: "outbox-dispatcher",
+    metadata: { workloadCategory },
+  });
+  const publisher = createQueuePublisher();
   logger.info({
     message: "Continuous outbox dispatcher starting.",
     metadata: {
@@ -94,8 +110,14 @@ async function main() {
         const result = await dispatchPendingOutboxEvents({
           limit: batchSize,
           correlationId,
+          publisher,
         });
         const dispatchDurationMs = Date.now() - startedAt;
+        await recordCompiledWorkerRuntime({
+          componentName: "outbox-dispatcher",
+          status: "READY",
+          metadata: { workloadCategory, lifecycle: "dispatch-cycle-complete" },
+        });
 
         await recordHeartbeat({
           lifecycle: "dispatch-cycle-complete",
@@ -136,11 +158,23 @@ async function main() {
             error: errorMessage,
           },
         });
+        await recordCompiledWorkerRuntime({
+          componentName: "outbox-dispatcher",
+          status: "DEGRADED",
+          metadata: {
+            workloadCategory,
+            lifecycle: "dispatch-cycle-failed",
+            error: errorMessage,
+          },
+        }).catch(() => undefined);
         await sleep(idleIntervalMs);
       }
     }
   } finally {
     clearInterval(heartbeat);
+    await publisher.close?.();
+    await stopRuntimeHeartbeat();
+    await closeCompiledWorkerRuntimePool();
     await safeRecordWorkerHeartbeat({
       workerName,
       workloadCategory,

@@ -1,45 +1,63 @@
 # Settlement Service
 
-Shadow-mode .NET service for future Settlement Service extraction.
+The .NET Settlement Service owns the canonical settlement decision candidate,
+durable financial instruction intent, recovery, reconciliation, reversal, and
+resettlement orchestration.
 
-## Status
+Production authority is not active. The default remains
+`SETTLEMENT_AUTHORITY=MONOLITH`; SERVICE activation fails closed.
 
-This service is non-authoritative. It must not update tickets, release credit exposure, post ledger entries, update balances, or emit production financial outbox events.
+## Canonical Boundary
 
-## Endpoints
+The service consumes immutable SettlementInput evidence derived from a Math
+Evaluation Certificate. Tenant and brand assertions are verified against the
+canonical Credit Wallet reservation scope before ingestion. It atomically
+persists:
 
-- `GET /health`
+- The deterministic SettlementRecord.
+- Ledger and Credit Wallet instruction intent.
+- Execution evidence.
+- A `settlement.decision.recorded` outbox event.
+
+Settlement calls Ledger Service and Credit Wallet Service through their
+idempotent APIs. It does not mutate Ledger, wallet, cashier, tax, commission, or
+accounting state directly.
+
+## Primary Endpoints
+
 - `GET /health/live`
 - `GET /health/ready`
-- `POST /v1/settlement/shadow/execute`
+- `GET /v1/settlement/authority/readiness`
+- `POST /v1/settlement/inputs/ingest`
+- `POST /v1/settlement/requests/{id}/execute`
+- `POST /v1/settlement/requests/{id}/replay`
+- `POST /v1/settlement/records/{id}/financial-instructions/execute`
+- `POST /v1/settlement/records/{id}/recover`
+- `POST /v1/settlement/resettlement-chains`
 
-## Environment
+Legacy run-based and shadow endpoints remain compatibility/dry-run surfaces
+only. They are not a fallback for the canonical path.
 
-- `SERVICE_NAME`
-- `ASPNETCORE_ENVIRONMENT`
+## Required Runtime Configuration
+
+- `DATABASE_URL`
+- `LEDGER_SERVICE_URL`
+- `CREDIT_SERVICE_URL`
+- `CREDIT_WALLET_INTERNAL_API_KEY`
 - `RABBITMQ_URL`
-- `RABBITMQ_EXCHANGE_NAME`
 - `REDIS_URL`
+- `SETTLEMENT_AUTHORITY`
+- `SETTLEMENT_LEGACY_MUTATIONS_ENABLED` (`false` in production)
 
-## Shadow Execution
+Readiness requires durable settlement migrations, outbox persistence, and all
+critical dependencies. SERVICE mode remains blocked even when operational
+readiness passes. Production startup fails if legacy mutation routes are
+enabled.
 
-The shadow endpoint calculates a deterministic settlement result and optionally compares it with a monolith result supplied in the request. Money fields are integer minor units only.
+Historical settlement evidence is never deleted. Append-only classifications
+may exclude only proven development, dry-run, synthetic QA, or superseded
+evidence from promotion evaluation; unknown and production-shaped evidence
+remain blocking.
 
-Comparison statuses:
-
-- `MATCH`
-- `MISMATCH`
-- `NOT_COMPARED`
-
-## Validation
-
-```bash
-dotnet build services/settlement-service
-docker compose up -d --build
-curl http://localhost:5400/health
-curl http://localhost:5400/health/ready
-```
-
-## Rule
-
-No production settlement ownership lives here yet. The monolith remains the source of truth.
+See `docs/architecture/service-contract-settlement.md` for lifecycle, authority
+routing, recovery, promotion, rollback, and remaining blockers.

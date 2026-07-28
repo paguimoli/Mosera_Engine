@@ -57,15 +57,7 @@ export async function dispatchPendingOutboxEvents(
   const workerName = "outbox_dispatcher";
   const instanceId = getWorkerInstanceId(workerName);
 
-  try {
-    return await runTrackedJob({
-      jobName: workerName,
-      correlationId,
-      metadata: {
-        limit: options.limit ?? 25,
-        now: now.toISOString(),
-      },
-      execute: async () => {
+  const execute = async () => {
         logger.info({
           message: "Outbox dispatcher started.",
           correlationId,
@@ -248,7 +240,20 @@ export async function dispatchPendingOutboxEvents(
         });
 
         return result;
+  };
+
+  try {
+    if (process.env.DATABASE_URL?.trim()) {
+      return await execute();
+    }
+    return await runTrackedJob({
+      jobName: workerName,
+      correlationId,
+      metadata: {
+        limit: options.limit ?? 25,
+        now: now.toISOString(),
       },
+      execute,
     });
   } catch (error) {
     logger.error({

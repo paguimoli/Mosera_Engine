@@ -52,6 +52,26 @@ x-prod-service-environment: &prod-service-environment
   HOME: /tmp
   DEPLOYMENT_ENVIRONMENT: production
   RELEASE_VERSION: ${RELEASE_VERSION:-production-required}
+  LAUNCH_CONFIGURATION_VERSION: P1-014.5-2026-07-25
+  CREDIT_ONLY_LAUNCH_ENABLED: "true"
+  CASHIER_LAUNCH_ENABLED: "false"
+  PAYMENT_PROVIDER_INTEGRATION_ENABLED: "false"
+  PLAYER_CASH_DEPOSITS_ENABLED: "false"
+  PLAYER_CASH_WITHDRAWALS_ENABLED: "false"
+  EXTERNAL_INTEGRATIONS_ENABLED: "false"
+  PRODUCTION_UI_ENABLED: "false"
+  SELF_SERVICE_ONBOARDING_ENABLED: "false"
+  PLATFORM_HIERARCHY_MODE: CANONICAL
+  PLATFORM_LEGACY_DEVELOPMENT_MUTATIONS_ENABLED: "false"
+  CANONICAL_TICKET_PATH_ENABLED: "true"
+  TICKET_LEGACY_MUTATIONS_ENABLED: "false"
+  TICKET_SCOPE_ENFORCEMENT_ENABLED: "true"
+  TICKET_CORRELATION_CONTRACT_ENABLED: "true"
+  CANONICAL_DRAW_ORCHESTRATION_ENABLED: "true"
+  PRODUCT_LAUNCH_STATUS: DISABLED_PENDING_BUSINESS_APPROVAL
+  REQUIRED_WORKERS_ENABLED: "true"
+  AUDIT_RECORDING_ENABLED: "true"
+  READINESS_ENFORCEMENT_ENABLED: "true"
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
   OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
   OTEL_TRACES_EXPORTER: otlp
@@ -97,6 +117,9 @@ x-prod-service-environment: &prod-service-environment
   LEDGER_AUTHORITY: ${LEDGER_AUTHORITY:-MONOLITH}
   CREDIT_AUTHORITY: ${CREDIT_AUTHORITY:-MONOLITH}
   ALLOW_MONOLITH_AUTHORITY_IN_PRODUCTION: ${ALLOW_MONOLITH_AUTHORITY_IN_PRODUCTION:-false}
+  OUTCOME_CANONICAL_PIPELINE_ENABLED: "false"
+  OUTCOME_LEGACY_PUBLICATION_ENABLED: "false"
+  OUTCOME_CANONICAL_RECOVERY_ENABLED: "true"
   SETTLEMENT_COMPARISON_MODE: ${SETTLEMENT_COMPARISON_MODE:-ENABLED}
   LEDGER_COMPARISON_MODE: ${LEDGER_COMPARISON_MODE:-ENABLED}
   CREDIT_COMPARISON_MODE: ${CREDIT_COMPARISON_MODE:-ENABLED}
@@ -111,6 +134,26 @@ x-prod-dotnet-environment: &prod-dotnet-environment
   HOME: /tmp
   DEPLOYMENT_ENVIRONMENT: production
   RELEASE_VERSION: ${RELEASE_VERSION:-production-required}
+  LAUNCH_CONFIGURATION_VERSION: P1-014.5-2026-07-25
+  CREDIT_ONLY_LAUNCH_ENABLED: "true"
+  CASHIER_LAUNCH_ENABLED: "false"
+  PAYMENT_PROVIDER_INTEGRATION_ENABLED: "false"
+  PLAYER_CASH_DEPOSITS_ENABLED: "false"
+  PLAYER_CASH_WITHDRAWALS_ENABLED: "false"
+  EXTERNAL_INTEGRATIONS_ENABLED: "false"
+  PRODUCTION_UI_ENABLED: "false"
+  SELF_SERVICE_ONBOARDING_ENABLED: "false"
+  PLATFORM_HIERARCHY_MODE: CANONICAL
+  PLATFORM_LEGACY_DEVELOPMENT_MUTATIONS_ENABLED: "false"
+  CANONICAL_TICKET_PATH_ENABLED: "true"
+  TICKET_LEGACY_MUTATIONS_ENABLED: "false"
+  TICKET_SCOPE_ENFORCEMENT_ENABLED: "true"
+  TICKET_CORRELATION_CONTRACT_ENABLED: "true"
+  CANONICAL_DRAW_ORCHESTRATION_ENABLED: "true"
+  PRODUCT_LAUNCH_STATUS: DISABLED_PENDING_BUSINESS_APPROVAL
+  REQUIRED_WORKERS_ENABLED: "true"
+  AUDIT_RECORDING_ENABLED: "true"
+  READINESS_ENFORCEMENT_ENABLED: "true"
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
   OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
   OTEL_TRACES_EXPORTER: otlp
@@ -154,6 +197,9 @@ x-prod-dotnet-environment: &prod-dotnet-environment
   LEDGER_AUTHORITY: ${LEDGER_AUTHORITY:-MONOLITH}
   CREDIT_AUTHORITY: ${CREDIT_AUTHORITY:-MONOLITH}
   ALLOW_MONOLITH_AUTHORITY_IN_PRODUCTION: ${ALLOW_MONOLITH_AUTHORITY_IN_PRODUCTION:-false}
+  OUTCOME_CANONICAL_PIPELINE_ENABLED: "false"
+  OUTCOME_LEGACY_PUBLICATION_ENABLED: "false"
+  OUTCOME_CANONICAL_RECOVERY_ENABLED: "true"
 
 x-prod-worker-service: &prod-worker-service
   <<:
@@ -405,6 +451,7 @@ services:
       OTEL_SERVICE_NAME: settlement-service
       LEDGER_SERVICE_URL: http://ledger-service:8080
       CREDIT_SERVICE_URL: http://credit-wallet-service:8080
+      SETTLEMENT_LEGACY_MUTATIONS_ENABLED: "false"
     entrypoint:
       - /bin/sh
       - -c
@@ -430,7 +477,7 @@ services:
       - -c
       - |
         sh /opt/lottery/validate-production-config.sh worker
-        exec npm run worker:outbox-dispatcher
+        exec node scripts/workers/runtime-bootstrap.cjs scripts/workers/dispatch-outbox.js
 
   worker-critical-financial:
     <<: *prod-worker-service
@@ -447,7 +494,7 @@ services:
       - -c
       - |
         sh /opt/lottery/validate-production-config.sh worker
-        exec npm run worker:critical-financial
+        exec node scripts/workers/runtime-bootstrap.cjs scripts/workers/consume-workload.js CRITICAL_FINANCIAL
 
   worker-ticket-lifecycle:
     <<: *prod-worker-service
@@ -464,7 +511,7 @@ services:
       - -c
       - |
         sh /opt/lottery/validate-production-config.sh worker
-        exec npm run worker:ticket-lifecycle
+        exec node scripts/workers/runtime-bootstrap.cjs scripts/workers/consume-workload.js TICKET_LIFECYCLE
 
   worker-settlement:
     <<: *prod-worker-service
@@ -481,7 +528,7 @@ services:
       - -c
       - |
         sh /opt/lottery/validate-production-config.sh worker
-        exec npm run worker:settlement
+        exec node scripts/workers/runtime-bootstrap.cjs scripts/workers/consume-workload.js SETTLEMENT
 
   worker-accounting:
     <<: *prod-worker-service
@@ -498,7 +545,7 @@ services:
       - -c
       - |
         sh /opt/lottery/validate-production-config.sh worker
-        exec npm run worker:accounting
+        exec node scripts/workers/runtime-bootstrap.cjs scripts/workers/consume-workload.js ACCOUNTING
 
   worker-commission:
     <<: *prod-worker-service
@@ -515,7 +562,7 @@ services:
       - -c
       - |
         sh /opt/lottery/validate-production-config.sh worker
-        exec npm run worker:commission
+        exec node scripts/workers/runtime-bootstrap.cjs scripts/workers/consume-workload.js COMMISSION
 
   worker-reconciliation:
     <<: *prod-worker-service
@@ -532,7 +579,7 @@ services:
       - -c
       - |
         sh /opt/lottery/validate-production-config.sh worker
-        exec npm run worker:reconciliation
+        exec node scripts/workers/runtime-bootstrap.cjs scripts/workers/consume-workload.js RECONCILIATION
 
   worker-operational-access:
     <<: *prod-worker-service
@@ -549,7 +596,7 @@ services:
       - -c
       - |
         sh /opt/lottery/validate-production-config.sh worker
-        exec npm run worker:operational-access
+        exec node scripts/workers/runtime-bootstrap.cjs scripts/workers/consume-workload.js OPERATIONAL_ACCESS
 
   worker-reporting:
     <<: *prod-worker-service
@@ -566,7 +613,7 @@ services:
       - -c
       - |
         sh /opt/lottery/validate-production-config.sh worker
-        exec npm run worker:reporting
+        exec node scripts/workers/runtime-bootstrap.cjs scripts/workers/consume-workload.js REPORTING_LOW_PRIORITY
 
   migration-runner:
     <<:

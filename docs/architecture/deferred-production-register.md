@@ -1,5 +1,21 @@
 # Deferred Production Register
 
+## P1-014.5 Freeze Deferrals
+
+- Real production secrets and managed dependency commissioning.
+- Business approval of immutable launch products, manifests, paytables, wager
+  definitions, schedules, limits, locales, currencies, and market availability.
+- Controlled authority promotions; all defaults remain conservative.
+- Cashier, deposits, withdrawals, payment providers, production UI, and
+  self-service onboarding.
+- Centralized configuration, dynamic feature management, automated secret
+  rotation, expanded policy as code, advanced observability/alerting,
+  configuration UI, automated rollback, and multi-region configuration.
+
+These items do not block backend freeze because their production paths are
+explicitly disabled. They must pass their own approval and change-control gates
+before activation.
+
 This register tracks items intentionally deferred until a later production-readiness phase.
 
 | Item | Category | Reason Deferred | Risk If Forgotten | Latest Safe Phase | Recommendation |

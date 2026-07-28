@@ -1,6 +1,22 @@
 import { NextResponse } from "next/server";
 
 import { AuthMiddlewareError } from "@/src/domains/auth/auth-middleware";
+import { cashierLaunchMutationsEnabled } from "@/src/domains/launch-configuration/launch-configuration";
+
+export function requireCashierLaunchMutationEnabled() {
+  if (cashierLaunchMutationsEnabled()) {
+    return null;
+  }
+
+  return NextResponse.json(
+    {
+      success: false,
+      error: "Cashier mutations are disabled for the credit-only launch.",
+      code: "CASHIER_LAUNCH_DISABLED",
+    },
+    { status: 503 }
+  );
+}
 
 export function authErrorResponse(error: AuthMiddlewareError) {
   return NextResponse.json(

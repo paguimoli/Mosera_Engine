@@ -44,6 +44,15 @@ require_safe_var() {
   reject_unsafe_value "$1"
 }
 
+require_exact() {
+  name="$1"
+  expected="$2"
+  value="$(value_of "$name")"
+  if [ "$value" != "$expected" ]; then
+    fail "$name must be $expected."
+  fi
+}
+
 require_https_url() {
   name="$1"
   require_safe_var "$name"
@@ -120,17 +129,13 @@ require_secret_reference() {
 require_authority_safe() {
   name="$1"
   value="$(printf '%s' "$(value_of "$name")" | tr '[:lower:]' '[:upper:]')"
-  [ -n "$value" ] || value="MONOLITH"
+  if [ "$value" != "MONOLITH" ]; then
+    fail "$name must remain MONOLITH in the approved pre-promotion launch baseline."
+  fi
 
-  case "$value" in
-    SERVICE) ;;
-    MONOLITH)
-      if [ "${ALLOW_MONOLITH_AUTHORITY_IN_PRODUCTION:-false}" != "true" ]; then
-        fail "$name=MONOLITH is blocked in production unless ALLOW_MONOLITH_AUTHORITY_IN_PRODUCTION=true is set deliberately."
-      fi
-      ;;
-    *) fail "$name must be MONOLITH or SERVICE." ;;
-  esac
+  if [ "${ALLOW_MONOLITH_AUTHORITY_IN_PRODUCTION:-false}" != "true" ]; then
+    fail "$name=MONOLITH requires the explicit approved launch-baseline acknowledgement."
+  fi
 }
 
 require_optional_safe_url() {
@@ -176,8 +181,8 @@ require_otel_runtime() {
   done
 
   case "${OTEL_RESOURCE_ATTRIBUTES:-}" in
-    *deployment.environment=production*service.version=*) ;;
-    *) fail "OTEL_RESOURCE_ATTRIBUTES must include deployment.environment=production and service.version." ;;
+    *deployment.environment="${DEPLOYMENT_ENVIRONMENT:-}"*service.version=*) ;;
+    *) fail "OTEL_RESOURCE_ATTRIBUTES must include the selected deployment.environment and service.version." ;;
   esac
 }
 
@@ -208,9 +213,31 @@ validate_caddy() {
 
 validate_runtime() {
   require_safe_var DEPLOYMENT_ENVIRONMENT
-  if [ "$DEPLOYMENT_ENVIRONMENT" != "production" ]; then
-    fail "DEPLOYMENT_ENVIRONMENT must be production."
-  fi
+  case "$DEPLOYMENT_ENVIRONMENT" in
+    production|staging) ;;
+    *) fail "DEPLOYMENT_ENVIRONMENT must be production or staging." ;;
+  esac
+
+  require_exact LAUNCH_CONFIGURATION_VERSION "P1-014.5-2026-07-25"
+  require_exact CREDIT_ONLY_LAUNCH_ENABLED "true"
+  require_exact CASHIER_LAUNCH_ENABLED "false"
+  require_exact PAYMENT_PROVIDER_INTEGRATION_ENABLED "false"
+  require_exact PLAYER_CASH_DEPOSITS_ENABLED "false"
+  require_exact PLAYER_CASH_WITHDRAWALS_ENABLED "false"
+  require_exact EXTERNAL_INTEGRATIONS_ENABLED "false"
+  require_exact PRODUCTION_UI_ENABLED "false"
+  require_exact SELF_SERVICE_ONBOARDING_ENABLED "false"
+  require_exact PLATFORM_HIERARCHY_MODE "CANONICAL"
+  require_exact PLATFORM_LEGACY_DEVELOPMENT_MUTATIONS_ENABLED "false"
+  require_exact CANONICAL_TICKET_PATH_ENABLED "true"
+  require_exact TICKET_LEGACY_MUTATIONS_ENABLED "false"
+  require_exact TICKET_SCOPE_ENFORCEMENT_ENABLED "true"
+  require_exact TICKET_CORRELATION_CONTRACT_ENABLED "true"
+  require_exact CANONICAL_DRAW_ORCHESTRATION_ENABLED "true"
+  require_exact PRODUCT_LAUNCH_STATUS "DISABLED_PENDING_BUSINESS_APPROVAL"
+  require_exact REQUIRED_WORKERS_ENABLED "true"
+  require_exact AUDIT_RECORDING_ENABLED "true"
+  require_exact READINESS_ENFORCEMENT_ENABLED "true"
 
   if [ "${SECURITY_ENFORCE_PRODUCTION_SECRETS:-}" != "true" ]; then
     fail "SECURITY_ENFORCE_PRODUCTION_SECRETS must be true."
@@ -236,6 +263,8 @@ validate_runtime() {
   fi
   require_redis_url
   require_rabbitmq_url
+  require_https_url SUPABASE_URL
+  require_safe_var SUPABASE_SERVICE_ROLE_KEY
   require_https_url APP_BASE_URL
   require_https_url PUBLIC_APP_URL
   require_safe_var PRODUCTION_HOSTNAME
@@ -261,6 +290,15 @@ validate_runtime() {
   require_authority_safe LEDGER_AUTHORITY
   require_authority_safe CREDIT_AUTHORITY
   require_authority_safe SETTLEMENT_AUTHORITY
+  if [ "${OUTCOME_CANONICAL_PIPELINE_ENABLED:-}" != "false" ]; then
+    fail "OUTCOME_CANONICAL_PIPELINE_ENABLED must remain false until production Outcome Authority activation is approved."
+  fi
+  if [ "${OUTCOME_LEGACY_PUBLICATION_ENABLED:-}" != "false" ]; then
+    fail "OUTCOME_LEGACY_PUBLICATION_ENABLED must be false in production."
+  fi
+  if [ "${OUTCOME_CANONICAL_RECOVERY_ENABLED:-}" != "true" ]; then
+    fail "OUTCOME_CANONICAL_RECOVERY_ENABLED must be true for canonical recovery readiness."
+  fi
 
   require_otel_runtime
   require_optional_safe_url RABBITMQ_MANAGEMENT_URL
@@ -272,6 +310,13 @@ validate_runtime() {
   fi
 }
 
+validate_app() {
+  validate_runtime
+  require_safe_var SUPABASE_ANON_KEY
+  require_https_url NEXT_PUBLIC_SUPABASE_URL
+  require_safe_var NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+}
+
 case "$role" in
   caddy)
     validate_caddy
@@ -279,7 +324,16 @@ case "$role" in
   otel-collector)
     require_otel_collector
     ;;
-  app|worker|auth-service|game-engine|ledger-service|credit-wallet-service|settlement-service|migration-runner|service)
+  settlement-service)
+    validate_runtime
+    if [ "${SETTLEMENT_LEGACY_MUTATIONS_ENABLED:-}" != "false" ]; then
+      fail "SETTLEMENT_LEGACY_MUTATIONS_ENABLED must be false in production."
+    fi
+    ;;
+  app)
+    validate_app
+    ;;
+  worker|auth-service|game-engine|ledger-service|credit-wallet-service|migration-runner|service)
     validate_runtime
     ;;
   *)

@@ -5,6 +5,11 @@ import {
   requirePermission,
 } from "@/src/domains/auth/auth-middleware";
 import {
+  canAccessAccountScope,
+  requireScopedAccount,
+} from "@/src/domains/accounts/account-scope-governance";
+import { findAccountById } from "@/src/domains/accounts/account.repository";
+import {
   createPlayerProfile,
   DuplicatePlayerProfileError,
   listPlayerProfiles,
@@ -69,12 +74,25 @@ function getCreatePlayerProfileInput(
 
 export async function GET(request: Request) {
   try {
-    await requirePermission(request, "players.view");
+    const context = await requirePermission(request, "players.view");
     const playerProfiles = await listPlayerProfiles();
+    const scopedProfiles = (
+      await Promise.all(
+        playerProfiles.map(async (profile) => ({
+          profile,
+          account: await findAccountById(profile.accountId),
+        }))
+      )
+    )
+      .filter(
+        (item) =>
+          item.account && canAccessAccountScope(context, item.account)
+      )
+      .map((item) => item.profile);
 
     return NextResponse.json({
       success: true,
-      playerProfiles,
+      playerProfiles: scopedProfiles,
     });
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {
@@ -105,10 +123,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    await requirePermission(request, "players.create");
-    const playerProfile = await createPlayerProfile(
-      getCreatePlayerProfileInput(body as Record<string, unknown>)
-    );
+    const input = getCreatePlayerProfileInput(body as Record<string, unknown>);
+    await requireScopedAccount(request, input.accountId, "players.create");
+    const playerProfile = await createPlayerProfile(input);
 
     return NextResponse.json({
       success: true,

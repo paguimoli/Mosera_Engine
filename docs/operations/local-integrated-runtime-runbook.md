@@ -2,6 +2,8 @@
 
 Phase 24.3 freezes the local runtime as a reproducible, production-like baseline for service startup, migrations, readiness, and durable Game Engine persistence.
 
+GitHub Actions is the canonical integration QA authority. The `Canonical Integration Validation` required check provisions disposable infrastructure and runs the guarded migration and integrated runtime suites on a GitHub-hosted runner. Its sanitized evidence artifact is the only accepted production integration evidence. Local Docker Compose remains an optional debugging path and is not required for canonical validation.
+
 ## One-command startup
 
 ```bash
@@ -18,8 +20,10 @@ This starts the app, workers, RabbitMQ, Redis, Auth Service, Game Engine, Ledger
 - Manual migration validation:
 
 ```bash
-docker compose --profile devtools --profile local run --rm devtools npm run migrations:local:validate
+npm run migrations:local:validate
 ```
+
+Migration commands run from the host Node runtime but execute PostgreSQL tooling inside Docker. Developers do not install `psql`; Docker service discovery and container-state checks are built into the migration helper.
 
 ## Health and readiness
 
@@ -57,7 +61,7 @@ docker compose down
 Reset disposable local Postgres data only when a clean baseline is required:
 
 ```bash
-docker compose --profile devtools --profile local run --rm devtools npm run migrations:local:reset
+npm run migrations:local:reset
 ```
 
 ## Known limitations

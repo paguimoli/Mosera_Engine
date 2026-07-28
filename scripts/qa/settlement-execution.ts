@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Pool } from "pg";
+import { createSettlementScopeFixture, type SettlementScopeFixture } from "./lib/settlement-scope-fixture";
 
 type Check = {
   name: string;
@@ -175,9 +176,12 @@ values (
   );
 }
 
-function buildIngestionRequest(input: ReturnType<typeof buildStoredSettlementInput>) {
+function buildIngestionRequest(
+  input: ReturnType<typeof buildStoredSettlementInput>,
+  scope: SettlementScopeFixture
+) {
   const acceptedAt = new Date().toISOString();
-  const playerAccountReference = `qa-player-${randomUUID()}`;
+  const playerAccountReference = scope.playerId;
   const contextReference = `accepted-wager-context:v1:${randomUUID()}`;
 
   return {
@@ -189,6 +193,8 @@ function buildIngestionRequest(input: ReturnType<typeof buildStoredSettlementInp
     mathEvaluationCertificateHash: input.mathEvaluationCertificateHash,
     outcomeCertificateId: input.outcomeCertificateId,
     outcomeCertificateHash: input.outcomeCertificateHash,
+    tenantId: scope.tenantId,
+    brandId: scope.brandId,
     ticketId: input.ticketId,
     ticketLineId: input.ticketLineId,
     playerAccountReference,
@@ -197,7 +203,7 @@ function buildIngestionRequest(input: ReturnType<typeof buildStoredSettlementInp
     currency: "USD",
     minorUnitPrecision: 2,
     roundingPolicyReference: "rounding-policy:v1",
-    creditReservationReference: null,
+    creditReservationReference: scope.reservationId,
     settlementPolicyVersion: "settlement-policy:v1",
     acceptedAt,
     requestProvenance: {
@@ -206,6 +212,8 @@ function buildIngestionRequest(input: ReturnType<typeof buildStoredSettlementInp
     mode: "DryRun",
     acceptedWagerFinancialContext: {
       contextReference,
+      tenantId: scope.tenantId,
+      brandId: scope.brandId,
       ticketId: input.ticketId,
       ticketLineId: input.ticketLineId,
       playerAccountReference,
@@ -213,7 +221,14 @@ function buildIngestionRequest(input: ReturnType<typeof buildStoredSettlementInp
       currency: "USD",
       minorUnitPrecision: 2,
       roundingPolicyReference: "rounding-policy:v1",
-      creditReservationReference: null,
+      creditReservationReference: {
+        reservationId: scope.reservationId,
+        tenantId: scope.tenantId,
+        brandId: scope.brandId,
+        playerAccountReference,
+        ticketId: input.ticketId,
+        ticketLineId: input.ticketLineId,
+      },
       acceptedAt,
     },
     settlementPolicy: {
@@ -264,10 +279,37 @@ where settlement_request_id = $1;
   return Number(result.rows[0]?.count ?? 0);
 }
 
+async function countSettlementInstructions(pool: Pool, settlementId: string) {
+  const result = await pool.query(
+    `
+select count(*)::int as count
+from settlement_service.financial_instructions
+where settlement_id = $1;
+`,
+    [settlementId]
+  );
+  return Number(result.rows[0]?.count ?? 0);
+}
+
+async function countSettlementOutboxEvents(pool: Pool, settlementId: string) {
+  const result = await pool.query(
+    `
+select count(*)::int as count
+from public.outbox_events
+where event_type = 'settlement.decision.recorded'
+  and aggregate_type = 'settlement'
+  and aggregate_id = $1;
+`,
+    [settlementId]
+  );
+  return Number(result.rows[0]?.count ?? 0);
+}
+
 async function executeOutcome(pool: Pool, outcome: Outcome, expectedGross: number, expectedNet: number) {
   const input = buildStoredSettlementInput(outcome);
   await seedSettlementInput(pool, input);
-  const ingestionPayload = buildIngestionRequest(input);
+  const scope = await createSettlementScopeFixture(pool, input.ticketId, "qa-settlement-execution");
+  const ingestionPayload = buildIngestionRequest(input, scope);
   const ingestion = await ingest(ingestionPayload);
 
   assert(ingestion.response.ok, `${outcome} ingestion should succeed.`, {
@@ -317,6 +359,15 @@ async function main() {
     assert(health.body?.settlementExecution?.productionFinancialPostingDisabled === true, "production financial posting should remain disabled.", {
       body: health.body,
     });
+    assert(health.body?.settlementExecution?.canonicalDecisionTransactionReady === true, "canonical decision transaction should be ready.", {
+      body: health.body,
+    });
+    assert(health.body?.settlementExecution?.migrationReady === true, "Settlement migrations should be current.", {
+      body: health.body,
+    });
+    assert(health.body?.settlementExecution?.outboxReady === true, "Settlement outbox should be ready.", {
+      body: health.body,
+    });
     pass("readiness exposes Settlement execution markers");
 
     const beforeLedgerEffects = await tableCount(pool, "settlement_service.settlement_ledger_effects");
@@ -324,6 +375,10 @@ async function main() {
     const beforeCashierTransactions = await tableCount(pool, "public.cashier_transactions");
 
     const win = await executeOutcome(pool, "Win", 300, 200);
+    const winSettlementId = win.first.body.settlementRecord.settlementId;
+    assert((await countSettlementInstructions(pool, winSettlementId)) === 2, "settlement decision should atomically create its financial intents.");
+    assert((await countSettlementOutboxEvents(pool, winSettlementId)) === 1, "settlement decision should atomically create one outbox event.");
+    pass("settlement decision atomically persists financial intents and outbox evidence");
     await executeOutcome(pool, "Loss", 0, -100);
     await executeOutcome(pool, "Push", 100, 0);
     await executeOutcome(pool, "Void", 100, 0);
@@ -341,7 +396,40 @@ async function main() {
       "duplicate execution should return same SettlementRecord.",
       { duplicate: duplicate.body, first: win.first.body }
     );
+    assert((await countSettlementInstructions(pool, winSettlementId)) === 2, "duplicate execution must not duplicate financial intents.");
+    assert((await countSettlementOutboxEvents(pool, winSettlementId)) === 1, "duplicate execution must not duplicate outbox evidence.");
     pass("duplicate same request returns existing SettlementRecord");
+
+    const concurrentInput = buildStoredSettlementInput("Win");
+    await seedSettlementInput(pool, concurrentInput);
+    const concurrentScope = await createSettlementScopeFixture(pool, concurrentInput.ticketId, "qa-settlement-concurrency");
+    const concurrentPayload = buildIngestionRequest(concurrentInput, concurrentScope);
+    const concurrentIngestion = await ingest(concurrentPayload);
+    assert(concurrentIngestion.response.ok, "concurrent settlement ingestion should succeed.", {
+      status: concurrentIngestion.response.status,
+      body: concurrentIngestion.body,
+    });
+    const concurrentResults = await Promise.all([
+      execute(concurrentIngestion.body.settlementRequestId, concurrentPayload.idempotencyKey),
+      execute(concurrentIngestion.body.settlementRequestId, concurrentPayload.idempotencyKey),
+    ]);
+    assert(concurrentResults.every((result) => result.response.ok), "concurrent identical execution should return deterministic success.", {
+      results: concurrentResults.map((result) => ({ status: result.response.status, body: result.body })),
+    });
+    const concurrentSettlementIds = new Set(
+      concurrentResults.map((result) => result.body?.settlementRecord?.settlementId)
+    );
+    assert(concurrentSettlementIds.size === 1, "concurrent execution should return one SettlementRecord.");
+    assert(
+      concurrentResults.filter((result) => result.body?.duplicate === false).length === 1 &&
+        concurrentResults.filter((result) => result.body?.duplicate === true).length === 1,
+      "concurrent execution should have one creator and one deterministic duplicate.",
+      { results: concurrentResults.map((result) => result.body) }
+    );
+    const concurrentSettlementId = [...concurrentSettlementIds][0] as string;
+    assert((await countSettlementInstructions(pool, concurrentSettlementId)) === 2, "concurrent execution should create one instruction set.");
+    assert((await countSettlementOutboxEvents(pool, concurrentSettlementId)) === 1, "concurrent execution should create one outbox event.");
+    pass("concurrent duplicate settlement is serialized without duplicate intent or outbox evidence");
 
     const conflicting = await execute(win.ingestion.body.settlementRequestId, `other-idempotency:${randomUUID()}`);
     assert(conflicting.response.status === 400, "conflicting duplicate fails closed.", {

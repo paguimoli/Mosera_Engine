@@ -12,6 +12,7 @@ import {
   authErrorResponse,
   getMetadata,
   readOptionalJsonObject,
+  requireCashierLaunchMutationEnabled,
   validationErrorResponse,
 } from "../../../cashier-route.helpers";
 
@@ -22,6 +23,9 @@ type RouteParams = {
 };
 
 export async function POST(request: Request, { params }: RouteParams) {
+  const disabled = requireCashierLaunchMutationEnabled();
+  if (disabled) return disabled;
+
   const { transactionId } = await params;
   const { payload, response } = await readOptionalJsonObject(request);
 

@@ -1,0 +1,6 @@
+vulnerabilities:
+  - id: GHSA-f88m-g3jw-g9cj
+    paths:
+      - "app/node_modules/next/node_modules/sharp/package.json"
+    statement: "Upstream Next.js 16.2.11 optional dependency is constrained to sharp ^0.34.5. Direct application dependency is patched at sharp 0.35.3. Remove this exception when Next.js supports sharp >=0.35.0."
+    expired_at: 2026-09-30

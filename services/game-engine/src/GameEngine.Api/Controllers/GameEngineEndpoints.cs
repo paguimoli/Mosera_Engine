@@ -1,6 +1,7 @@
 using GameEngine.Api.Configuration;
 using GameEngine.Api.Infrastructure;
 using GameEngine.Application.Services;
+using GameEngine.Domain.Model;
 
 namespace GameEngine.Api.Controllers;
 
@@ -37,6 +38,31 @@ public static class GameEngineEndpoints
         app.MapGet("/health/ready", ReadinessResponse);
 
         var group = app.MapGroup("/api/game-engine");
+
+        group.MapPost("/outcome-publications", PublishCanonicalOutcomeAsync);
+        group.MapGet("/outcome-publications/current/{drawId:guid}", GetCurrentCanonicalOutcomeAsync);
+        group.MapPost("/outcome-settlement-requests", EmitOutcomeSettlementRequestAsync);
+        group.MapPost("/outcome-publications/recover", RecoverCanonicalOutcomeRequestsAsync);
+        group.MapGet("/outcome-publication-status", async (
+            HttpContext context,
+            ServiceConfiguration configuration,
+            CanonicalOutcomePipelineService pipeline) =>
+        {
+            var readiness = await pipeline.CheckReadinessAsync(context.RequestAborted);
+            return Results.Ok(new
+            {
+                success = true,
+                readiness,
+                authorityBoundary = "outcome_only",
+                settlementTransport = "shared_outbox",
+                directSettlementCallsEnabled = false,
+                canonicalPipelineEnabled = configuration.CanonicalOutcomePipelineEnabled,
+                canonicalRecoveryEnabled = configuration.CanonicalOutcomeRecoveryEnabled,
+                legacyPublicationEnabled = configuration.LegacyOutcomePublicationEnabled,
+                productionOutcomeAuthorityEnabled = false,
+                correlationId = context.GetCorrelationId()
+            });
+        });
 
         group.MapGet("/status", (HttpContext context, GameEngineStatusService statusService) =>
         {
@@ -1048,6 +1074,7 @@ public static class GameEngineEndpoints
         var mathEvaluationPersistenceReady = await readinessChecks.CheckMathEvaluationPersistenceAsync(context.RequestAborted);
         var mathEvaluationBatchPersistenceReady = await readinessChecks.CheckMathEvaluationBatchPersistenceAsync(context.RequestAborted);
         var settlementInputHandoffReady = await readinessChecks.CheckSettlementInputHandoffAsync(context.RequestAborted);
+        var canonicalOutcomePipelineReady = await readinessChecks.CheckCanonicalOutcomePipelineAsync(context.RequestAborted);
         var provablyFairRuntimeReady = await readinessChecks.CheckProvablyFairRuntimeAsync(context.RequestAborted);
         var externalOfficialResultRuntimeReady = await readinessChecks.CheckExternalOfficialResultRuntimeAsync(context.RequestAborted);
         var physicalDrawRuntimeReady = await readinessChecks.CheckPhysicalDrawRuntimeAsync(context.RequestAborted);
@@ -1062,6 +1089,7 @@ public static class GameEngineEndpoints
             mathEvaluationPersistenceReady,
             mathEvaluationBatchPersistenceReady,
             settlementInputHandoffReady,
+            canonicalOutcomePipelineReady,
             provablyFairRuntimeReady,
             externalOfficialResultRuntimeReady,
             physicalDrawRuntimeReady
@@ -1088,6 +1116,150 @@ public static class GameEngineEndpoints
         };
 
         return ready ? Results.Ok(response) : Results.Json(response, statusCode: 503);
+    }
+
+    private static async Task<IResult> PublishCanonicalOutcomeAsync(
+        CanonicalOutcomePublicationCommand command,
+        HttpContext context,
+        ServiceConfiguration configuration,
+        CanonicalOutcomePipelineService pipeline)
+    {
+        if (!configuration.CanonicalOutcomePipelineEnabled)
+        {
+            return Results.Json(new
+            {
+                success = false,
+                message = "Canonical Outcome publication is disabled by configuration.",
+                correlationId = context.GetCorrelationId()
+            }, statusCode: 503);
+        }
+
+        try
+        {
+            var result = await pipeline.PublishAsync(command, context.RequestAborted);
+            return Results.Ok(new
+            {
+                success = true,
+                data = result,
+                productionOutcomeAuthorityEnabled = false,
+                correlationId = context.GetCorrelationId()
+            });
+        }
+        catch (ArgumentException error)
+        {
+            return Results.BadRequest(new
+            {
+                success = false,
+                message = error.Message,
+                correlationId = context.GetCorrelationId()
+            });
+        }
+        catch (InvalidOperationException error)
+        {
+            return Results.Conflict(new
+            {
+                success = false,
+                message = error.Message,
+                correlationId = context.GetCorrelationId()
+            });
+        }
+    }
+
+    private static async Task<IResult> GetCurrentCanonicalOutcomeAsync(
+        Guid drawId,
+        HttpContext context,
+        CanonicalOutcomePipelineService pipeline)
+    {
+        var result = await pipeline.FindCurrentAsync(drawId, context.RequestAborted);
+        return result is null
+            ? Results.NotFound(new
+            {
+                success = false,
+                message = "Canonical outcome was not found.",
+                drawId,
+                correlationId = context.GetCorrelationId()
+            })
+            : Results.Ok(new
+            {
+                success = true,
+                data = result,
+                correlationId = context.GetCorrelationId()
+            });
+    }
+
+    private static async Task<IResult> EmitOutcomeSettlementRequestAsync(
+        OutcomeSettlementRequestCommand command,
+        HttpContext context,
+        ServiceConfiguration configuration,
+        CanonicalOutcomePipelineService pipeline)
+    {
+        if (!configuration.CanonicalOutcomePipelineEnabled)
+        {
+            return Results.Json(new
+            {
+                success = false,
+                message = "Canonical Outcome settlement-request emission is disabled by configuration.",
+                correlationId = context.GetCorrelationId()
+            }, statusCode: 503);
+        }
+
+        try
+        {
+            var result = await pipeline.EmitSettlementRequestAsync(command, context.RequestAborted);
+            return Results.Ok(new
+            {
+                success = true,
+                data = result,
+                transport = "shared_outbox",
+                settlementAuthorityInvokedDirectly = false,
+                correlationId = context.GetCorrelationId()
+            });
+        }
+        catch (ArgumentException error)
+        {
+            return Results.BadRequest(new
+            {
+                success = false,
+                message = error.Message,
+                correlationId = context.GetCorrelationId()
+            });
+        }
+        catch (InvalidOperationException error)
+        {
+            return Results.Conflict(new
+            {
+                success = false,
+                message = error.Message,
+                correlationId = context.GetCorrelationId()
+            });
+        }
+    }
+
+    private static async Task<IResult> RecoverCanonicalOutcomeRequestsAsync(
+        HttpContext context,
+        ServiceConfiguration configuration,
+        CanonicalOutcomePipelineService pipeline)
+    {
+        if (!configuration.CanonicalOutcomePipelineEnabled ||
+            !configuration.CanonicalOutcomeRecoveryEnabled)
+        {
+            return Results.Json(new
+            {
+                success = false,
+                message = "Canonical Outcome recovery is disabled by configuration.",
+                correlationId = context.GetCorrelationId()
+            }, statusCode: 503);
+        }
+
+        var result = await pipeline.RecoverAsync(25, context.RequestAborted);
+        return Results.Ok(new
+        {
+            success = true,
+            data = result,
+            directSettlementCallsEnabled = false,
+            productionOutcomeAuthorityEnabled = false,
+            correlationId = context.GetCorrelationId()
+        });
     }
 
     private static object ToModuleDiagnostic(GameEngine.Domain.Model.GameModuleRegistryEntry entry)

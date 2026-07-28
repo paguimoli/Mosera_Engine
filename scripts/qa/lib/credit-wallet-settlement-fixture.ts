@@ -18,6 +18,8 @@ export function sha256(value: string) {
 export async function seedSettlementFixture(
   pool: Pool,
   input: {
+    tenantId: string;
+    brandId: string;
     reservationId: string;
     ticketId: string;
     amountMinor: number;
@@ -42,6 +44,9 @@ export async function seedSettlementFixture(
   const mathHash = sha256(`math:${suffix}`);
   const outcomeHash = sha256(`outcome:${suffix}`);
   const settlementHash = sha256(`settlement:${suffix}`);
+  const scopeHash = sha256(`settlement-scope:${input.tenantId}:${input.brandId}:${suffix}`);
+  const gameReference = `qa-game:${suffix}`;
+  const drawOutcomeReference = `qa-outcome:${suffix}`;
   const ledgerInstructionId = randomUUID();
   const creditInstructionId = randomUUID();
   const ledgerInstructionHash = sha256(`ledger-instruction:${suffix}`);
@@ -82,14 +87,17 @@ export async function seedSettlementFixture(
        accepted_wager_financial_context_reference, accepted_stake_amount_minor,
        currency, minor_unit_precision, rounding_policy_reference,
        credit_reservation_reference, settlement_policy_version, accepted_at,
-       mode, status, request_provenance)
+       mode, status, request_provenance, tenant_id, brand_id, game_reference,
+       draw_outcome_reference, scope_hash)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'USD',2,
-       'rounding-policy:v1',$15,$16,now(),'DryRun','Accepted','{}'::jsonb)`,
+       'rounding-policy:v1',$15,$16,now(),'DryRun','Accepted','{}'::jsonb,
+       $17,$18,$19,$20,$21)`,
     [settlementRequestId, `qa-settlement-request:${suffix}`,
       sha256(`settlement-request:${suffix}`), settlementInputId, inputHash,
       mathCertificateId, mathHash, outcomeCertificateId, outcomeHash,
       input.ticketId, ticketLineId, `qa-player:${suffix}`, `qa-context:${suffix}`,
-      input.amountMinor, input.reservationId, settlementVersion]
+      input.amountMinor, input.reservationId, settlementVersion, input.tenantId,
+      input.brandId, gameReference, drawOutcomeReference, scopeHash]
   );
   await pool.query(
     `insert into settlement_service.authoritative_settlement_records(
@@ -100,23 +108,27 @@ export async function seedSettlementFixture(
        player_account_reference, currency, minor_unit_precision,
        stake_amount_minor, gross_payout_amount_minor, net_result_amount_minor,
        settlement_outcome, policy_version, canonical_settlement_hash,
-       idempotency_key, issued_at, provenance)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'USD',2,$12,$13,$14,$15,$16,$17,$18,now(),$19::jsonb)`,
+       idempotency_key, issued_at, provenance, tenant_id, brand_id,
+       game_reference, draw_outcome_reference, scope_hash)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'USD',2,$12,$13,$14,$15,$16,$17,$18,now(),$19::jsonb,
+       $20,$21,$22,$23,$24)`,
     [settlementId, settlementRequestId, settlementInputId, inputHash,
       mathCertificateId, mathHash, outcomeCertificateId, outcomeHash,
       input.ticketId, ticketLineId, `qa-player:${suffix}`, input.amountMinor,
       Math.max(0, input.amountMinor + input.balanceImpactMinor),
       input.balanceImpactMinor, outcome, settlementVersion, settlementHash,
-      `qa-settlement:${suffix}`, JSON.stringify(input.provenance ?? {})]
+      `qa-settlement:${suffix}`, JSON.stringify(input.provenance ?? {}),
+      input.tenantId, input.brandId, gameReference, drawOutcomeReference, scopeHash]
   );
   await pool.query(
     `insert into settlement_service.financial_instructions(
        instruction_id, settlement_id, settlement_request_id, instruction_type,
        instruction_status, canonical_payload_hash, idempotency_key,
-       target_service, instruction_sequence, attempt_count, created_at, provenance)
+       target_service, instruction_sequence, attempt_count, created_at, provenance,
+       tenant_id, brand_id, scope_hash)
      values
-       ($1,$2,$3,$4,$5,$6,$7,'ledger-service',1,0,now(),$8::jsonb),
-       ($9,$2,$3,$10,'Ready',$11,$12,'credit-wallet-service',2,0,now(),$13::jsonb)`,
+       ($1,$2,$3,$4,$5,$6,$7,'ledger-service',1,0,now(),$8::jsonb,$14,$15,$16),
+       ($9,$2,$3,$10,'Ready',$11,$12,'credit-wallet-service',2,0,now(),$13::jsonb,$14,$15,$16)`,
     [ledgerInstructionId, settlementId, settlementRequestId, ledgerInstructionType,
       ledgerRequired ? "Ready" : "Skipped", ledgerInstructionHash,
       `qa-ledger-instruction:${suffix}`, JSON.stringify(input.provenance ?? {}),
@@ -126,7 +138,7 @@ export async function seedSettlementFixture(
         amountMinor: input.amountMinor,
         captureAmountMinor: input.amountMinor,
         balanceImpactMinor: input.balanceImpactMinor,
-      })]
+      }), input.tenantId, input.brandId, scopeHash]
   );
 
   return {

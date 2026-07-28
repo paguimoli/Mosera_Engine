@@ -4,6 +4,11 @@ import type { QueueWorkloadCategory } from "@/src/lib/queue/queue-topology";
 import { getQueueTopologyEntry } from "@/src/lib/queue/queue-topology";
 import { RabbitMqQueueConsumer } from "@/src/lib/queue/rabbitmq/rabbitmq.consumer";
 import { resolveRabbitMqWorkloadRouting } from "@/src/lib/queue/rabbitmq/rabbitmq.routing";
+import {
+  closeCompiledWorkerRuntimePool,
+  recordCompiledWorkerRuntime,
+  startCompiledWorkerHeartbeat,
+} from "@/src/domains/workers/worker-runtime-readiness";
 
 const allowedCategories: QueueWorkloadCategory[] = [
   "CRITICAL_FINANCIAL",
@@ -34,8 +39,14 @@ async function main() {
   const routing = resolveRabbitMqWorkloadRouting(category);
   const topology = getQueueTopologyEntry(category);
   const workerName = topology.consumerOwner;
-  const consumer = new RabbitMqQueueConsumer();
+  let consumer: RabbitMqQueueConsumer | null = null;
   let shuttingDown = false;
+  const reconnectDelayMs = Math.max(
+    250,
+    Number(process.env.WORKER_RABBITMQ_RECONNECT_DELAY_MS) || 2_000
+  );
+  const componentName = topology.consumerOwner;
+  let stopRuntimeHeartbeat: ((status?: "READY" | "DEGRADED" | "STOPPED") => Promise<void>) | null = null;
 
   async function shutdown(signal: NodeJS.Signals) {
     if (shuttingDown) {
@@ -51,7 +62,9 @@ async function main() {
         queue: routing.queue,
       },
     });
-    await consumer.close();
+    await consumer?.close();
+    await stopRuntimeHeartbeat?.("STOPPED");
+    await closeCompiledWorkerRuntimePool();
     process.exit(0);
   }
 
@@ -73,25 +86,70 @@ async function main() {
     },
   });
 
-  await consumer.consume({
-    routing,
-    workerName,
-    handler: async (message) => {
-      const result = await handleWorkloadMessage({
-        category,
-        message,
-      });
+  while (!shuttingDown) {
+    consumer = new RabbitMqQueueConsumer();
+    try {
+      await consumer.consume({
+        routing,
+        workerName,
+        handler: async (message) => {
+          const result = await handleWorkloadMessage({
+            category,
+            message,
+          });
 
-      logger.info({
-        message: "RabbitMQ workload event payload handled.",
-        correlationId: message.correlationId ?? null,
-        metadata: {
-          workloadCategory: category,
-          ...result,
+          logger.info({
+            message: "RabbitMQ workload event payload handled.",
+            correlationId: message.correlationId ?? null,
+            metadata: {
+              workloadCategory: category,
+              ...result,
+            },
+          });
         },
       });
-    },
-  });
+      await recordCompiledWorkerRuntime({
+        componentName,
+        status: "READY",
+        metadata: { queue: routing.queue, workloadCategory: category },
+      });
+      stopRuntimeHeartbeat ??= startCompiledWorkerHeartbeat({
+        componentName,
+        metadata: { queue: routing.queue, workloadCategory: category },
+      });
+      await consumer.waitForDisconnect();
+      if (!shuttingDown) {
+        await recordCompiledWorkerRuntime({
+          componentName,
+          status: "DEGRADED",
+          metadata: { reason: "rabbitmq-disconnected", workloadCategory: category },
+        });
+      }
+    } catch (error) {
+      if (!shuttingDown) {
+        logger.warn({
+          message: "RabbitMQ workload consumer reconnect scheduled.",
+          metadata: {
+            error: error instanceof Error ? error.message : "Unknown error",
+            reconnectDelayMs,
+            workloadCategory: category,
+          },
+        });
+        await recordCompiledWorkerRuntime({
+          componentName,
+          status: "DEGRADED",
+          metadata: { reason: "rabbitmq-connect-failed", workloadCategory: category },
+        }).catch(() => undefined);
+      }
+    } finally {
+      await consumer.close();
+      consumer = null;
+    }
+
+    if (!shuttingDown) {
+      await new Promise((resolve) => setTimeout(resolve, reconnectDelayMs));
+    }
+  }
 }
 
 main().catch((error) => {

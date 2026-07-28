@@ -20,6 +20,7 @@
 
 # production
 /build
+/worker-dist
 
 # .NET
 bin/

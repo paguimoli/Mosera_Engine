@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Pool } from "pg";
+import { createSettlementScopeFixture, type SettlementScopeFixture } from "./lib/settlement-scope-fixture";
 
 type Check = {
   name: string;
@@ -175,9 +176,12 @@ values (
   );
 }
 
-function buildIngestionRequest(input: ReturnType<typeof buildStoredSettlementInput>) {
+function buildIngestionRequest(
+  input: ReturnType<typeof buildStoredSettlementInput>,
+  scope: SettlementScopeFixture
+) {
   const acceptedAt = new Date().toISOString();
-  const playerAccountReference = `qa-player-${randomUUID()}`;
+  const playerAccountReference = scope.playerId;
   const contextReference = `accepted-wager-context:v1:${randomUUID()}`;
 
   return {
@@ -189,6 +193,8 @@ function buildIngestionRequest(input: ReturnType<typeof buildStoredSettlementInp
     mathEvaluationCertificateHash: input.mathEvaluationCertificateHash,
     outcomeCertificateId: input.outcomeCertificateId,
     outcomeCertificateHash: input.outcomeCertificateHash,
+    tenantId: scope.tenantId,
+    brandId: scope.brandId,
     ticketId: input.ticketId,
     ticketLineId: input.ticketLineId,
     playerAccountReference,
@@ -197,7 +203,7 @@ function buildIngestionRequest(input: ReturnType<typeof buildStoredSettlementInp
     currency: "USD",
     minorUnitPrecision: 2,
     roundingPolicyReference: "rounding-policy:v1",
-    creditReservationReference: null,
+    creditReservationReference: scope.reservationId,
     settlementPolicyVersion: "settlement-policy:v1",
     acceptedAt,
     requestProvenance: {
@@ -206,6 +212,8 @@ function buildIngestionRequest(input: ReturnType<typeof buildStoredSettlementInp
     mode: "DryRun",
     acceptedWagerFinancialContext: {
       contextReference,
+      tenantId: scope.tenantId,
+      brandId: scope.brandId,
       ticketId: input.ticketId,
       ticketLineId: input.ticketLineId,
       playerAccountReference,
@@ -213,7 +221,14 @@ function buildIngestionRequest(input: ReturnType<typeof buildStoredSettlementInp
       currency: "USD",
       minorUnitPrecision: 2,
       roundingPolicyReference: "rounding-policy:v1",
-      creditReservationReference: null,
+      creditReservationReference: {
+        reservationId: scope.reservationId,
+        tenantId: scope.tenantId,
+        brandId: scope.brandId,
+        playerAccountReference,
+        ticketId: input.ticketId,
+        ticketLineId: input.ticketLineId,
+      },
       acceptedAt,
     },
     settlementPolicy: {
@@ -225,7 +240,8 @@ function buildIngestionRequest(input: ReturnType<typeof buildStoredSettlementInp
 async function createSettlement(pool: Pool, outcome: Outcome) {
   const input = buildStoredSettlementInput(outcome);
   await seedSettlementInput(pool, input);
-  const ingestionPayload = buildIngestionRequest(input);
+  const scope = await createSettlementScopeFixture(pool, input.ticketId, "qa-financial-instructions");
+  const ingestionPayload = buildIngestionRequest(input, scope);
   const ingestion = await request("/v1/settlement/inputs/ingest", {
     method: "POST",
     body: JSON.stringify(ingestionPayload),
@@ -370,8 +386,9 @@ async function main() {
     pass("instruction replay deterministic");
 
     const conflictSettlement = await createSettlement(pool, "Win");
-    await pool.query(
-      `
+    const conflictingInsertBlocked = await pool
+      .query(
+        `
 insert into settlement_service.financial_instructions (
   instruction_id,
   settlement_id,
@@ -388,20 +405,23 @@ insert into settlement_service.financial_instructions (
 )
 values ($1, $2, $3, 'LEDGER_PAYOUT', 'Ready', $4, $5, 'ledger-service', 1, 1, now(), '{}'::jsonb);
 `,
-      [
-        randomUUID(),
-        conflictSettlement.settlementId,
-        conflictSettlement.settlementRequestId,
-        hash(`conflicting-payload:${randomUUID()}`),
-        `conflicting-instruction:${randomUUID()}`,
-      ]
-    );
+        [
+          randomUUID(),
+          conflictSettlement.settlementId,
+          conflictSettlement.settlementRequestId,
+          hash(`conflicting-payload:${randomUUID()}`),
+          `conflicting-instruction:${randomUUID()}`,
+        ]
+      )
+      .then(() => false)
+      .catch(() => true);
+    assert(conflictingInsertBlocked, "database uniqueness should reject a conflicting instruction for an atomically completed settlement.");
     const conflict = await generate(conflictSettlement.settlementId);
-    assert(conflict.response.status === 409, "conflicting generation fails closed.", {
+    assert(conflict.response.ok && conflict.body.duplicate === true, "canonical instruction set should remain unchanged after conflicting insert rejection.", {
       status: conflict.response.status,
       body: conflict.body,
     });
-    pass("conflicting generation fails closed");
+    pass("conflicting instruction persistence fails closed");
 
     const updateBlocked = await pool
       .query(

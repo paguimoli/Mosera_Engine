@@ -179,6 +179,46 @@ where settlement_id = @settlement_id;
             correlationId);
     }
 
+    internal static async Task EnsureCanonicalInstructionsAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        SettlementRecordResponse settlementRecord,
+        CancellationToken cancellationToken)
+    {
+        var definitions = FinancialInstructionService.BuildInstructions(settlementRecord);
+        var existing = await ListInstructionsAsync(
+            connection,
+            transaction,
+            settlementRecord.SettlementId,
+            cancellationToken);
+
+        if (existing.Count > 0)
+        {
+            EnsureExistingMatchesDefinitions(existing, definitions);
+            return;
+        }
+
+        foreach (var definition in definitions)
+        {
+            await InsertInstructionAsync(
+                connection,
+                transaction,
+                settlementRecord,
+                definition,
+                cancellationToken);
+        }
+
+        await AppendAttemptAsync(
+            connection,
+            transaction,
+            settlementRecord.SettlementId,
+            Guid.NewGuid(),
+            FinancialInstructionAttemptStatus.Generated,
+            HashDefinitionSet(definitions),
+            [],
+            cancellationToken);
+    }
+
     public async Task<FinancialInstructionReadiness> CheckReadinessAsync(CancellationToken cancellationToken)
     {
         if (!DurablePersistenceConfigured)
@@ -645,6 +685,9 @@ returning *;
             if (!string.Equals(match.CanonicalPayloadHash, definition.CanonicalPayloadHash, StringComparison.Ordinal) ||
                 !string.Equals(match.IdempotencyKey, definition.IdempotencyKey, StringComparison.Ordinal) ||
                 !string.Equals(match.TargetService, definition.TargetService, StringComparison.Ordinal) ||
+                match.TenantId == Guid.Empty ||
+                match.BrandId == Guid.Empty ||
+                string.IsNullOrWhiteSpace(match.ScopeHash) ||
                 match.InstructionSequence != definition.InstructionSequence ||
                 match.InstructionStatus != definition.InstructionStatus)
             {
@@ -667,6 +710,9 @@ insert into settlement_service.financial_instructions (
   instruction_id,
   settlement_id,
   settlement_request_id,
+  tenant_id,
+  brand_id,
+  scope_hash,
   instruction_type,
   instruction_status,
   canonical_payload_hash,
@@ -683,6 +729,9 @@ values (
   @instruction_id,
   @settlement_id,
   @settlement_request_id,
+  @tenant_id,
+  @brand_id,
+  @scope_hash,
   @instruction_type,
   @instruction_status,
   @canonical_payload_hash,
@@ -699,6 +748,9 @@ values (
         command.Parameters.AddWithValue("instruction_id", definition.InstructionId);
         command.Parameters.AddWithValue("settlement_id", settlementRecord.SettlementId);
         command.Parameters.AddWithValue("settlement_request_id", settlementRecord.SettlementRequestId);
+        command.Parameters.AddWithValue("tenant_id", settlementRecord.TenantId);
+        command.Parameters.AddWithValue("brand_id", settlementRecord.BrandId);
+        command.Parameters.AddWithValue("scope_hash", settlementRecord.ScopeHash);
         command.Parameters.AddWithValue("instruction_type", definition.InstructionType.ToString());
         command.Parameters.AddWithValue("instruction_status", definition.InstructionStatus.ToString());
         command.Parameters.AddWithValue("canonical_payload_hash", definition.CanonicalPayloadHash);
@@ -974,6 +1026,11 @@ where instruction_id = @instruction_id;
             reader.GetString(reader.GetOrdinal("math_evaluation_certificate_hash")),
             reader.GetGuid(reader.GetOrdinal("outcome_certificate_id")),
             reader.GetString(reader.GetOrdinal("outcome_certificate_hash")),
+            reader.GetGuid(reader.GetOrdinal("tenant_id")),
+            reader.GetGuid(reader.GetOrdinal("brand_id")),
+            reader.GetString(reader.GetOrdinal("game_reference")),
+            reader.GetString(reader.GetOrdinal("draw_outcome_reference")),
+            reader.GetString(reader.GetOrdinal("scope_hash")),
             reader.GetString(reader.GetOrdinal("ticket_id")),
             reader.GetString(reader.GetOrdinal("ticket_line_id")),
             reader.GetString(reader.GetOrdinal("player_account_reference")),
@@ -1001,6 +1058,9 @@ where instruction_id = @instruction_id;
         return new FinancialInstructionDto(
             reader.GetGuid(reader.GetOrdinal("instruction_id")),
             reader.GetGuid(reader.GetOrdinal("settlement_id")),
+            reader.GetGuid(reader.GetOrdinal("tenant_id")),
+            reader.GetGuid(reader.GetOrdinal("brand_id")),
+            reader.GetString(reader.GetOrdinal("scope_hash")),
             Enum.Parse<FinancialInstructionType>(reader.GetString(reader.GetOrdinal("instruction_type"))),
             Enum.Parse<FinancialInstructionStatus>(reader.GetString(reader.GetOrdinal("instruction_status"))),
             reader.GetString(reader.GetOrdinal("canonical_payload_hash")),

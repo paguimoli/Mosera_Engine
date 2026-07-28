@@ -40,8 +40,6 @@ includesAll(
     "npm run lint",
     "npm run build",
     "npm run security:audit",
-    "npm run migrations:local:run",
-    "npm run migrations:local:validate",
     "docker compose config",
     "docker compose -f docker-compose.production.yml config",
     "npm run qa:production-config",
@@ -55,6 +53,66 @@ includesAll(
     "npm run qa:container-network-hardening",
   ],
   "Validation job"
+);
+
+includesAll(
+  workflow,
+  [
+    "integration-validation:",
+    "name: Canonical Integration Validation",
+    "if: always()",
+    "merge_group:",
+    "postgres:16-alpine",
+    "rabbitmq:3-management",
+    "redis:7-alpine",
+    "lottery_disposable",
+    'ALLOW_DISPOSABLE_DB_MIGRATIONS: "true"',
+    "MIGRATIONS_POSTGRES_CONTAINER",
+    "job.services.postgres.id",
+    "AUTH_AUTHORITY: MONOLITH",
+    "bash scripts/ci/run-integration-validation.sh",
+    "bash scripts/ci/collect-integration-evidence.sh",
+    "node scripts/ci/sanitize-integration-evidence.mjs",
+    "actions/upload-artifact@v4",
+    "retention-days: 30",
+    "compression-level: 9",
+    "GITHUB_STEP_SUMMARY",
+    "Require prerequisite validation",
+  ],
+  "Canonical integration validation job"
+);
+
+const integrationHarness = readFileSync("scripts/ci/run-integration-validation.sh", "utf8");
+includesAll(
+  integrationHarness,
+  [
+    'CI:-}" != "true"',
+    'GITHUB_ACTIONS:-}" != "true"',
+    'ALLOW_DISPOSABLE_DB_MIGRATIONS}" != "true"',
+    'AUTH_AUTHORITY:-MONOLITH}" != "MONOLITH"',
+    "npm --silent run migrations:local:run",
+    "npm --silent run migrations:local:validate",
+    "npm --silent run qa:local-migrations",
+    "npm --silent run qa:auth-service-cutover",
+    "npm --silent run qa:local-integrated-runtime",
+    "076_add_authentication_authority_consolidation",
+    "scripts/migrations/query-local-postgres.mjs",
+  ],
+  "Canonical integration harness"
+);
+
+assert(
+  !workflow.includes("apt-get install --yes postgresql-client"),
+  "Canonical integration validation must use the PostgreSQL client inside Docker."
+);
+assert(
+  !/\bpsql\s+-X\b/.test(integrationHarness),
+  "Canonical integration harness must not invoke host psql."
+);
+
+assert(
+  workflow.includes("needs:\n      - validate\n      - integration-validation"),
+  "Image publication must wait for canonical integration validation."
 );
 
 includesAll(
@@ -153,6 +211,7 @@ console.log(JSON.stringify({
     protectedPushGateConfigured: "PASS",
     imageMetadataConfigured: "PASS",
     supplyChainGatesConfigured: "PASS",
+    canonicalIntegrationValidationConfigured: "PASS",
     productionComposeImageOverrides: "PASS",
   },
 }, null, 2));

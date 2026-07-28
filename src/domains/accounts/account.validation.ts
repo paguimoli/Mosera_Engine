@@ -262,7 +262,6 @@ export function validateCreateAccountInput(
   const accountCode = normalizeAccountCode(input.accountCode);
   const displayName = input.displayName.trim();
   const marketId = input.marketId.trim();
-  const brandId = input.brandId.trim();
   const status = input.status ? normalizeAccountStatus(input.status) : "ACTIVE";
   const fundingModel = normalizeOptionalUppercase(input.fundingModel);
   const operatingMode = normalizeOptionalUppercase(input.operatingMode);
@@ -345,10 +344,6 @@ export function validateCreateAccountInput(
 
   if (!marketId) {
     errors.push("Market id is required.");
-  }
-
-  if (!brandId) {
-    errors.push("Brand id is required.");
   }
 
   return errors.length > 0 ? invalid(errors) : valid();
@@ -444,7 +439,8 @@ export function normalizeCreateAccountInput(
     displayName: input.displayName.trim(),
     parentAccountId: input.parentAccountId?.trim() || null,
     marketId: input.marketId.trim(),
-    brandId: input.brandId.trim(),
+    brandId: input.brandId?.trim(),
+    idempotencyKey: input.idempotencyKey?.trim() || null,
     status: input.status ? normalizeAccountStatus(input.status) : "ACTIVE",
     fundingModel: normalizeOptionalUppercase(input.fundingModel),
     operatingMode: normalizeOptionalUppercase(input.operatingMode),

@@ -9,7 +9,8 @@ namespace SettlementService.Application;
 public sealed record SettlementInputIngestionClaim(
     SettlementInputIngestionRequest Request,
     string CanonicalRequestHash,
-    StoredSettlementInputDto StoredSettlementInput);
+    StoredSettlementInputDto StoredSettlementInput,
+    CanonicalSettlementScopeDto Scope);
 
 public sealed class SettlementInputIngestionService(SettlementInputIngestionRepository repository)
 {
@@ -43,14 +44,18 @@ public sealed class SettlementInputIngestionService(SettlementInputIngestionRepo
             request.SettlementInputId,
             cancellationToken)
             ?? throw new SettlementInputIngestionValidationException(["SettlementInput was not found."]);
-        var validation = Validate(request, storedInput);
+        var scope = await repository.ResolveAuthoritativeScopeAsync(
+            request,
+            storedInput,
+            cancellationToken);
+        var validation = Validate(request, storedInput, scope);
         if (!validation.IsValid)
         {
             throw new SettlementInputIngestionValidationException(validation.Errors);
         }
 
-        var canonicalRequestHash = BuildCanonicalRequestHash(request);
-        var claim = new SettlementInputIngestionClaim(request, canonicalRequestHash, storedInput);
+        var canonicalRequestHash = BuildCanonicalRequestHash(request, scope);
+        var claim = new SettlementInputIngestionClaim(request, canonicalRequestHash, storedInput, scope);
         var result = await repository.ClaimAsync(claim, correlationId, cancellationToken);
         return result;
     }
@@ -62,7 +67,8 @@ public sealed class SettlementInputIngestionService(SettlementInputIngestionRepo
 
     public SettlementIngestionValidationResult Validate(
         SettlementInputIngestionRequest request,
-        StoredSettlementInputDto storedInput)
+        StoredSettlementInputDto storedInput,
+        CanonicalSettlementScopeDto scope)
     {
         var errors = new List<string>();
         RequireText(request.IdempotencyKey, "idempotencyKey", errors);
@@ -120,11 +126,14 @@ public sealed class SettlementInputIngestionService(SettlementInputIngestionRepo
 
         ValidateStoredSettlementInput(request, storedInput, errors);
         ValidateFinancialContext(request, errors);
+        ValidateScope(request, scope, errors);
 
         return new SettlementIngestionValidationResult(errors.Count == 0, errors);
     }
 
-    public static string BuildCanonicalRequestHash(SettlementInputIngestionRequest request)
+    public static string BuildCanonicalRequestHash(
+        SettlementInputIngestionRequest request,
+        CanonicalSettlementScopeDto scope)
     {
         var payload = new SortedDictionary<string, object?>(StringComparer.Ordinal)
         {
@@ -139,6 +148,11 @@ public sealed class SettlementInputIngestionService(SettlementInputIngestionRepo
             ["settlementInputHash"] = request.SettlementInputHash,
             ["settlementInputId"] = request.SettlementInputId,
             ["settlementPolicyVersion"] = request.SettlementPolicyVersion,
+            ["tenantId"] = scope.TenantId,
+            ["brandId"] = scope.BrandId,
+            ["gameReference"] = scope.GameReference,
+            ["drawOutcomeReference"] = scope.DrawOutcomeReference,
+            ["scopeHash"] = scope.ScopeHash,
             ["ticketId"] = request.TicketId,
             ["ticketLineId"] = request.TicketLineId
         };
@@ -195,6 +209,10 @@ public sealed class SettlementInputIngestionService(SettlementInputIngestionRepo
         List<string> errors)
     {
         var context = request.AcceptedWagerFinancialContext;
+        if (context.TenantId != request.TenantId || context.BrandId != request.BrandId)
+        {
+            errors.Add("acceptedWagerFinancialContext tenant/brand scope mismatch.");
+        }
         if (!string.Equals(context.ContextReference, request.AcceptedWagerFinancialContextReference, StringComparison.Ordinal))
         {
             errors.Add("acceptedWagerFinancialContext.reference mismatch.");
@@ -248,6 +266,12 @@ public sealed class SettlementInputIngestionService(SettlementInputIngestionRepo
 
         if (contextReservation is not null)
         {
+            if (contextReservation.TenantId != request.TenantId ||
+                contextReservation.BrandId != request.BrandId)
+            {
+                errors.Add("creditReservationReference tenant/brand scope mismatch.");
+            }
+
             if (!string.Equals(contextReservation.ReservationId, request.CreditReservationReference, StringComparison.Ordinal))
             {
                 errors.Add("creditReservationReference mismatch.");
@@ -264,6 +288,33 @@ public sealed class SettlementInputIngestionService(SettlementInputIngestionRepo
         if (!string.Equals(request.SettlementPolicy.Version, request.SettlementPolicyVersion, StringComparison.Ordinal))
         {
             errors.Add("settlementPolicy.version mismatch.");
+        }
+    }
+
+    private static void ValidateScope(
+        SettlementInputIngestionRequest request,
+        CanonicalSettlementScopeDto scope,
+        List<string> errors)
+    {
+        if (request.TenantId != scope.TenantId)
+        {
+            errors.Add("Tenant scope does not match the authoritative Credit Wallet reservation.");
+        }
+
+        if (request.BrandId != scope.BrandId)
+        {
+            errors.Add("Brand scope does not match the authoritative Credit Wallet reservation.");
+        }
+
+        if (!Guid.TryParse(request.PlayerAccountReference, out var playerId) ||
+            playerId != scope.PlayerAccountId)
+        {
+            errors.Add("Player/account scope does not match the authoritative Credit Wallet reservation.");
+        }
+
+        if (!string.Equals(request.TicketId, scope.TicketId, StringComparison.Ordinal))
+        {
+            errors.Add("Ticket scope does not match the authoritative Credit Wallet reservation.");
         }
     }
 

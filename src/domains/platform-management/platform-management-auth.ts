@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { AuthContext } from "@/src/domains/auth/auth-context.types";
 import { AuthMiddlewareError, requirePermission } from "@/src/domains/auth/auth-middleware";
 import { extractSessionTokenFromRequest } from "@/src/domains/auth/auth-token.helpers";
@@ -31,6 +33,8 @@ export type PlatformManagementAuthorization = {
   readonly permissions: ReadonlySet<string>;
   readonly scopes: readonly PlatformManagementScope[];
   readonly superAdmin: boolean;
+  readonly actorId: string;
+  readonly sessionId: string | null;
 };
 
 const platformManagementPermissions: Record<
@@ -100,6 +104,8 @@ export async function requirePlatformManagementPermission(
         permissions: authOverride.permissions,
         scopes: authOverride.scopes,
         superAdmin: authOverride.permissions.has("system.admin"),
+        actorId: "platform-management-qa",
+        sessionId: null,
       };
     }
 
@@ -170,6 +176,42 @@ function authorizationFromContext(context: AuthContext): PlatformManagementAutho
     permissions,
     scopes: context.platformScopes ?? [],
     superAdmin: context.hasPermission("system.admin"),
+    actorId: context.user.id,
+    sessionId: context.session.id,
+  };
+}
+
+export function withPlatformMutationAudit(
+  input: Record<string, unknown>,
+  request: Request,
+  authorization: PlatformManagementAuthorization,
+  resource: PlatformResourceName,
+  action: PlatformManagementAction | string,
+  scope: PlatformResourceScopeSnapshot | null
+) {
+  const requestId =
+    request.headers.get("x-request-id")?.trim() ||
+    request.headers.get("x-correlation-id")?.trim() ||
+    randomUUID();
+  const suppliedAudit =
+    input.auditMetadata && typeof input.auditMetadata === "object"
+      ? (input.auditMetadata as Record<string, unknown>)
+      : {};
+
+  return {
+    ...input,
+    lifecycleOperator: authorization.actorId,
+    operator: authorization.actorId,
+    auditMetadata: {
+      ...suppliedAudit,
+      actorId: authorization.actorId,
+      sessionId: authorization.sessionId,
+      permission: getPlatformManagementPermission(resource, action === "read" ? "read" : "create"),
+      canonicalScope: scope ?? {},
+      requestId,
+      correlationId: request.headers.get("x-correlation-id")?.trim() || requestId,
+      source: "platform-management-api",
+    },
   };
 }
 

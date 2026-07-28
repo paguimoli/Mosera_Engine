@@ -53,6 +53,7 @@ builder.Services.AddSingleton<MathCertificateEvaluationService>();
 builder.Services.AddSingleton<DurableMathEvaluationService>();
 builder.Services.AddSingleton<MathEvaluationBatchService>();
 builder.Services.AddSingleton<SettlementInputAdapter>();
+builder.Services.AddSingleton<CanonicalOutcomePipelineService>();
 if (string.IsNullOrWhiteSpace(databaseUrl))
 {
     builder.Services.AddSingleton<IDrawScheduleRepository, InMemoryDrawScheduleRepository>();
@@ -81,6 +82,7 @@ if (string.IsNullOrWhiteSpace(databaseUrl))
     builder.Services.AddSingleton<IMathEvaluationDurableRepository, InMemoryMathEvaluationDurableRepository>();
     builder.Services.AddSingleton<IMathEvaluationBatchRepository, InMemoryMathEvaluationBatchRepository>();
     builder.Services.AddSingleton<ISettlementInputRepository, InMemorySettlementInputRepository>();
+    builder.Services.AddSingleton<ICanonicalOutcomePipelineRepository, DisabledCanonicalOutcomePipelineRepository>();
 }
 else
 {
@@ -110,6 +112,10 @@ else
     builder.Services.AddSingleton<IMathEvaluationDurableRepository>(_ => new PostgresMathEvaluationDurableRepository(databaseUrl));
     builder.Services.AddSingleton<IMathEvaluationBatchRepository>(_ => new PostgresMathEvaluationBatchRepository(databaseUrl));
     builder.Services.AddSingleton<ISettlementInputRepository>(_ => new PostgresSettlementInputRepository(databaseUrl));
+    builder.Services.AddSingleton<ICanonicalOutcomePipelineRepository>(
+        _ => new PostgresCanonicalOutcomePipelineRepository(
+            databaseUrl,
+            serviceConfiguration.LegacyOutcomePublicationEnabled));
 }
 
 builder.Services.AddSingleton<ITicketReader, DatabaseTicketReader>();
@@ -118,6 +124,7 @@ builder.Services.AddSingleton<ISettlementEvaluationReadModel, SettlementEvaluati
 builder.Services.AddSingleton<SettlementConsumerActivationGate>();
 builder.Services.AddSingleton<GameModuleExecutionService>();
 builder.Services.AddSingleton<GameEngineStatusService>();
+builder.Services.AddHostedService<CanonicalOutcomeRecoveryHostedService>();
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());

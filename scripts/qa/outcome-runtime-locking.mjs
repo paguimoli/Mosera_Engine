@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { printJson, queryScalar, runPsql } from "../migrations/lib/local-migration-utils.mjs";
+import {
+  createPsqlInvocation,
+  printJson,
+  queryScalar,
+  runPsql,
+} from "../migrations/lib/local-migration-utils.mjs";
 
 const checks = [];
 
@@ -41,7 +46,8 @@ function holdSessionLock(lockScope, seconds) {
 select pg_advisory_lock(hashtextextended(${sqlString(lockScope)}, 0));
 select pg_sleep(${seconds});
 `;
-  return spawn("psql", ["-X", "-v", "ON_ERROR_STOP=1", process.env.DATABASE_URL, "-q", "-c", sql], {
+  const invocation = createPsqlInvocation(["-q", "-c", sql]);
+  return spawn(invocation.command, invocation.args, {
     cwd: process.cwd(),
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],

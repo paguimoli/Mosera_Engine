@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:workers": "tsc --project tsconfig.workers.json",
     "start": "next start",
     "lint": "eslint",
     "security:audit": "node scripts/operations/dependency-audit.mjs",
@@ -61,6 +62,10 @@
     "qa:settlement-legacy-isolation": "node scripts/run-ts-script.mjs scripts/qa/settlement-authority-guardrails.ts",
     "qa:settlement-promotion-guardrails": "node scripts/run-ts-script.mjs scripts/qa/settlement-authority-guardrails.ts",
     "qa:settlement-rollback-readiness": "node scripts/run-ts-script.mjs scripts/qa/settlement-authority-guardrails.ts",
+    "qa:settlement-evidence-classification": "node scripts/run-ts-script.mjs scripts/qa/settlement-evidence-classification.ts",
+    "qa:settlement-scope-governance": "node scripts/run-ts-script.mjs scripts/qa/settlement-input-ingestion.ts",
+    "qa:settlement-focused-tests": "dotnet run --no-build --project services/settlement-service/tests/SettlementService.Tests/SettlementService.Tests.csproj",
+    "qa:settlement-clean-promotion-rehearsal": "node scripts/run-ts-script.mjs scripts/qa/settlement-clean-promotion-rehearsal.ts",
     "qa:ledger-shadow": "node scripts/qa/ledger-shadow-mode.mjs",
     "qa:ledger-shadow-reporting": "node scripts/qa/ledger-shadow-reporting.mjs",
     "qa:ledger-canonical-posting": "node scripts/run-ts-script.mjs scripts/qa/ledger-canonical-posting.ts",
@@ -252,10 +257,16 @@
     "qa:entropy-provider-configuration": "node scripts/qa/entropy-provider-configuration.mjs",
     "qa:legacy-randomness-isolation": "node scripts/qa/legacy-randomness-isolation.mjs",
     "qa:outcome-readiness-report": "node scripts/qa/outcome-readiness-report.mjs",
+    "qa:canonical-outcome-pipeline": "node scripts/qa/canonical-outcome-pipeline.mjs",
+    "qa:canonical-draw-orchestration": "node scripts/qa/canonical-draw-orchestration.mjs",
+    "qa:backend-launch-api-consolidation": "node scripts/qa/backend-launch-api-consolidation.mjs",
     "qa:rollback-watermark": "node scripts/qa/rollback-watermark.mjs",
     "qa:process-restart-recovery": "node scripts/qa/process-restart-recovery.mjs",
     "qa:external-statistical-evidence-import": "node scripts/qa/external-statistical-evidence-import.mjs",
     "qa:platform-foundation": "node scripts/qa/platform-foundation.mjs",
+    "qa:canonical-platform-hierarchy": "node scripts/qa/canonical-platform-hierarchy.mjs",
+    "qa:account-player-agent-scope-governance": "node scripts/qa/account-player-agent-scope-governance.mjs",
+    "qa:canonical-ticket-lifecycle": "node scripts/qa/canonical-ticket-lifecycle.mjs",
     "qa:website-domain-management": "node scripts/qa/website-domain-management.mjs",
     "qa:theme-brand-assets": "node scripts/qa/theme-brand-assets.mjs",
     "qa:game-availability-matrix": "node scripts/qa/game-availability-matrix.mjs",
@@ -263,6 +274,8 @@
     "qa:platform-management-auth": "node scripts/run-ts-script.mjs scripts/qa/platform-management-auth.ts",
     "qa:platform-permission-governance": "node scripts/run-ts-script.mjs scripts/qa/platform-permission-governance.ts",
     "qa:platform-lifecycle": "node scripts/run-ts-script.mjs scripts/qa/platform-lifecycle.ts",
+    "qa:legacy-platform-mutation-retirement": "node scripts/run-ts-script.mjs scripts/qa/legacy-platform-mutation-retirement.ts",
+    "qa:launch-configuration-freeze": "node scripts/run-ts-script.mjs scripts/qa/launch-configuration-freeze.ts",
     "qa:runtime-brand-context": "node scripts/run-ts-script.mjs scripts/qa/runtime-brand-context.ts",
     "qa:local-migrations": "node scripts/qa/local-migrations.mjs",
     "qa:devtools": "bash -lc \"npm -v && dotnet --info && test -d docs/architecture && test -d services && npm run qa:shadow-import && npm run ops:migration-inventory && npm run ops:local-runtime-inventory && npm run ops:persistence-readiness-report\"",
@@ -382,6 +395,8 @@
     "ops:migration-inventory": "node scripts/operations/migration-inventory.mjs",
     "ops:persistence-readiness-report": "node scripts/operations/persistence-readiness-report.mjs",
     "worker:outbox-dispatcher": "node scripts/run-ts-script.mjs scripts/workers/dispatch-outbox.ts",
+    "worker:compiled:outbox-dispatcher": "node scripts/workers/runtime-bootstrap.cjs scripts/workers/dispatch-outbox.js",
+    "worker:compiled:consume": "node scripts/workers/runtime-bootstrap.cjs scripts/workers/consume-workload.js",
     "worker:critical-financial": "node scripts/run-ts-script.mjs scripts/workers/consume-workload.ts CRITICAL_FINANCIAL",
     "worker:ticket-lifecycle": "node scripts/run-ts-script.mjs scripts/workers/consume-workload.ts TICKET_LIFECYCLE",
     "worker:settlement": "node scripts/run-ts-script.mjs scripts/workers/consume-workload.ts SETTLEMENT",
@@ -449,5 +464,8 @@
     "eslint-config-next": "16.2.4",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "overrides": {
+    "next": {}
   }
 }

@@ -11,6 +11,10 @@ public sealed record SettlementPromotionOperationalSnapshot(
     int UnresolvedFailedInstructions,
     int AwaitingVerificationItems,
     int MissingImmutableReferenceItems,
+    int OrphanedSettlementIntentCount,
+    int CanonicalScopeViolationCount,
+    int GovernedPromotionExclusionCount,
+    int UnresolvedHistoricalEvidenceCount,
     int LegacyDryRunArtifacts,
     int SettlementInputRequestCount);
 
@@ -25,13 +29,15 @@ public sealed class SettlementPromotionRepository(ServiceConfiguration configura
     {
         if (!DurablePersistenceConfigured)
         {
-            return new SettlementPromotionOperationalSnapshot(0, 0, 0, 0, 0);
+            return new SettlementPromotionOperationalSnapshot(0, 0, 0, 0, 0, 0, 0, 0, 0);
         }
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
         var failed = await CountAsync(connection, """
 select count(*)::int
 from settlement_service.financial_instruction_execution_attempts latest
+join settlement_service.financial_instructions instruction
+  on instruction.instruction_id = latest.instruction_id
 where latest.status = 'Failed'
   and latest.created_at = (
     select max(inner_attempt.created_at)
@@ -43,17 +49,35 @@ where latest.status = 'Failed'
     from settlement_service.financial_instruction_execution_attempts terminal
     where terminal.instruction_id = latest.instruction_id
       and terminal.status in ('Posted', 'Skipped')
+  )
+  and not exists (
+    select 1
+    from settlement_service.settlement_promotion_exclusions excluded
+    where excluded.target_type = 'FINANCIAL_INSTRUCTION'
+      and excluded.target_id = instruction.instruction_id
   );
 """, cancellationToken);
         var awaitingVerification = await CountAsync(connection, """
 select (
   select count(*)::int
-  from settlement_service.recovery_events
-  where recovery_state = 'SettlementAwaitingVerification'
+  from settlement_service.recovery_events recovery
+  where recovery.recovery_state = 'SettlementAwaitingVerification'
+    and not exists (
+      select 1
+      from settlement_service.settlement_promotion_exclusions excluded
+      where excluded.target_type = 'RECOVERY_ITEM'
+        and excluded.target_id = recovery.event_id
+    )
 ) + (
   select count(*)::int
-  from settlement_service.reconciliation_events
-  where reconciliation_status = 'AwaitingVerification'
+  from settlement_service.reconciliation_events reconciliation
+  where reconciliation.reconciliation_status = 'AwaitingVerification'
+    and not exists (
+      select 1
+      from settlement_service.settlement_promotion_exclusions excluded
+      where excluded.target_type = 'RECOVERY_ITEM'
+        and excluded.target_id = reconciliation.event_id
+    )
 );
 """, cancellationToken);
         var missingReferences = await CountAsync(connection, """
@@ -61,11 +85,101 @@ select count(*)::int
 from settlement_service.authoritative_settlement_records record
 left join settlement_service.settlement_requests request
   on request.settlement_request_id = record.settlement_request_id
-where request.settlement_request_id is null
+where (
+  request.settlement_request_id is null
   or record.canonical_settlement_hash is null
   or record.canonical_settlement_hash = ''
   or request.settlement_input_hash is null
-  or request.math_evaluation_certificate_hash is null;
+  or request.math_evaluation_certificate_hash is null
+)
+and not exists (
+  select 1
+  from settlement_service.settlement_promotion_exclusions excluded
+  where excluded.target_type = 'SETTLEMENT_RECORD'
+    and excluded.target_id = record.settlement_id
+);
+""", cancellationToken);
+        var orphanedSettlementIntents = await CountAsync(connection, """
+select count(*)::int
+from settlement_service.authoritative_settlement_records record
+where (
+  not exists (
+  select 1
+  from settlement_service.financial_instructions instruction
+  where instruction.settlement_id = record.settlement_id
+  )
+or not exists (
+  select 1
+  from public.outbox_events event
+  where event.aggregate_type = 'settlement'
+    and event.aggregate_id = record.settlement_id::text
+    and event.event_type = 'settlement.decision.recorded'
+  )
+)
+and not exists (
+  select 1
+  from settlement_service.settlement_promotion_exclusions excluded
+  where excluded.target_type = 'SETTLEMENT_RECORD'
+    and excluded.target_id = record.settlement_id
+);
+""", cancellationToken);
+        var scopeViolations = await CountAsync(connection, """
+select count(*)::int
+from settlement_service.authoritative_settlement_records record
+left join settlement_service.settlement_requests request
+  on request.settlement_request_id = record.settlement_request_id
+where (
+  record.tenant_id is null
+  or record.brand_id is null
+  or record.scope_hash is null
+  or request.tenant_id is null
+  or request.brand_id is null
+  or request.scope_hash is null
+  or row(record.tenant_id, record.brand_id, record.scope_hash)
+     is distinct from row(request.tenant_id, request.brand_id, request.scope_hash)
+)
+and not exists (
+  select 1
+  from settlement_service.settlement_promotion_exclusions excluded
+  where excluded.target_type = 'SETTLEMENT_RECORD'
+    and excluded.target_id = record.settlement_id
+);
+""", cancellationToken);
+        var governedExclusions = await CountAsync(connection, """
+select count(*)::int
+from settlement_service.settlement_promotion_exclusions;
+""", cancellationToken);
+        var unresolvedHistoricalEvidence = await CountAsync(connection, """
+select count(*)::int
+from settlement_service.authoritative_settlement_records record
+left join settlement_service.settlement_requests request
+  on request.settlement_request_id = record.settlement_request_id
+where (
+  record.tenant_id is null
+  or record.brand_id is null
+  or record.scope_hash is null
+  or request.tenant_id is null
+  or request.brand_id is null
+  or request.scope_hash is null
+  or not exists (
+    select 1
+    from settlement_service.financial_instructions instruction
+    where instruction.settlement_id = record.settlement_id
+  )
+  or not exists (
+    select 1
+    from public.outbox_events event
+    where event.aggregate_type = 'settlement'
+      and event.aggregate_id = record.settlement_id::text
+      and event.event_type = 'settlement.decision.recorded'
+  )
+)
+and not exists (
+  select 1
+  from settlement_service.settlement_promotion_exclusions excluded
+  where excluded.target_type = 'SETTLEMENT_RECORD'
+    and excluded.target_id = record.settlement_id
+);
 """, cancellationToken);
         var legacyArtifacts = await CountAsync(connection, """
 select count(*)::int
@@ -81,6 +195,10 @@ from settlement_service.settlement_requests;
             failed,
             awaitingVerification,
             missingReferences,
+            orphanedSettlementIntents,
+            scopeViolations,
+            governedExclusions,
+            unresolvedHistoricalEvidence,
             legacyArtifacts,
             requestCount);
     }
@@ -99,6 +217,17 @@ from settlement_service.settlement_requests;
         command.CommandText = """
 select settlement_request_id
 from settlement_service.settlement_requests
+where tenant_id is not null
+  and brand_id is not null
+  and scope_hash is not null
+  and not exists (
+    select 1
+    from settlement_service.authoritative_settlement_records record
+    join settlement_service.settlement_promotion_exclusions excluded
+      on excluded.target_type = 'SETTLEMENT_RECORD'
+     and excluded.target_id = record.settlement_id
+    where record.settlement_request_id = settlement_requests.settlement_request_id
+  )
 order by accepted_at desc
 limit @limit;
 """;

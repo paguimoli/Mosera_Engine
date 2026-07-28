@@ -19,12 +19,16 @@ public enum SettlementIngestionStatus
 
 public sealed record CreditReservationReferenceDto(
     string ReservationId,
+    Guid TenantId,
+    Guid BrandId,
     string PlayerAccountReference,
     string TicketId,
     string TicketLineId);
 
 public sealed record AcceptedWagerFinancialContextDto(
     string ContextReference,
+    Guid TenantId,
+    Guid BrandId,
     string TicketId,
     string TicketLineId,
     string PlayerAccountReference,
@@ -47,6 +51,8 @@ public sealed record SettlementInputIngestionRequest(
     string MathEvaluationCertificateHash,
     Guid OutcomeCertificateId,
     string OutcomeCertificateHash,
+    Guid TenantId,
+    Guid BrandId,
     string TicketId,
     string TicketLineId,
     string PlayerAccountReference,
@@ -78,6 +84,16 @@ public sealed record SettlementIngestionResult(
     Guid AttemptId,
     string AttemptEvidenceHash,
     string CorrelationId);
+
+public sealed record CanonicalSettlementScopeDto(
+    Guid TenantId,
+    Guid BrandId,
+    Guid PlayerAccountId,
+    Guid CreditReservationId,
+    string TicketId,
+    string GameReference,
+    string DrawOutcomeReference,
+    string ScopeHash);
 
 public sealed record StoredSettlementInputDto(
     Guid SettlementInputId,

@@ -234,7 +234,9 @@ public sealed class AuthAccessTokenService(
     public async Task<TokenRefreshResult> RefreshAsync(
         string refreshToken,
         string? correlationId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? ipAddress = null,
+        string? userAgent = null)
     {
         var normalizedCorrelationId = NormalizeCorrelationId(correlationId);
         if (string.IsNullOrWhiteSpace(refreshToken))
@@ -250,10 +252,7 @@ public sealed class AuthAccessTokenService(
 
         if (existing.RevokedAt is not null || existing.RotatedAt is not null)
         {
-            var replayedAt = DateTimeOffset.UtcNow;
-            await refreshTokens.RevokeRefreshTokenFamily(existing.FamilyId, replayedAt, "replay_detected", cancellationToken);
-            await sessions.LogoutAsync(existing.SessionId, normalizedCorrelationId, cancellationToken);
-            await AppendTokenAudit(existing.IdentityId, existing.SessionId, "REFRESH_TOKEN_REPLAY", normalizedCorrelationId, "family_and_session_revoked", cancellationToken);
+            await RevokeReplayAsync(existing, normalizedCorrelationId, ipAddress, userAgent, cancellationToken);
             return TokenRefreshResult.CreateReplayDetected("refresh_token_replay_detected");
         }
 
@@ -270,26 +269,53 @@ public sealed class AuthAccessTokenService(
         }
 
         var rotatedAt = DateTimeOffset.UtcNow;
-        await refreshTokens.MarkRefreshTokenRotated(existing.RefreshTokenId, rotatedAt, cancellationToken);
-        var accessToken = await IssueForValidatedSessionAsync(sessionValidation, normalizedCorrelationId, cancellationToken);
         var rawRefreshToken = GenerateRefreshToken();
         var newRefreshTokenId = Guid.NewGuid();
         var newExpiresAt = rotatedAt.Add(RefreshTokenLifetime);
-        await refreshTokens.SaveRefreshToken(
-            newRefreshTokenId,
-            existing.IdentityId,
-            existing.SessionId,
-            Guid.NewGuid(),
-            existing.FamilyId,
-            existing.RotationCounter + 1,
-            existing.RefreshTokenId,
-            HashRefreshToken(rawRefreshToken),
-            rotatedAt,
-            newExpiresAt,
+        var rotation = await refreshTokens.RotateRefreshToken(
+            new RefreshTokenRotationCommand(
+                existing.RefreshTokenId,
+                newRefreshTokenId,
+                existing.IdentityId,
+                existing.SessionId,
+                Guid.NewGuid(),
+                existing.FamilyId,
+                existing.RotationCounter + 1,
+                HashRefreshToken(rawRefreshToken),
+                rotatedAt,
+                newExpiresAt),
             cancellationToken);
+        if (!rotation.Rotated)
+        {
+            await RevokeReplayAsync(existing, normalizedCorrelationId, ipAddress, userAgent, cancellationToken);
+            return TokenRefreshResult.CreateReplayDetected("refresh_token_replay_detected");
+        }
+
+        var accessToken = await IssueForValidatedSessionAsync(sessionValidation, normalizedCorrelationId, cancellationToken);
         await AppendTokenAudit(existing.IdentityId, existing.SessionId, "REFRESH_TOKEN_ROTATED", normalizedCorrelationId, "rotation_success", cancellationToken);
 
         return TokenRefreshResult.Refreshed(accessToken, rawRefreshToken, newRefreshTokenId, newExpiresAt);
+    }
+
+    private async Task RevokeReplayAsync(
+        RefreshTokenRuntimeRecord existing,
+        string correlationId,
+        string? ipAddress,
+        string? userAgent,
+        CancellationToken cancellationToken)
+    {
+        await refreshTokens.RevokeRefreshTokenReplay(
+            new RefreshReplayRevocationCommand(
+                existing.RefreshTokenId,
+                existing.FamilyId,
+                existing.SessionId,
+                existing.IdentityId,
+                DateTimeOffset.UtcNow,
+                correlationId,
+                ipAddress,
+                userAgent,
+                "refresh_token_replay_detected"),
+            cancellationToken);
     }
 
     public async Task<int> RevokeRefreshTokensForSessionAsync(

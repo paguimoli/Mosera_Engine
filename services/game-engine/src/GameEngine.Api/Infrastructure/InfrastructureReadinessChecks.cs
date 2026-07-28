@@ -15,6 +15,7 @@ public sealed class InfrastructureReadinessChecks
     private readonly DurableMathEvaluationService mathEvaluationService;
     private readonly MathEvaluationBatchService mathEvaluationBatchService;
     private readonly SettlementInputAdapter settlementInputAdapter;
+    private readonly CanonicalOutcomePipelineService canonicalOutcomePipeline;
     private readonly ProvablyFairRuntimeService provablyFairRuntime;
     private readonly ExternalOfficialResultRuntimeService externalOfficialResultRuntime;
     private readonly PhysicalDrawResultRuntimeService physicalDrawRuntime;
@@ -28,6 +29,7 @@ public sealed class InfrastructureReadinessChecks
         DurableMathEvaluationService mathEvaluationService,
         MathEvaluationBatchService mathEvaluationBatchService,
         SettlementInputAdapter settlementInputAdapter,
+        CanonicalOutcomePipelineService canonicalOutcomePipeline,
         ProvablyFairRuntimeService provablyFairRuntime,
         ExternalOfficialResultRuntimeService externalOfficialResultRuntime,
         PhysicalDrawResultRuntimeService physicalDrawRuntime,
@@ -40,6 +42,7 @@ public sealed class InfrastructureReadinessChecks
         this.mathEvaluationService = mathEvaluationService;
         this.mathEvaluationBatchService = mathEvaluationBatchService;
         this.settlementInputAdapter = settlementInputAdapter;
+        this.canonicalOutcomePipeline = canonicalOutcomePipeline;
         this.provablyFairRuntime = provablyFairRuntime;
         this.externalOfficialResultRuntime = externalOfficialResultRuntime;
         this.physicalDrawRuntime = physicalDrawRuntime;
@@ -199,6 +202,34 @@ public sealed class InfrastructureReadinessChecks
             ? new DependencyHealthResult("settlement-input-handoff", true)
             : new DependencyHealthResult(
                 "settlement-input-handoff",
+                false,
+                string.Join("; ", readiness.Blockers));
+    }
+
+    public async Task<DependencyHealthResult> CheckCanonicalOutcomePipelineAsync(CancellationToken cancellationToken)
+    {
+        var readiness = await canonicalOutcomePipeline.CheckReadinessAsync(cancellationToken);
+        var ready = readiness.DurablePersistenceConfigured &&
+            readiness.DurablePersistenceReachable &&
+            readiness.ImmutableVersioningReady &&
+            readiness.IdempotencyReady &&
+            readiness.AdvisoryLockingReady &&
+            readiness.OutboxReady &&
+            readiness.SettlementRequestEmissionReady &&
+            readiness.CanonicalDrawOrchestrationReady &&
+            readiness.OutboxDispatcherReady &&
+            readiness.WorkerRuntimeReady &&
+            readiness.RabbitMqConsumptionReady &&
+            readiness.SettlementRequestConsumptionReady &&
+            readiness.ReplayProtectionReady &&
+            readiness.MissingRequestRecoveryReady &&
+            readiness.LegacyPublicationDisabled &&
+            readiness.ProductionAuthorityDisabled;
+
+        return ready
+            ? new DependencyHealthResult("canonical-outcome-pipeline", true)
+            : new DependencyHealthResult(
+                "canonical-outcome-pipeline",
                 false,
                 string.Join("; ", readiness.Blockers));
     }

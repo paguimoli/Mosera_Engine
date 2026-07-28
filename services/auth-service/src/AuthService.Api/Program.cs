@@ -445,9 +445,15 @@ group.MapPost("/authority/audit", async (AuthenticationAuthorityService service,
 group.MapPost("/refresh", async (
     AuthAccessTokenService tokens,
     RefreshEndpointRequest request,
+    HttpRequest httpRequest,
     CancellationToken cancellationToken) =>
 {
-    var result = await tokens.RefreshAsync(request.RefreshToken ?? string.Empty, request.CorrelationId, cancellationToken);
+    var result = await tokens.RefreshAsync(
+        request.RefreshToken ?? string.Empty,
+        request.CorrelationId,
+        cancellationToken,
+        ReadClientIp(httpRequest),
+        httpRequest.Headers.UserAgent.FirstOrDefault());
     return result.Success
         ? Results.Ok(new
         {
