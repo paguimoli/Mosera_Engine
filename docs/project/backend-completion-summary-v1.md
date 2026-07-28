@@ -275,8 +275,8 @@ repository.
 | `POST /api/platform-management/{resource}` | Canonical production | Resource create permission, authoritative Platform scope, parent validation, immutable version/hash, audit context, conflict-safe retry. |
 | `POST /api/platform-management/{resource}/{id}/lifecycle/{action}` | Canonical internal production | Create permission, authoritative existing-record scope, legal lifecycle transition, dependency validation, append-only version/event evidence. |
 | `/api/brands/**` and `/api/markets/**` writers | Retired | Explicit `410 Gone`; no redirect and no persistence call. |
-| Legacy Brand/Market service writers | Development-only | Require explicit `PLATFORM_LEGACY_DEVELOPMENT_MUTATIONS_ENABLED=true` plus local/development/test environment. |
-| `scripts/seed-default-brand.ts`, `scripts/seed-default-market.ts` | Development-only fixture/bootstrap | Reach only the gated legacy services; forbidden in staging/production. |
+| Legacy Brand/Market service writers | Retired | Persistent create/update/default/disable functions were removed in BF-0.1. |
+| `scripts/seed-default-brand.ts`, `scripts/seed-default-market.ts` | Retired | The mutable legacy seed entrypoints were removed in BF-0.1. |
 | `scripts/migrations/**` Platform DDL/seed operations | Migration-only | Controlled migration runner; no HTTP surface. |
 | Platform Management read/list/resolve routes | Canonical production/internal reads | Permission and scope enforced except intentionally public-safe host context. |
 | Legacy Brand/Market GET routes | Deprecated reads | Retained separately; cannot mutate canonical or legacy persistence. |

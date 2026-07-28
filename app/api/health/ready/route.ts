@@ -10,6 +10,7 @@ import {
 } from "@/src/domains/tickets/canonical-ticket.repository";
 import { getLaunchConfigurationReadiness } from "@/src/domains/launch-configuration/launch-configuration";
 import { getPlatformMutationAuthorityChecks } from "@/src/domains/platform-management/platform-mutation-authority";
+import { getAuthorityConsolidationReadiness } from "@/src/architecture/authorities/authority-consolidation";
 
 export const runtime = "nodejs";
 
@@ -20,6 +21,7 @@ export async function GET() {
       getTicketReadiness(),
     ]);
     const platformMutationChecks = getPlatformMutationAuthorityChecks();
+    const authorityConsolidationChecks = getAuthorityConsolidationReadiness();
     const launchConfiguration = getLaunchConfigurationReadiness();
     const checks = [
       ...accountChecks.map((check) => ({ ...check, authority: "account" })),
@@ -28,6 +30,7 @@ export async function GET() {
         ...check,
         authority: "platform-mutation",
       })),
+      ...authorityConsolidationChecks,
       ...launchConfiguration.checks.map((check) => ({
         checkName: `launch_configuration:${check.name.toLowerCase()}`,
         ready: check.ready,
@@ -61,6 +64,9 @@ export async function GET() {
           legacyPlatformProductionMutationDisabled: platformMutationChecks
             .filter((check) => check.checkName.includes("legacy_"))
             .every((check) => check.ready),
+          coreAuthoritiesConsolidated: authorityConsolidationChecks.every(
+            (check) => check.ready
+          ),
           launchConfigurationFrozen: launchConfiguration.ready,
           creditOnlyLaunch: process.env.CREDIT_ONLY_LAUNCH_ENABLED === "true",
           cashierLaunchDisabled: process.env.CASHIER_LAUNCH_ENABLED === "false",
@@ -91,6 +97,7 @@ export async function GET() {
           ticketLegacyProductionMutationDisabled: true,
           canonicalPlatformMutationAuthority: false,
           legacyPlatformProductionMutationDisabled: false,
+          coreAuthoritiesConsolidated: false,
           launchConfigurationFrozen: false,
           creditOnlyLaunch: false,
           cashierLaunchDisabled: false,

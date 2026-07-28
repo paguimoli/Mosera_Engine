@@ -27,43 +27,7 @@ export function legacyPlatformMutationGone(resource: "brand" | "market" | "websi
   );
 }
 
-export function assertLegacyPlatformDevelopmentMutationAllowed() {
-  const deploymentEnvironment = (
-    process.env.DEPLOYMENT_ENVIRONMENT ??
-    process.env.NODE_ENV ??
-    ""
-  )
-    .trim()
-    .toLowerCase();
-  const explicitlyEnabled =
-    process.env.PLATFORM_LEGACY_DEVELOPMENT_MUTATIONS_ENABLED === "true";
-  const disposableEnvironment =
-    deploymentEnvironment === "development" ||
-    deploymentEnvironment === "local" ||
-    deploymentEnvironment === "test";
-
-  if (!explicitlyEnabled || !disposableEnvironment) {
-    throw new Error(
-      "Legacy Platform mutation is disabled. Use the canonical Platform Management API."
-    );
-  }
-}
-
 export function getPlatformMutationAuthorityChecks(): PlatformMutationAuthorityCheck[] {
-  const deploymentEnvironment = (
-    process.env.DEPLOYMENT_ENVIRONMENT ??
-    process.env.NODE_ENV ??
-    ""
-  )
-    .trim()
-    .toLowerCase();
-  const developmentMutationEnabled =
-    process.env.PLATFORM_LEGACY_DEVELOPMENT_MUTATIONS_ENABLED === "true";
-  const developmentEnvironment =
-    deploymentEnvironment === "development" ||
-    deploymentEnvironment === "local" ||
-    deploymentEnvironment === "test";
-
   return [
     {
       checkName: "platform_mutation:single_canonical_http_authority",
@@ -90,10 +54,10 @@ export function getPlatformMutationAuthorityChecks(): PlatformMutationAuthorityC
       classification: "no-legacy-route",
     },
     {
-      checkName: "platform_mutation:development_writer_isolated",
-      ready: !developmentMutationEnabled || developmentEnvironment,
-      issueCount: developmentMutationEnabled && !developmentEnvironment ? 1 : 0,
-      classification: "development-only",
+      checkName: "platform_mutation:legacy_development_writers_absent",
+      ready: true,
+      issueCount: 0,
+      classification: "retired",
     },
     {
       checkName: "platform_mutation:migration_writer_not_http_accessible",

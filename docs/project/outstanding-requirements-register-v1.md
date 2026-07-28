@@ -94,7 +94,8 @@ Mutation authority is frozen as follows:
 - production state change: explicit `activate`, `suspend`, `retire`, or
   `cancel` lifecycle action
 - legacy `/api/brands/**` and `/api/markets/**` writes: retired with `410`
-- Supabase-era default Brand/Market seeds: disposable development only
+- Supabase-era default Brand/Market mutation services and seeds: retired in
+  BF-0.1
 - SQL migrations: controlled migration runner only, never production HTTP
 
 P0-006 must not hide incomplete production capabilities behind polished UI. If a

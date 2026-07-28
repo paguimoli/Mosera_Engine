@@ -60,11 +60,10 @@ conflicting retries fail closed.
 
 Legacy `/api/brands/**` and `/api/markets/**` mutation handlers are retired with
 `410 Gone`. Their scoped reads remain temporarily available as deprecated read
-compatibility. Supabase-era default seed writers require
-`PLATFORM_LEGACY_DEVELOPMENT_MUTATIONS_ENABLED=true` and a disposable
-development/local/test environment; readiness fails if that gate is enabled
-outside those environments. Migration SQL remains runner-only and has no HTTP
-surface.
+compatibility. The mutable Brand/Market service writers and their default seed
+entrypoints were removed in BF-0.1; disposable fixtures must use canonical
+Platform Management create and lifecycle boundaries. Migration SQL remains
+runner-only and has no HTTP surface.
 
 ## 1. Market Principles
 

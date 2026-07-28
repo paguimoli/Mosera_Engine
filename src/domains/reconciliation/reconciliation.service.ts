@@ -1,4 +1,4 @@
-import { getPlayerCreditSummary } from "../credit/credit-reservation.service";
+import { getPlayerCreditSummary } from "../credit/credit.entrypoints";
 import {
   acknowledgeReconciliationFindingRecord,
   completeReconciliationRun,

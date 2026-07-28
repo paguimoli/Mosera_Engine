@@ -8,7 +8,7 @@ export const allowedServiceDependencies: ServiceDependency[] = [
   { fromService: "WALLET_SERVICE", toService: "ACCOUNT_SERVICE" },
   { fromService: "SETTLEMENT_SERVICE", toService: "LEDGER_SERVICE" },
   { fromService: "SETTLEMENT_SERVICE", toService: "WALLET_SERVICE" },
-  { fromService: "SETTLEMENT_SERVICE", toService: "DRAW_SERVICE" },
+  { fromService: "SETTLEMENT_SERVICE", toService: "GAME_ENGINE_SERVICE" },
   { fromService: "ACCOUNTING_SERVICE", toService: "LEDGER_SERVICE" },
   { fromService: "ACCOUNTING_SERVICE", toService: "WALLET_SERVICE" },
   { fromService: "ACCOUNTING_SERVICE", toService: "ACCOUNT_SERVICE" },

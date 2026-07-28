@@ -260,6 +260,7 @@
     "qa:canonical-outcome-pipeline": "node scripts/qa/canonical-outcome-pipeline.mjs",
     "qa:canonical-draw-orchestration": "node scripts/qa/canonical-draw-orchestration.mjs",
     "qa:backend-launch-api-consolidation": "node scripts/qa/backend-launch-api-consolidation.mjs",
+    "qa:backend-authority-consolidation": "node scripts/run-ts-script.mjs scripts/qa/backend-authority-consolidation.ts",
     "qa:rollback-watermark": "node scripts/qa/rollback-watermark.mjs",
     "qa:process-restart-recovery": "node scripts/qa/process-restart-recovery.mjs",
     "qa:external-statistical-evidence-import": "node scripts/qa/external-statistical-evidence-import.mjs",

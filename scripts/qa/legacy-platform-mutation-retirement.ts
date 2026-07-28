@@ -7,7 +7,6 @@ import {
   setPlatformManagementAuthOverrideForTesting,
 } from "../../src/domains/platform-management/platform-management-auth";
 import {
-  assertLegacyPlatformDevelopmentMutationAllowed,
   getPlatformMutationAuthorityChecks,
   legacyPlatformMutationGone,
 } from "../../src/domains/platform-management/platform-mutation-authority";
@@ -182,42 +181,50 @@ async function main() {
   });
   setPlatformManagementAuthOverrideForTesting(null);
 
-  const originalNodeEnvironment = process.env.NODE_ENV;
-  const originalDeploymentEnvironment = process.env.DEPLOYMENT_ENVIRONMENT;
-  const originalLegacyFlag =
-    process.env.PLATFORM_LEGACY_DEVELOPMENT_MUTATIONS_ENABLED;
-  process.env.DEPLOYMENT_ENVIRONMENT = "production";
-  process.env.PLATFORM_LEGACY_DEVELOPMENT_MUTATIONS_ENABLED = "true";
-
-  let productionGateRejected = false;
-  try {
-    assertLegacyPlatformDevelopmentMutationAllowed();
-  } catch (error) {
-    productionGateRejected =
-      error instanceof Error &&
-      error.message.includes("Legacy Platform mutation is disabled");
-  }
-  addCheck(
-    "development mutation writer fails outside development",
-    productionGateRejected
+  const brandServiceSource = await readFile(
+    "src/domains/brands/brand.service.ts",
+    "utf8"
   );
-  const unsafeReadiness = getPlatformMutationAuthorityChecks();
-  addCheck(
-    "readiness fails when development bypass is production-enabled",
-    unsafeReadiness.some(
-      (check) =>
-        check.checkName ===
-          "platform_mutation:development_writer_isolated" &&
-        !check.ready
-    ),
-    { checks: unsafeReadiness }
+  const brandRepositorySource = await readFile(
+    "src/domains/brands/brand.repository.ts",
+    "utf8"
   );
-
-  restoreEnvironment("NODE_ENV", originalNodeEnvironment);
-  restoreEnvironment("DEPLOYMENT_ENVIRONMENT", originalDeploymentEnvironment);
-  restoreEnvironment(
-    "PLATFORM_LEGACY_DEVELOPMENT_MUTATIONS_ENABLED",
-    originalLegacyFlag
+  const marketServiceSource = await readFile(
+    "src/domains/markets/market.service.ts",
+    "utf8"
+  );
+  const marketRepositorySource = await readFile(
+    "src/domains/markets/market.repository.ts",
+    "utf8"
+  );
+  addCheck(
+    "legacy Brand persistence writers are absent",
+    !/export async function (?:create|update|setDefault|disable)Brand/.test(
+      `${brandServiceSource}\n${brandRepositorySource}`
+    )
+  );
+  addCheck(
+    "legacy Market persistence writers are absent",
+    !/\.from\("markets"\)[\s\S]{0,160}\.(?:insert|update|delete)\(/.test(
+      `${marketServiceSource}\n${marketRepositorySource}`
+    )
+  );
+  const legacySeedFiles = (
+    await Promise.all(["scripts/seed-default-brand.ts", "scripts/seed-default-market.ts"].map(
+      async (file) => {
+        try {
+          await readFile(file, "utf8");
+          return file;
+        } catch {
+          return null;
+        }
+      }
+    ))
+  ).filter(Boolean);
+  addCheck(
+    "legacy Brand and Market mutation seeds are absent",
+    legacySeedFiles.length === 0,
+    { legacySeedFiles }
   );
   const safeReadiness = getPlatformMutationAuthorityChecks();
   addCheck(
@@ -276,14 +283,6 @@ async function main() {
 
   if (failed.length > 0) {
     process.exitCode = 1;
-  }
-}
-
-function restoreEnvironment(name: string, value: string | undefined) {
-  if (value === undefined) {
-    delete process.env[name];
-  } else {
-    process.env[name] = value;
   }
 }
 
