@@ -1,8 +1,6 @@
-import { validateAccountParentRule } from "./account-hierarchy.rules";
 import type {
   Account,
   CreateAccountInput,
-  PlayerAccount,
   UpdateAccountInput,
 } from "./account.types";
 import {
@@ -14,10 +12,15 @@ import {
   findAccountByCode,
   findAccountById,
   listAccounts as listAccountRecords,
-  listChildren as listChildRecords,
-  resolveCanonicalMarketScope,
   updateAccount as updateAccountRecord,
 } from "./account.repository";
+import {
+  CanonicalHierarchyError,
+  resolveCanonicalMarketScope,
+  resolveAccountDescendants,
+  validateAccountPlacement,
+  type CanonicalAccountScope,
+} from "@/src/domains/hierarchy/canonical-hierarchy-authority";
 import {
   normalizeCreateAccountInput,
   normalizeUpdateAccountInput,
@@ -56,73 +59,13 @@ export class AccountRequestConflictError extends Error {
   }
 }
 
-export function getChildAccounts(accounts: PlayerAccount[], accountId: string) {
-  return accounts.filter((account) => account.parentId === accountId);
-}
-
-export function getDescendantAccountIds(
-  accounts: PlayerAccount[],
-  accountId: string
-) {
-  const descendantIds: string[] = [];
-  const collectDescendants = (parentId: string) => {
-    getChildAccounts(accounts, parentId).forEach((childAccount) => {
-      descendantIds.push(childAccount.id);
-      collectDescendants(childAccount.id);
-    });
-  };
-
-  collectDescendants(accountId);
-  return descendantIds;
-}
-
-export function wouldCreateHierarchyCycle(
-  accounts: PlayerAccount[],
-  accountId: string,
-  newParentId: string | null
-) {
-  if (!accountId || !newParentId) {
-    return false;
-  }
-
-  if (accountId === newParentId) {
-    return true;
-  }
-
-  return getDescendantAccountIds(accounts, accountId).includes(newParentId);
-}
-
-async function getValidatedParentAccount(
-  input: CreateAccountInput | UpdateAccountInput,
-  existingAccount?: Account | null
-) {
-  const parentAccountId =
-    input.parentAccountId !== undefined
-      ? input.parentAccountId
-      : existingAccount?.parentAccountId ?? null;
-
-  if (!parentAccountId) {
-    return null;
-  }
-
-  const parentAccount = await findAccountById(parentAccountId);
-
-  if (!parentAccount) {
-    throw new AccountBusinessRuleError("Parent account not found.");
-  }
-
-  if (parentAccount.status !== "ACTIVE") {
-    throw new AccountBusinessRuleError("Parent account must be active.");
-  }
-
-  return parentAccount;
-}
-
 async function enforceHierarchyRules({
   input,
+  scope,
   existingAccount,
 }: {
   input: CreateAccountInput | UpdateAccountInput;
+  scope: CanonicalAccountScope;
   existingAccount?: Account | null;
 }) {
   const accountType = input.accountType ?? existingAccount?.accountType;
@@ -131,14 +74,22 @@ async function enforceHierarchyRules({
     throw new AccountBusinessRuleError("Account type is required.");
   }
 
-  const parentAccount = await getValidatedParentAccount(input, existingAccount);
-  const hierarchyErrors = validateAccountParentRule({
-    accountType,
-    parentAccount,
-  });
-
-  if (hierarchyErrors.length > 0) {
-    throw new AccountBusinessRuleError(hierarchyErrors[0] ?? "Invalid hierarchy.");
+  try {
+    await validateAccountPlacement({
+      accountId: existingAccount?.id ?? null,
+      accountType,
+      parentAccountId:
+        input.parentAccountId !== undefined
+          ? input.parentAccountId
+          : existingAccount?.parentAccountId ?? null,
+      scope,
+      status: input.status ?? existingAccount?.status,
+    });
+  } catch (error) {
+    if (error instanceof CanonicalHierarchyError) {
+      throw new AccountBusinessRuleError(error.message);
+    }
+    throw error;
   }
 }
 
@@ -219,7 +170,7 @@ export async function createAccount(
     );
   }
   enforceAccountConfigurationRules({ input: normalized });
-  await enforceHierarchyRules({ input: normalized });
+  await enforceHierarchyRules({ input: normalized, scope });
 
   try {
     return await createAccountRecord(normalized, scope, context);
@@ -271,7 +222,17 @@ export async function updateAccount(
   }
 
   enforceAccountConfigurationRules({ input: normalized, existingAccount });
-  await enforceHierarchyRules({ input: normalized, existingAccount });
+  await enforceHierarchyRules({
+    input: normalized,
+    scope: scope ?? {
+      platformId: existingAccount.platformId,
+      organizationId: existingAccount.organizationId,
+      tenantId: existingAccount.tenantId,
+      brandId: existingAccount.brandId,
+      marketId: existingAccount.marketId,
+    },
+    existingAccount,
+  });
 
   try {
     return await updateAccountRecord(id, normalized, scope, context);
@@ -293,9 +254,13 @@ export async function disableAccount(
     throw new AccountBusinessRuleError("Account not found.");
   }
 
-  const activeChildren = (await listChildRecords(id)).filter(
-    (childAccount) => childAccount.status === "ACTIVE"
-  );
+  const descendants = await resolveAccountDescendants(id);
+  const activeChildIds = descendants
+    .filter((descendant) => descendant.depth === 1)
+    .map((descendant) => descendant.accountId);
+  const activeChildren = (
+    await Promise.all(activeChildIds.map((childId) => findAccountById(childId)))
+  ).filter((childAccount) => childAccount?.status === "ACTIVE");
 
   if (activeChildren.length > 0) {
     throw new AccountBusinessRuleError(
@@ -315,5 +280,12 @@ export async function listAccounts(): Promise<Account[]> {
 }
 
 export async function listChildren(parentAccountId: string): Promise<Account[]> {
-  return listChildRecords(parentAccountId);
+  const descendants = await resolveAccountDescendants(parentAccountId);
+  return (
+    await Promise.all(
+      descendants
+        .filter((descendant) => descendant.depth === 1)
+        .map((descendant) => findAccountById(descendant.accountId))
+    )
+  ).filter((account): account is Account => Boolean(account));
 }

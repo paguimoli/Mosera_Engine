@@ -13,6 +13,7 @@ import type {
   PlayerAccount,
   UpdateAccountInput,
 } from "./account.types";
+import { wouldCreateHierarchyCycle } from "./account.helpers";
 
 const ACCOUNT_TYPES: PersistedAccountType[] = [
   "SUPER_MASTER",
@@ -54,47 +55,6 @@ function normalizeOptionalUppercase<TValue extends string>(
   value?: TValue | null
 ): TValue | null {
   return value ? (value.trim().toUpperCase() as TValue) : null;
-}
-
-function getChildAccountsForValidation(
-  accounts: PlayerAccount[],
-  accountId: string
-) {
-  return accounts.filter((account) => account.parentId === accountId);
-}
-
-function getDescendantAccountIdsForValidation(
-  accounts: PlayerAccount[],
-  accountId: string
-) {
-  const descendantIds: string[] = [];
-  const collectDescendants = (parentId: string) => {
-    getChildAccountsForValidation(accounts, parentId).forEach((childAccount) => {
-      descendantIds.push(childAccount.id);
-      collectDescendants(childAccount.id);
-    });
-  };
-
-  collectDescendants(accountId);
-  return descendantIds;
-}
-
-function wouldCreateHierarchyCycle(
-  accounts: PlayerAccount[],
-  accountId: string,
-  newParentId: string | null
-) {
-  if (!accountId || !newParentId) {
-    return false;
-  }
-
-  if (accountId === newParentId) {
-    return true;
-  }
-
-  return getDescendantAccountIdsForValidation(accounts, accountId).includes(
-    newParentId
-  );
 }
 
 export function validatePlayerAccountForm({

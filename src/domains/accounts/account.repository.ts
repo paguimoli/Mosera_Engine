@@ -12,7 +12,6 @@ import type {
   CreateAccountInput,
   PersistedAccountStatus,
   PersistedAccountType,
-  PlayerAccount,
   UpdateAccountInput,
 } from "./account.types";
 import {
@@ -20,14 +19,7 @@ import {
   normalizeCreateAccountInput,
   normalizeUpdateAccountInput,
 } from "./account.validation";
-
-export type CanonicalAccountScope = {
-  platformId: string;
-  organizationId: string;
-  tenantId: string;
-  brandId: string;
-  marketId: string;
-};
+import type { CanonicalAccountScope } from "@/src/domains/hierarchy/canonical-hierarchy-authority";
 
 export type AccountGovernanceContext = {
   operatorId: string;
@@ -38,12 +30,6 @@ export type AccountScopeReadinessCheck = {
   checkName: string;
   ready: boolean;
   issueCount: number;
-};
-
-export type CanonicalAccountHierarchy = {
-  hierarchyAccountIds: string[];
-  agentAccountId: string | null;
-  masterAgentAccountId: string | null;
 };
 
 type AccountRow = {
@@ -167,66 +153,6 @@ function mapAccountRow(row: AccountRow | null): Account | null {
     canonicalRequestHash: row.canonical_request_hash ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? null,
-  };
-}
-
-export async function resolveCanonicalMarketScope(
-  marketId: string
-): Promise<CanonicalAccountScope | null> {
-  const result = await databasePool().query<CanonicalAccountScope>(
-    `select
-       platform.id as "platformId",
-       organization.id as "organizationId",
-       tenant.id as "tenantId",
-       brand.id as "brandId",
-       market.id as "marketId"
-     from platform.markets market
-     join platform.brands brand on brand.id = market.brand_id
-     join platform.tenants tenant on tenant.id = brand.tenant_id
-     join platform.organizations organization on organization.id = tenant.organization_id
-     join platform.platforms platform on platform.id = organization.platform_id
-     where market.id = $1
-       and market.status = 'Active'
-       and brand.status = 'Active'
-       and tenant.status = 'Active'
-       and organization.status = 'Active'
-       and platform.status = 'Active'`,
-    [marketId]
-  );
-
-  return result.rows[0] ?? null;
-}
-
-export async function resolveCanonicalAccountHierarchy(
-  accountId: string
-): Promise<CanonicalAccountHierarchy> {
-  const result = await databasePool().query<{
-    id: string;
-    account_type: PersistedAccountType;
-    depth: number;
-  }>(
-    `with recursive hierarchy as (
-       select id, account_type, parent_account_id, 0 as depth
-       from public.accounts
-       where id = $1 and governance_managed
-       union all
-       select parent.id, parent.account_type, parent.parent_account_id, hierarchy.depth + 1
-       from public.accounts parent
-       join hierarchy on hierarchy.parent_account_id = parent.id
-       where parent.governance_managed
-     )
-     select id, account_type, depth
-     from hierarchy
-     order by depth asc`,
-    [accountId]
-  );
-
-  return {
-    hierarchyAccountIds: result.rows.map((row) => row.id),
-    agentAccountId:
-      result.rows.find((row) => row.account_type === "AGENT")?.id ?? null,
-    masterAgentAccountId:
-      result.rows.find((row) => row.account_type === "MASTER_AGENT")?.id ?? null,
   };
 }
 
@@ -356,22 +282,8 @@ export async function createAccount(
   }
 }
 
-export function findAccountById(
-  accounts: PlayerAccount[],
-  accountId: string
-): PlayerAccount | undefined;
 export function findAccountById(id: string): Promise<Account | null>;
-export function findAccountById(
-  accountsOrId: PlayerAccount[] | string,
-  accountId?: string
-): PlayerAccount | undefined | Promise<Account | null> {
-  if (Array.isArray(accountsOrId)) {
-    return accountsOrId.find((account) => account.id === accountId);
-  }
-  return findPersistedAccountById(accountsOrId);
-}
-
-async function findPersistedAccountById(id: string): Promise<Account | null> {
+export async function findAccountById(id: string): Promise<Account | null> {
   const result = await databasePool().query<AccountRow>(
     `select ${ACCOUNT_SELECT} ${ACCOUNT_FROM} and account.id = $1`,
     [id]
@@ -385,13 +297,6 @@ async function findAccountByIdempotencyKey(key: string) {
     [key]
   );
   return mapAccountRow(result.rows[0] ?? null);
-}
-
-export function findAccountByUsername(accounts: PlayerAccount[], username: string) {
-  return accounts.find(
-    (account) =>
-      account.username.trim().toLowerCase() === username.trim().toLowerCase()
-  );
 }
 
 export async function findAccountByCode(
@@ -411,31 +316,6 @@ export async function listAccounts(): Promise<Account[]> {
   return result.rows.map(mapAccountRow).filter((account): account is Account => Boolean(account));
 }
 
-export function listAccountsByParentId(
-  accounts: PlayerAccount[],
-  parentId: string | null
-) {
-  return accounts.filter((account) => account.parentId === parentId);
-}
-
-export async function listChildren(parentAccountId: string): Promise<Account[]> {
-  const result = await databasePool().query<AccountRow>(
-    `select ${ACCOUNT_SELECT} ${ACCOUNT_FROM}
-     and account.parent_account_id = $1
-     order by account.account_code`,
-    [parentAccountId]
-  );
-  return result.rows.map(mapAccountRow).filter((account): account is Account => Boolean(account));
-}
-
-export function saveAccount(accounts: PlayerAccount[], account: PlayerAccount) {
-  return [...accounts, account];
-}
-
-export function updateAccount(
-  accounts: PlayerAccount[],
-  account: PlayerAccount
-): PlayerAccount[];
 export function updateAccount(
   id: string,
   input: UpdateAccountInput,
@@ -443,20 +323,14 @@ export function updateAccount(
   context?: AccountGovernanceContext
 ): Promise<Account>;
 export function updateAccount(
-  accountsOrId: PlayerAccount[] | string,
-  accountOrInput: PlayerAccount | UpdateAccountInput,
+  id: string,
+  input: UpdateAccountInput,
   scope?: CanonicalAccountScope,
   context?: AccountGovernanceContext
-): PlayerAccount[] | Promise<Account> {
-  if (Array.isArray(accountsOrId)) {
-    const account = accountOrInput as PlayerAccount;
-    return accountsOrId.map((createdAccount) =>
-      createdAccount.id === account.id ? account : createdAccount
-    );
-  }
+): Promise<Account> {
   return updatePersistedAccount(
-    accountsOrId,
-    accountOrInput as UpdateAccountInput,
+    id,
+    input,
     scope,
     context ?? { operatorId: "system", reason: "account update" }
   );
@@ -566,8 +440,4 @@ export async function getAccountScopeReadiness(): Promise<
     ready: row.ready,
     issueCount: Number(row.issue_count),
   }));
-}
-
-export function deleteAccount(accounts: PlayerAccount[], accountId: string) {
-  return accounts.filter((account) => account.id !== accountId);
 }

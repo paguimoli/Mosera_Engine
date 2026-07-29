@@ -2,7 +2,7 @@ import type { PlayerAccount } from "../accounts/account.types";
 import {
   getChildAccounts,
   getDescendantAccountIds,
-} from "../accounts/account.service";
+} from "../accounts/account.helpers";
 import type {
   AuthorizationAction,
   AuthorizationActor,

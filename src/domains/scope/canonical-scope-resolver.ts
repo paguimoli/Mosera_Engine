@@ -33,6 +33,7 @@ export type CanonicalScopeTarget = {
   readonly playerProfileId?: string | null;
   readonly agentAccountId?: string | null;
   readonly masterAgentAccountId?: string | null;
+  readonly superMasterAccountId?: string | null;
   readonly hierarchyAccountIds?: readonly string[];
   readonly operatingMode?: AccountOperatingMode | null;
   readonly fundingModel?: AccountFundingModel | null;
@@ -59,6 +60,7 @@ export type CanonicalScopeResolution = {
   readonly playerProfileId: string | null;
   readonly agentAccountId: string | null;
   readonly masterAgentAccountId: string | null;
+  readonly superMasterAccountId: string | null;
   readonly hierarchyAccountIds: readonly string[];
   readonly roles: readonly string[];
   readonly permissions: readonly string[];
@@ -75,6 +77,7 @@ const SCOPE_PRECEDENCE = [
   "PLAYER",
   "AGENT",
   "MASTER_AGENT",
+  "SUPER_MASTER",
   "WEBSITE",
   "MARKET",
   "BRAND",
@@ -143,6 +146,11 @@ function targetIds(target: CanonicalScopeTarget) {
     target.masterAgentAccountId,
     target.accountType === "MASTER_AGENT" ? target.accountId : null
   );
+  add(
+    "SUPER_MASTER",
+    target.superMasterAccountId,
+    target.accountType === "SUPER_MASTER" ? target.accountId : null
+  );
   return ids;
 }
 
@@ -204,6 +212,9 @@ export function resolveCanonicalScope(
   const masterAgentAccountId =
     target.masterAgentAccountId ??
     (target.accountType === "MASTER_AGENT" ? target.accountId ?? null : null);
+  const superMasterAccountId =
+    target.superMasterAccountId ??
+    (target.accountType === "SUPER_MASTER" ? target.accountId ?? null : null);
 
   return {
     identityId: principal.identityId,
@@ -218,6 +229,7 @@ export function resolveCanonicalScope(
     playerProfileId: target.playerProfileId ?? null,
     agentAccountId,
     masterAgentAccountId,
+    superMasterAccountId,
     hierarchyAccountIds: target.hierarchyAccountIds ?? [],
     roles,
     permissions,

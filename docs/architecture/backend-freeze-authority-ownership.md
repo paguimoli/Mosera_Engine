@@ -10,7 +10,7 @@ be called around the configured boundary.
 | Financial | Ledger, Credit, and Settlement entrypoints over the canonical financial SQL contracts | Guarded service promotion and evidence only |
 | Draw | Game Engine canonical outcome publication, recovery, certification, and Settlement request pipeline | Read-only projections and local demonstration state |
 | Ticket | `ticket_authority` PostgreSQL functions through the canonical Ticket repository | Client-only local demonstration state |
-| Hierarchy | Immutable Platform Management plus governed Account repositories | Deprecated Brand and Market reads |
+| Hierarchy | Canonical Hierarchy Authority over immutable Platform Management and governed Account persistence | Client-only tree presentation and deprecated Brand/Market reads |
 | Scope | Canonical Scope Resolver combining authenticated claims with authoritative Platform and Account relationships | None |
 | Operational | Authenticated operational access and authority approval services | Read-only rehearsal and promotion evidence |
 

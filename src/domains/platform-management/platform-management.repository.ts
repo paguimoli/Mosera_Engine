@@ -1,5 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Pool, type QueryResultRow } from "pg";
+import {
+  CanonicalHierarchyError,
+  resolveBrandHierarchy,
+  resolveMarketHierarchy,
+  resolveOrganizationHierarchy,
+  resolvePlatformHierarchy,
+  resolveTenantHierarchy,
+  resolveWebsiteHierarchy,
+  validatePlatformActivationHierarchy,
+  validatePlatformRetirementHierarchy,
+} from "@/src/domains/hierarchy/canonical-hierarchy-authority";
 
 export class PlatformManagementDatabaseUnavailableError extends Error {
   constructor() {
@@ -62,6 +73,7 @@ type ResourceDefinition = {
 };
 
 export type PlatformResourceScopeSnapshot = {
+  readonly platformId?: string | null;
   readonly organizationId?: string | null;
   readonly tenantId?: string | null;
   readonly brandId?: string | null;
@@ -634,129 +646,26 @@ function stringValue(input: Record<string, unknown>, ...keys: string[]) {
   return null;
 }
 
-async function scopeFromTenantId(tenantId: string) {
-  const result = await databasePool().query(
-    "select id, organization_id from platform.tenants where id = $1 limit 1",
-    [tenantId]
-  );
-
-  if (!result.rows[0]) {
-    return null;
-  }
-
-  return {
-    organizationId: String(result.rows[0].organization_id),
-    tenantId: String(result.rows[0].id),
-  };
-}
-
-async function scopeFromBrandId(brandId: string) {
-  const result = await databasePool().query(
-    `select b.id, b.tenant_id, t.organization_id
-     from platform.brands b
-     join platform.tenants t on t.id = b.tenant_id
-     where b.id = $1
-     limit 1`,
-    [brandId]
-  );
-
-  if (!result.rows[0]) {
-    return null;
-  }
-
-  return {
-    organizationId: String(result.rows[0].organization_id),
-    tenantId: String(result.rows[0].tenant_id),
-    brandId: String(result.rows[0].id),
-  };
-}
-
-async function scopeFromMarketId(marketId: string) {
-  const result = await databasePool().query(
-    `select m.id, m.brand_id, b.tenant_id, t.organization_id
-     from platform.markets m
-     join platform.brands b on b.id = m.brand_id
-     join platform.tenants t on t.id = b.tenant_id
-     where m.id = $1
-     limit 1`,
-    [marketId]
-  );
-
-  if (!result.rows[0]) {
-    return null;
-  }
-
-  return {
-    organizationId: String(result.rows[0].organization_id),
-    tenantId: String(result.rows[0].tenant_id),
-    brandId: String(result.rows[0].brand_id),
-    marketId: String(result.rows[0].id),
-  };
-}
-
-async function scopeFromWebsiteId(websiteId: string) {
-  const result = await databasePool().query(
-    `select w.id, w.tenant_id, w.brand_id, w.market_id, t.organization_id
-     from platform.websites w
-     join platform.tenants t on t.id = w.tenant_id
-     where w.id = $1
-     limit 1`,
-    [websiteId]
-  );
-
-  if (!result.rows[0]) {
-    return null;
-  }
-
-  return {
-    organizationId: String(result.rows[0].organization_id),
-    tenantId: String(result.rows[0].tenant_id),
-    brandId: String(result.rows[0].brand_id),
-    marketId: result.rows[0].market_id ? String(result.rows[0].market_id) : null,
-    websiteId: String(result.rows[0].id),
-  };
-}
-
-function mergeScope(
-  left: PlatformResourceScopeSnapshot | null,
-  right: PlatformResourceScopeSnapshot | null
-): PlatformResourceScopeSnapshot | null {
-  if (!left) return right;
-  if (!right) return left;
-
-  return {
-    organizationId: right.organizationId ?? left.organizationId ?? null,
-    tenantId: right.tenantId ?? left.tenantId ?? null,
-    brandId: right.brandId ?? left.brandId ?? null,
-    marketId: right.marketId ?? left.marketId ?? null,
-    websiteId: right.websiteId ?? left.websiteId ?? null,
-  };
-}
+const scopeFromTenantId = resolveTenantHierarchy;
+const scopeFromBrandId = resolveBrandHierarchy;
+const scopeFromMarketId = resolveMarketHierarchy;
+const scopeFromWebsiteId = resolveWebsiteHierarchy;
 
 async function scopeFromRecordIdentifiers(input: Record<string, unknown>) {
-  let scope: PlatformResourceScopeSnapshot | null = null;
-
-  const tenantId = stringValue(input, "tenantId", "tenant_id");
-  if (tenantId) {
-    scope = mergeScope(scope, await scopeFromTenantId(tenantId));
+  try {
+    return await resolvePlatformHierarchy({
+      organizationId: stringValue(input, "organizationId", "organization_id"),
+      tenantId: stringValue(input, "tenantId", "tenant_id"),
+      brandId: stringValue(input, "brandId", "brand_id"),
+      marketId: stringValue(input, "marketId", "market_id"),
+      websiteId: stringValue(input, "websiteId", "website_id"),
+    });
+  } catch (error) {
+    if (error instanceof CanonicalHierarchyError) {
+      throw new PlatformManagementValidationError(error.message);
+    }
+    throw error;
   }
-
-  const brandId = stringValue(input, "brandId", "brand_id");
-  if (brandId) {
-    scope = mergeScope(scope, await scopeFromBrandId(brandId));
-  }
-
-  const marketId = stringValue(input, "marketId", "market_id");
-  if (marketId) {
-    scope = mergeScope(scope, await scopeFromMarketId(marketId));
-  }
-
-  const websiteId = stringValue(input, "websiteId", "website_id");
-  if (websiteId) {
-    scope = mergeScope(scope, await scopeFromWebsiteId(websiteId));
-  }
-
-  return scope;
 }
 
 function resourceDefinition(resource: string): ResourceDefinition {
@@ -875,19 +784,20 @@ export async function resolvePlatformResourceScope(
   const id = stringValue(input, "id");
 
   if (resource === "organizations") {
-    return {
-      organizationId: id ?? stringValue(input, "organizationId", "organization_id"),
-    };
+    const organizationId =
+      id ?? stringValue(input, "organizationId", "organization_id");
+    return organizationId
+      ? (await resolveOrganizationHierarchy(organizationId)) ?? {
+          organizationId,
+        }
+      : null;
   }
 
   if (resource === "tenants") {
     if (id) {
       return scopeFromTenantId(id);
     }
-
-    return {
-      organizationId: stringValue(input, "organizationId", "organization_id"),
-    };
+    return scopeFromRecordIdentifiers(input);
   }
 
   if (resource === "brands") {
@@ -1440,41 +1350,24 @@ async function assertNoActivePeer(resource: PlatformResourceName, row: QueryResu
 }
 
 async function assertActivationDependencies(resource: PlatformResourceName, row: QueryResultRow) {
+  if (
+    resource === "tenants" ||
+    resource === "brands" ||
+    resource === "markets" ||
+    resource === "websites"
+  ) {
+    try {
+      await validatePlatformActivationHierarchy(resource, row);
+      return;
+    } catch (error) {
+      if (error instanceof CanonicalHierarchyError) {
+        throw new PlatformManagementValidationError(error.message);
+      }
+      throw error;
+    }
+  }
+
   const checks: Partial<Record<PlatformResourceName, { sql: string; params: unknown[]; message: string }>> = {
-    tenants: {
-      sql: "select 1 from platform.organizations where id = $1 and status = 'Active' limit 1",
-      params: [row.organization_id],
-      message: "Tenant activation requires an Active Organization.",
-    },
-    brands: {
-      sql: "select 1 from platform.tenants where id = $1 and status = 'Active' limit 1",
-      params: [row.tenant_id],
-      message: "Brand activation requires an Active Tenant.",
-    },
-    markets: {
-      sql: "select 1 from platform.brands where id = $1 and status = 'Active' limit 1",
-      params: [row.brand_id],
-      message: "Market activation requires an Active Brand.",
-    },
-    websites: {
-      sql: `select 1
-            from platform.markets market
-            join platform.brands brand on brand.id = market.brand_id
-            join platform.tenants tenant on tenant.id = brand.tenant_id
-            join platform.organizations organization on organization.id = tenant.organization_id
-            join platform.platforms platform on platform.id = organization.platform_id
-            where market.id = $1
-              and market.brand_id = $2
-              and brand.tenant_id = $3
-              and market.status = 'Active'
-              and brand.status = 'Active'
-              and tenant.status = 'Active'
-              and organization.status = 'Active'
-              and platform.status = 'Active'
-            limit 1`,
-      params: [row.market_id, row.brand_id, row.tenant_id],
-      message: "Website activation requires an Active Platform, Organization, Tenant, Brand, and Market.",
-    },
     domains: {
       sql: "select 1 from platform.websites where id = $1 and status = 'Active' limit 1",
       params: [row.website_id],
@@ -1517,79 +1410,23 @@ async function assertActivationDependencies(resource: PlatformResourceName, row:
 }
 
 async function assertRetirementDependencies(resource: PlatformResourceName, row: QueryResultRow) {
+  if (
+    resource === "tenants" ||
+    resource === "brands" ||
+    resource === "websites"
+  ) {
+    try {
+      await validatePlatformRetirementHierarchy(resource, row);
+      return;
+    } catch (error) {
+      if (error instanceof CanonicalHierarchyError) {
+        throw new PlatformManagementValidationError(error.message);
+      }
+      throw error;
+    }
+  }
+
   const checks: Partial<Record<PlatformResourceName, { sql: string; params: unknown[]; message: string }>> = {
-    tenants: {
-      sql: `select 1
-            from platform.tenants tenant_version
-            join platform.brands brand on brand.tenant_id = tenant_version.id
-            left join lateral (
-              select to_status
-              from platform.platform_lifecycle_events lifecycle
-              where lifecycle.resource = 'brands'
-                and lifecycle.record_id = brand.id
-              order by lifecycle.created_at desc, lifecycle.event_id desc
-              limit 1
-            ) brand_lifecycle on true
-            where tenant_version.organization_id = $1
-              and tenant_version.tenant_code = $2
-              and coalesce(brand_lifecycle.to_status, brand.status) = 'Active'
-            limit 1`,
-      params: [row.organization_id, row.tenant_code],
-      message: "Tenant retirement requires retiring Active Brands first.",
-    },
-    brands: {
-      sql: `select 1
-            from platform.brands brand_version
-            join platform.websites website on website.brand_id = brand_version.id
-            left join lateral (
-              select to_status
-              from platform.platform_lifecycle_events lifecycle
-              where lifecycle.resource = 'websites'
-                and lifecycle.record_id = website.id
-              order by lifecycle.created_at desc, lifecycle.event_id desc
-              limit 1
-            ) website_lifecycle on true
-            where brand_version.tenant_id = $1
-              and brand_version.brand_code = $2
-              and coalesce(website_lifecycle.to_status, website.status) = 'Active'
-            union all
-            select 1
-            from platform.brands brand_version
-            join platform.markets market on market.brand_id = brand_version.id
-            left join lateral (
-              select to_status
-              from platform.platform_lifecycle_events lifecycle
-              where lifecycle.resource = 'markets'
-                and lifecycle.record_id = market.id
-              order by lifecycle.created_at desc, lifecycle.event_id desc
-              limit 1
-            ) market_lifecycle on true
-            where brand_version.tenant_id = $1
-              and brand_version.brand_code = $2
-              and coalesce(market_lifecycle.to_status, market.status) = 'Active'
-            limit 1`,
-      params: [row.tenant_id, row.brand_code],
-      message: "Brand retirement requires retiring Active Websites and Markets first.",
-    },
-    websites: {
-      sql: `select 1
-            from platform.websites website_version
-            join platform.website_domains domain on domain.website_id = website_version.id
-            left join lateral (
-              select to_status
-              from platform.platform_lifecycle_events lifecycle
-              where lifecycle.resource = 'domains'
-                and lifecycle.record_id = domain.id
-              order by lifecycle.created_at desc, lifecycle.event_id desc
-              limit 1
-            ) domain_lifecycle on true
-            where website_version.brand_id = $1
-              and website_version.website_code = $2
-              and coalesce(domain_lifecycle.to_status, domain.status) = 'Active'
-            limit 1`,
-      params: [row.brand_id, row.website_code],
-      message: "Website retirement requires retiring Active Domains first.",
-    },
   };
 
   const check = checks[resource];

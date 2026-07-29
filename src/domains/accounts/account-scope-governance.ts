@@ -4,13 +4,13 @@ import {
   requirePermission,
 } from "@/src/domains/auth/auth-middleware";
 
-import type { CanonicalAccountScope } from "./account.repository";
-import {
-  findAccountById,
-  resolveCanonicalAccountHierarchy,
-} from "./account.repository";
+import { findAccountById } from "./account.repository";
 import type { Account, PersistedAccountType } from "./account.types";
 import { resolveCanonicalScope } from "@/src/domains/scope/canonical-scope-resolver";
+import {
+  resolveAccountAncestors,
+  type CanonicalAccountScope,
+} from "@/src/domains/hierarchy/canonical-hierarchy-authority";
 
 type ScopeTarget = CanonicalAccountScope | Account;
 
@@ -34,7 +34,7 @@ export async function canAccessResolvedAccountScope(
   context: AuthContext,
   account: Account
 ) {
-  const hierarchy = await resolveCanonicalAccountHierarchy(account.id);
+  const hierarchy = await resolveAccountAncestors(account.id);
   return resolveCanonicalScope(context, {
     ...account,
     ...hierarchy,

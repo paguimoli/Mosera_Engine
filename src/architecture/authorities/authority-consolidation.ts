@@ -58,12 +58,13 @@ export const coreAuthorityOwnership: readonly CoreAuthorityOwnership[] = [
   },
   {
     authority: "HIERARCHY",
-    canonicalOwner: "Canonical Platform and governed Account repositories",
+    canonicalOwner: "Canonical Hierarchy Authority",
     productionBoundary: [
-      "src/domains/platform-management/platform-management.repository.ts",
-      "src/domains/accounts/account.repository.ts",
+      "src/domains/hierarchy/canonical-hierarchy-authority.ts",
     ],
-    retainedCompatibility: ["Deprecated Brand and Market reads"],
+    retainedCompatibility: [
+      "Client-only tree presentation and deprecated Brand and Market reads",
+    ],
   },
   {
     authority: "SCOPE",
