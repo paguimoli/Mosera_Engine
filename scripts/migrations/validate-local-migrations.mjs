@@ -127,7 +127,7 @@ if (!guardrails.ok) {
   addCheck("guardrails_pass", true);
 }
 
-const requiredSchemas = ["platform_migrations", "game_engine", "auth_service", "settlement_service", "ledger_service", "platform"];
+const requiredSchemas = ["platform_migrations", "game_engine", "auth_service", "settlement_service", "ledger_service", "platform", "compensation"];
 for (const schema of requiredSchemas) {
   addCheck(`schema_exists:${schema}`, existsSchema(schema));
 }
@@ -253,6 +253,11 @@ const requiredTables = [
   "public.credit_reservations",
   "public.credit_reservation_releases",
   "public.credit_settlement_applications",
+  "compensation.configurations",
+  "compensation.executions",
+  "compensation.entitlements",
+  "compensation.events",
+  "compensation.reporting_entitlements",
 ];
 
 for (const table of requiredTables) {
@@ -1293,6 +1298,18 @@ addCheck("ledger_posting_accounting_time", columnExists("ledger_service", "ledge
 addCheck("ledger_posting_original_period_reference", columnExists("ledger_service", "ledger_posting_requests", "original_accounting_period_id"));
 addCheck("ledger_posting_current_period_reference", columnExists("ledger_service", "ledger_posting_requests", "posting_accounting_period_id"));
 addCheck("ledger_posting_period_guard", triggerExists("ledger_service", "ledger_posting_requests", "ledger_posting_requests_period_guard"));
+addCheck("compensation_configuration_idempotency", uniqueIndexExists("compensation", "configurations", "idempotency_key"));
+addCheck("compensation_execution_idempotency", uniqueIndexExists("compensation", "executions", "idempotency_key"));
+addCheck("compensation_entitlement_period_unique", indexExists("compensation", "entitlements", "ux_compensation_entitlement_period"));
+addCheck("compensation_entitlement_reversal_unique", indexExists("compensation", "entitlements", "ux_compensation_entitlement_reversal"));
+addCheck("compensation_configuration_immutable", triggerExists("compensation", "configurations", "trg_compensation_configurations_immutable"));
+addCheck("compensation_execution_immutable", triggerExists("compensation", "executions", "trg_compensation_executions_immutable"));
+addCheck("compensation_entitlement_immutable", triggerExists("compensation", "entitlements", "trg_compensation_entitlements_immutable"));
+addCheck("compensation_event_immutable", triggerExists("compensation", "events", "trg_compensation_events_immutable"));
+addCheck("compensation_entitlement_tenant_scope", columnExists("compensation", "entitlements", "tenant_id"));
+addCheck("compensation_entitlement_brand_scope", columnExists("compensation", "entitlements", "brand_id"));
+addCheck("compensation_entitlement_market_scope", columnExists("compensation", "entitlements", "market_id"));
+addCheck("compensation_entitlement_scope_index", indexExists("compensation", "entitlements", "idx_compensation_entitlement_scope"));
 addCheck("auth_identity_profiles_table", existsRegclass("auth_service.identity_profiles"));
 addCheck("auth_external_identity_bindings_table", existsRegclass("auth_service.external_identity_bindings"));
 addCheck("auth_password_credential_versions_table", existsRegclass("auth_service.password_credential_versions"));

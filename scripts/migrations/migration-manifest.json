@@ -835,6 +835,27 @@
       "reason": "Seeds the frozen canonical Ticket permission catalog and assigns least-privilege Ticket permissions to the existing approved Platform roles."
     },
     {
+      "id": "089_add_compensation_engine_foundation",
+      "path": "scripts/migrations/local/089_add_compensation_engine_foundation.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "compensation",
+        "ledger_service",
+        "public"
+      ],
+      "reason": "Adds the canonical immutable Compensation Authority foundation for weekly Commission and Rebate calculation, posting evidence, reporting classification, and reversals."
+    },
+    {
+      "id": "090_bind_compensation_scope_metadata",
+      "path": "scripts/migrations/local/090_bind_compensation_scope_metadata.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "compensation",
+        "platform"
+      ],
+      "reason": "Binds server-derived tenant, brand, and market scope to immutable compensation entitlements for governed Ledger catalog posting and reporting."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

@@ -1,7 +1,7 @@
-import { findAccountById, listAccounts } from "../accounts/account.repository";
+import { findAccountById } from "../accounts/account.repository";
 import type { PlayerAccount } from "../accounts/account.types";
 import type { LedgerTransaction } from "../ledger/ledger.types";
-import { findWeeklyAccountingPeriodById } from "../weekly-accounting/weekly-accounting.repository";
+import { executeWeeklyCompensation } from "../compensation/compensation.service";
 import {
   calculateCommissionAmount,
   generateCommissionRecordId,
@@ -15,13 +15,10 @@ import {
   createCommissionPlan,
   createCommissionPlanRule,
   createCommissionAdjustmentRecord,
-  createWeeklyCommissionRecord,
   findActiveCommissionAssignment,
   findCommissionPlanByCode,
   findCommissionPlanById,
   findCommissionRunById,
-  findWeeklyCommissionRecord,
-  generateCommissionRunFromSnapshots,
   listCommissionAssignments,
   listCommissionAdjustmentsForRun,
   listCommissionRunDetails,
@@ -261,67 +258,34 @@ export async function generateWeeklyCommissionRecords(
   periodId: string,
   options: { allowOpenPeriod?: boolean } = {}
 ): Promise<WeeklyCommissionRecord[]> {
-  const period = await findWeeklyAccountingPeriodById(periodId);
-
-  if (!period) {
-    throw new CommissionBusinessRuleError("Weekly accounting period not found.");
-  }
-
-  if (period.status !== "CLOSED" && !options.allowOpenPeriod) {
+  if (options.allowOpenPeriod) {
     throw new CommissionBusinessRuleError(
-      "Weekly commission records can only be generated for closed periods."
+      "Compensation cannot execute against an open accounting period."
     );
   }
-
-  const accounts = await listAccounts();
-  const records: WeeklyCommissionRecord[] = [];
-
-  for (const account of accounts) {
-    if (account.accountType !== "MASTER_AGENT" && account.accountType !== "AGENT") {
-      continue;
-    }
-
-    const activeAssignment = await findActiveCommissionAssignment(account.id);
-
-    if (!activeAssignment) {
-      continue;
-    }
-
-    const plan = await findCommissionPlanById(activeAssignment.commissionPlanId);
-
-    if (!plan) {
-      continue;
-    }
-
-    const existingRecord = await findWeeklyCommissionRecord(
-      periodId,
-      account.id,
-      plan.id
-    );
-
-    if (existingRecord) {
-      records.push(existingRecord);
-      continue;
-    }
-
-    records.push(
-      await createWeeklyCommissionRecord({
-        periodId,
-        accountId: account.id,
-        commissionPlanId: plan.id,
-        calculationBasis: plan.calculationBasis,
-        grossBasisAmount: 0,
-        commissionAmount: 0,
-        status: "DRAFT",
-        metadata: {
-          placeholder: true,
-          source: "weekly_accounting_foundation",
-        },
-      })
-    );
-  }
-
-  return records;
+  const execution = await executeWeeklyCompensation({
+    accountingPeriodId: periodId,
+    idempotencyKey: `legacy-weekly-commission-adapter:${periodId}`,
+  });
+  return execution.entitlements
+    .filter((entitlement) => entitlement.strategy === "COMMISSION")
+    .map((entitlement) => ({
+      id: entitlement.id,
+      periodId: entitlement.accountingPeriodId,
+      accountId: entitlement.beneficiaryAccountId,
+      commissionPlanId: entitlement.configurationId,
+      calculationBasis: entitlement.calculationBasis,
+      grossBasisAmount: entitlement.basisAmountMinor,
+      commissionAmount: entitlement.compensationAmountMinor,
+      status: "PAID",
+      createdAt: entitlement.createdAt,
+      paidAt: entitlement.createdAt,
+      metadata: {
+        source: "canonical_compensation_authority",
+        entitlementHash: entitlement.canonicalEntitlementHash,
+        reportingClassification: entitlement.reportingClassification,
+      },
+    }));
 }
 
 export async function listWeeklyCommissionRecords(
@@ -342,8 +306,9 @@ export async function generateSnapshotCommissionRun(
   if (!validation.valid) {
     throw new CommissionValidationError(validation.errors);
   }
-
-  return generateCommissionRunFromSnapshots(normalized);
+  throw new CommissionBusinessRuleError(
+    "Legacy snapshot commission execution is retired. Execute the canonical Compensation Authority with an exact closed accounting period."
+  );
 }
 
 export async function getSnapshotCommissionRun(runId: string): Promise<{
