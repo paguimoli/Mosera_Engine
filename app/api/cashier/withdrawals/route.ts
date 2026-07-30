@@ -8,7 +8,7 @@ import {
   CashierBusinessRuleError,
   CashierValidationError,
   requestWithdrawal,
-} from "@/src/domains/cashier/cashier.service";
+} from "@/src/domains/financial-authority/financial-authority.entrypoints";
 import { resolveScopedAccount } from "@/src/domains/accounts/account-scope-governance";
 import {
   authErrorResponse,

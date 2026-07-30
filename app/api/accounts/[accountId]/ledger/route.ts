@@ -7,7 +7,7 @@ import {
   AccountScopeNotFoundError,
   requireScopedAccount,
 } from "@/src/domains/accounts/account-scope-governance";
-import { listLedgerEntriesForAccount } from "@/src/domains/ledger/ledger.entrypoints";
+import { listLedgerEntriesForAccount } from "@/src/domains/financial-authority/financial-authority.entrypoints";
 
 export const runtime = "nodejs";
 

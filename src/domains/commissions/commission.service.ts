@@ -1,7 +1,10 @@
 import { findAccountById } from "../accounts/account.repository";
 import type { PlayerAccount } from "../accounts/account.types";
 import type { LedgerTransaction } from "../ledger/ledger.types";
-import { executeWeeklyCompensation } from "../compensation/compensation.service";
+import {
+  assertFinancialOperatingMode,
+  executeWeeklyCompensation,
+} from "../financial-authority/financial-authority.entrypoints";
 import {
   calculateCommissionAmount,
   generateCommissionRecordId,
@@ -192,7 +195,9 @@ export async function assignCommissionPlanToAccount(
     );
   }
 
-  if (account.operatingMode !== "COMMISSION") {
+  try {
+    assertFinancialOperatingMode(account, "COMMISSION");
+  } catch {
     throw new CommissionBusinessRuleError(
       "Account operating mode must be COMMISSION before assigning a commission plan."
     );

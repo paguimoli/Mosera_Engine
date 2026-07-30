@@ -8,7 +8,7 @@ import {
   CreditReservationValidationError,
   getCreditReservationById,
   releaseCreditExposure,
-} from "@/src/domains/credit/credit.entrypoints";
+} from "@/src/domains/financial-authority/financial-authority.entrypoints";
 import { getOrCreateCorrelationId } from "@/src/lib/observability/correlation";
 import { logger } from "@/src/lib/observability/logger";
 import { resolveScopedAccount } from "@/src/domains/accounts/account-scope-governance";

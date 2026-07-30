@@ -1,4 +1,4 @@
-import { getPlayerCreditSummary } from "../credit/credit.entrypoints";
+import { getPlayerCreditSummary } from "../financial-authority/financial-authority-credit";
 import {
   acknowledgeReconciliationFindingRecord,
   completeReconciliationRun,

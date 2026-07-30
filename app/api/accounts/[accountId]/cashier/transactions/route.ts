@@ -7,7 +7,7 @@ import {
   AccountScopeNotFoundError,
   requireScopedAccount,
 } from "@/src/domains/accounts/account-scope-governance";
-import { listCashierTransactionsForAccount } from "@/src/domains/cashier/cashier.service";
+import { listCashierTransactionsForAccount } from "@/src/domains/financial-authority/financial-authority.entrypoints";
 import { authErrorResponse } from "@/app/api/cashier/cashier-route.helpers";
 
 export const runtime = "nodejs";

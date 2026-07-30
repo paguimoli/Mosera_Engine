@@ -1,4 +1,4 @@
-import { applyCreditSettlement } from "../credit/credit.entrypoints";
+import { applyCreditSettlement } from "../financial-authority/financial-authority-credit";
 import type { CreditSettlementApplicationResult } from "../credit/credit-reservation.types";
 import type { Ticket } from "../tickets/ticket.types";
 import type { SettlementRecord } from "./settlement.types";

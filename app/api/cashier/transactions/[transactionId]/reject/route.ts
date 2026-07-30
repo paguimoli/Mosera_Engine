@@ -7,7 +7,7 @@ import {
 import {
   CashierBusinessRuleError,
   rejectCashierTransaction,
-} from "@/src/domains/cashier/cashier.service";
+} from "@/src/domains/financial-authority/financial-authority.entrypoints";
 import {
   authErrorResponse,
   getMetadata,

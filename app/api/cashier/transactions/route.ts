@@ -4,7 +4,7 @@ import {
   AuthMiddlewareError,
   requirePermission,
 } from "@/src/domains/auth/auth-middleware";
-import { listCashierTransactions } from "@/src/domains/cashier/cashier.service";
+import { listCashierTransactions } from "@/src/domains/financial-authority/financial-authority.entrypoints";
 import { authErrorResponse } from "../cashier-route.helpers";
 
 export const runtime = "nodejs";

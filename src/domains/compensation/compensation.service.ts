@@ -5,7 +5,7 @@ import {
   resolveAccountDescendants,
   resolveCanonicalMarketScope,
 } from "../hierarchy/canonical-hierarchy-authority";
-import { LedgerServiceCompensationGateway } from "./compensation-ledger.gateway";
+import { LedgerServiceCompensationGateway } from "../financial-authority/compensation-ledger.gateway";
 import type { CompensationLedgerGateway } from "./compensation-ledger.gateway";
 import {
   appendCalculatedEntitlement,

@@ -7,7 +7,7 @@ import {
   AccountScopeNotFoundError,
   requireScopedAccount,
 } from "@/src/domains/accounts/account-scope-governance";
-import { listWalletsForAccount } from "@/src/domains/wallets/wallet.service";
+import { listWalletsForAccount } from "@/src/domains/financial-authority/financial-authority.entrypoints";
 
 export const runtime = "nodejs";
 

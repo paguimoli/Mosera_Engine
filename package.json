@@ -111,6 +111,7 @@
     "qa:credit-shadow": "node scripts/qa/credit-shadow-mode.mjs",
     "qa:credit-shadow-reporting": "node scripts/qa/credit-shadow-reporting.mjs",
     "qa:financial-authority-guardrails": "node scripts/run-ts-script.mjs scripts/qa/financial-authority-guardrails.ts",
+    "qa:financial-authority-consolidation": "node scripts/run-ts-script.mjs scripts/qa/financial-authority-consolidation.ts",
     "qa:credit-wallet-durable-baseline": "node scripts/run-ts-script.mjs scripts/qa/credit-wallet-durable-baseline.ts",
     "qa:credit-wallet-reserve-release": "node scripts/run-ts-script.mjs scripts/qa/credit-wallet-reserve-release.ts",
     "qa:credit-wallet-settlement-apply": "node scripts/run-ts-script.mjs scripts/qa/credit-wallet-settlement-apply.ts",

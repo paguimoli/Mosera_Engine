@@ -3,7 +3,7 @@ import type {
   LedgerDirection,
   LedgerEntry,
   LedgerTransactionType,
-} from "../ledger/ledger.entrypoints";
+} from "../ledger/ledger.types";
 import type { SettlementRecord } from "./settlement.types";
 
 export type SettlementLedgerEffectCommand = CreateLedgerEntryInput;
@@ -238,7 +238,9 @@ export async function applySettlementLedgerEffects({
   const ledgerEffects = generateSettlementLedgerEffects(settlementRecords);
 
   if (ledgerEntryCommands.length > 0) {
-    const { postLedgerEntry } = await import("../ledger/ledger.entrypoints");
+    const { postLedgerEntry } = await import(
+      "../financial-authority/financial-authority-ledger"
+    );
 
     for (const command of ledgerEntryCommands) {
       ledgerEntries.push(await postLedgerEntry(command));

@@ -13,12 +13,12 @@ import {
   LedgerValidationError,
   listLedgerEntriesForWallet,
   postLedgerEntry,
-} from "@/src/domains/ledger/ledger.entrypoints";
+} from "@/src/domains/financial-authority/financial-authority.entrypoints";
 import type {
   LedgerDirection,
   LedgerTransactionType,
 } from "@/src/domains/ledger/ledger.types";
-import { getWalletById } from "@/src/domains/wallets/wallet.service";
+import { getWalletById } from "@/src/domains/financial-authority/financial-authority.entrypoints";
 import { resolveScopedAccount } from "@/src/domains/accounts/account-scope-governance";
 
 export const runtime = "nodejs";

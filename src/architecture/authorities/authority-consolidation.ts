@@ -23,11 +23,9 @@ export type AuthorityConsolidationCheck = {
 export const coreAuthorityOwnership: readonly CoreAuthorityOwnership[] = [
   {
     authority: "FINANCIAL",
-    canonicalOwner: "Financial SQL contracts behind the configured authority routers",
+    canonicalOwner: "Canonical Financial Authority",
     productionBoundary: [
-      "src/domains/ledger/ledger.entrypoints.ts",
-      "src/domains/credit/credit.entrypoints.ts",
-      "src/domains/settlement/settlement.entrypoints.ts",
+      "src/domains/financial-authority/financial-authority.entrypoints.ts",
     ],
     retainedCompatibility: [
       "Guarded service promotion, shadow comparison, and rollback evidence",

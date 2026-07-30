@@ -89,9 +89,15 @@ async function main() {
   );
   check(
     "financial callers use canonical entrypoints",
-    reconciliation.includes("../credit/credit.entrypoints") &&
-      financialEffects.includes("../ledger/ledger.entrypoints") &&
-      settlementCredit.includes("../credit/credit.entrypoints")
+    reconciliation.includes(
+      "../financial-authority/financial-authority-credit"
+    ) &&
+      financialEffects.includes(
+        "../financial-authority/financial-authority-ledger"
+      ) &&
+      settlementCredit.includes(
+        "../financial-authority/financial-authority-credit"
+      )
   );
 
   const runtimeFiles = (

@@ -11,7 +11,7 @@ import {
   provisionWalletsForAccount,
   WalletBusinessRuleError,
   WalletValidationError,
-} from "@/src/domains/wallets/wallet.service";
+} from "@/src/domains/financial-authority/financial-authority.entrypoints";
 
 export const runtime = "nodejs";
 
