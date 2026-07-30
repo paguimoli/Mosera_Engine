@@ -25,6 +25,8 @@ public sealed record CanonicalOutcomePublicationCommand(
 public sealed record CanonicalOutcomeVersion(
     Guid OutcomeVersionId,
     Guid DrawId,
+    Guid ExecutionManifestId,
+    string ExecutionManifestHash,
     string ProductReference,
     string EngineName,
     string EngineVersion,
@@ -45,6 +47,24 @@ public sealed record CanonicalOutcomeVersion(
     string IdempotencyKey,
     Guid OutboxEventId,
     DateTimeOffset PublishedAt);
+
+public sealed record DrawExecutionManifest(
+    Guid ExecutionManifestId,
+    Guid DrawId,
+    Guid ScheduleVersionId,
+    Guid GameDefinitionVersionId,
+    Guid DrawAuthorityVersionId,
+    string EngineName,
+    string EngineVersion,
+    string OutcomeProviderId,
+    string OutcomeProviderVersion,
+    string EvaluatorVersion,
+    string PaytableVersion,
+    DateTimeOffset ScheduledExecutionAt,
+    string ScheduleHash,
+    string DrawIdentityHash,
+    string CanonicalManifestHash,
+    DateTimeOffset CreatedAt);
 
 public sealed record OutcomeSettlementRequestCommand(
     string IdempotencyKey,

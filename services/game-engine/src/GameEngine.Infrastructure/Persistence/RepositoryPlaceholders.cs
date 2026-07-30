@@ -97,8 +97,57 @@ public sealed class InMemoryDrawScheduleRepository : IDrawScheduleRepository
 
     public Task<DrawSchedule> UpsertAsync(DrawSchedule schedule, CancellationToken cancellationToken)
     {
+        if (schedulesById.TryGetValue(schedule.Id, out var existing))
+        {
+            if (existing with { Status = schedule.Status } != schedule)
+            {
+                throw new InvalidOperationException("Conflicting immutable Draw Instance identity.");
+            }
+
+            if (!IsAllowedTransition(existing.Status, schedule.Status))
+            {
+                throw new InvalidOperationException(
+                    $"Invalid Draw Instance lifecycle transition from {existing.Status} to {schedule.Status}.");
+            }
+        }
+
         schedulesById[schedule.Id] = schedule;
         return Task.FromResult(schedule);
+    }
+
+    private static bool IsAllowedTransition(DrawLifecycleStatus current, DrawLifecycleStatus requested)
+    {
+        if (current == requested)
+        {
+            return true;
+        }
+
+        if (requested is DrawLifecycleStatus.Cancelled or DrawLifecycleStatus.Failed
+            or DrawLifecycleStatus.Voided or DrawLifecycleStatus.ManualReviewRequired)
+        {
+            return current is not (DrawLifecycleStatus.Cancelled or DrawLifecycleStatus.Failed or DrawLifecycleStatus.Voided);
+        }
+
+        if (current == DrawLifecycleStatus.ManualReviewRequired)
+        {
+            return requested is DrawLifecycleStatus.AwaitingResult or DrawLifecycleStatus.ResultSubmitted;
+        }
+
+        var order = new[]
+        {
+            DrawLifecycleStatus.Scheduled,
+            DrawLifecycleStatus.SalesOpen,
+            DrawLifecycleStatus.SalesClosed,
+            DrawLifecycleStatus.AwaitingResult,
+            DrawLifecycleStatus.ResultSubmitted,
+            DrawLifecycleStatus.Certified,
+            DrawLifecycleStatus.EvaluationPending,
+            DrawLifecycleStatus.EvaluationQueued,
+            DrawLifecycleStatus.EvaluationInProgress,
+            DrawLifecycleStatus.EvaluationCompleted,
+            DrawLifecycleStatus.SettlementReady
+        };
+        return Array.IndexOf(order, requested) >= Array.IndexOf(order, current);
     }
 }
 

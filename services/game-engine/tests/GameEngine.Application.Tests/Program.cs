@@ -1379,6 +1379,16 @@ if (!string.IsNullOrWhiteSpace(databaseUrl))
     var postgresBatchId = Guid.NewGuid();
     var postgresDrawId = Guid.NewGuid();
     var postgresGameId = Guid.NewGuid();
+    await postgresDrawScheduleRepository.UpsertAsync(
+        new DrawSchedule(
+            postgresDrawId,
+            postgresGameId,
+            Guid.NewGuid(),
+            DateTimeOffset.UtcNow.AddMinutes(-10),
+            DateTimeOffset.UtcNow.AddMinutes(-1),
+            DateTimeOffset.UtcNow,
+            DrawLifecycleStatus.EvaluationPending),
+        CancellationToken.None);
     var postgresRun = new EvaluationRunDefinition(
         postgresRunId,
         postgresDrawId,

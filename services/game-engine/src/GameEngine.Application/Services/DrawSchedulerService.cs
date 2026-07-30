@@ -165,7 +165,7 @@ public sealed class DrawSchedulerService
         var reasons = BuildReasons(schedule, status, salesAllowed, internalEligible, missed);
 
         return new DrawLifecycleRecord(
-            StableGuid($"{schedule.Code}:{drawAt.UtcDateTime:O}"),
+            CanonicalDrawIdentity.Create(schedule.Id, schedule.GameBindingId, drawAt),
             schedule.Id,
             schedule.GameBindingId,
             drawAt.ToUnixTimeSeconds() + drawNumberOffset,

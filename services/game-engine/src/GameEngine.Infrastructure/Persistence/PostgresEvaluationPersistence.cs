@@ -906,24 +906,12 @@ insert into game_engine.draw_authority_assignments (
 )
 on conflict (id) do nothing;
 
-insert into game_engine.draw_schedules (
-  id,
-  game_definition_id,
-  draw_authority_assignment_id,
-  sales_open_at,
-  sales_close_at,
-  draw_at,
-  status
-) values (
-  @draw_id,
-  @game_id,
-  @assignment_id,
-  @sales_open_at,
-  @sales_close_at,
-  @draw_at,
-  'EvaluationCompleted'
-)
-on conflict (id) do nothing;
+select 1 / case when exists (
+    select 1
+    from game_engine.draw_schedules
+    where id = @draw_id
+      and game_definition_id = @game_id
+  ) then 1 else 0 end;
 
 insert into game_engine.draw_result_submissions (
   id,

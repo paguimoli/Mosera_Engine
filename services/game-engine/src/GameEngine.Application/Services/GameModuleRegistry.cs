@@ -127,8 +127,10 @@ public sealed class GameModuleRegistry
     {
         var module = SelectModuleVersion(request);
         var validation = ValidateBindingConfiguration(request, module);
-        var bindingId = Guid.NewGuid();
-        var versionId = Guid.NewGuid();
+        var bindingId = StableGuid($"game-binding:{request.GameCode}");
+        var versionId = StableGuid(
+            $"game-binding-version:{request.GameCode}:{request.ModuleId}:{module?.ModuleVersion ?? "missing"}:" +
+            $"{request.DrawAuthority}:{request.DrawSchedule}");
         var status = validation.IsValid ? GameBindingStatus.Validated : GameBindingStatus.Rejected;
         var configurationHash = $"{request.ModuleId}:{module?.ModuleVersion ?? "missing"}:{request.GameCode}:{request.DrawAuthority}:{request.DrawSchedule}".ToUpperInvariant();
 

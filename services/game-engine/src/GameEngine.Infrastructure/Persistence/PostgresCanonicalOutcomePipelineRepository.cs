@@ -49,6 +49,8 @@ public sealed class PostgresCanonicalOutcomePipelineRepository : ICanonicalOutco
             }
 
             var source = await LoadSourceOutcomeAsync(connection, transaction, command, cancellationToken);
+            var manifest = await FindExecutionManifestAsync(connection, transaction, command.DrawId, cancellationToken)
+                ?? throw new InvalidOperationException("The Draw Instance has no authoritative Execution Manifest.");
             var current = await FindCurrentAsync(connection, transaction, command.DrawId, cancellationToken);
             ValidateVersionTransition(command, current, source);
 
@@ -94,6 +96,8 @@ public sealed class PostgresCanonicalOutcomePipelineRepository : ICanonicalOutco
 insert into game_engine.canonical_outcome_versions (
   outcome_version_id,
   draw_id,
+  execution_manifest_id,
+  execution_manifest_hash,
   product_reference,
   engine_name,
   engine_version,
@@ -117,6 +121,8 @@ insert into game_engine.canonical_outcome_versions (
 values (
   @outcome_version_id,
   @draw_id,
+  @execution_manifest_id,
+  @execution_manifest_hash,
   @product_reference,
   @engine_name,
   @engine_version,
@@ -140,6 +146,8 @@ values (
 """;
                 insert.Parameters.AddWithValue("outcome_version_id", outcomeVersionId);
                 insert.Parameters.AddWithValue("draw_id", command.DrawId);
+                insert.Parameters.AddWithValue("execution_manifest_id", manifest.ExecutionManifestId);
+                insert.Parameters.AddWithValue("execution_manifest_hash", manifest.CanonicalManifestHash);
                 insert.Parameters.AddWithValue("product_reference", command.ProductReference);
                 insert.Parameters.AddWithValue("engine_name", command.EngineName);
                 insert.Parameters.AddWithValue("engine_version", command.EngineVersion);
@@ -334,6 +342,15 @@ values (
         return await FindCurrentAsync(connection, null, drawId, cancellationToken);
     }
 
+    public async Task<DrawExecutionManifest?> FindExecutionManifestAsync(
+        Guid drawId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        return await FindExecutionManifestAsync(connection, null, drawId, cancellationToken);
+    }
+
     public async Task<CanonicalOutcomePipelineReadiness> CheckReadinessAsync(CancellationToken cancellationToken)
     {
         var blockers = new List<string>();
@@ -357,10 +374,12 @@ select
   to_regclass('game_engine.canonical_draw_execution_leases') is not null,
   to_regclass('game_engine.canonical_draw_orchestration_events') is not null,
   to_regclass('game_engine.outcome_settlement_acknowledgements') is not null,
+  to_regclass('game_engine.published_draw_schedule_versions') is not null,
+  to_regclass('game_engine.draw_execution_manifests') is not null,
   exists (
     select 1
     from platform_migrations.migration_history
-    where migration_id = '092_add_canonical_draw_orchestrator'
+    where migration_id = '093_add_immutable_draw_authority'
       and status = 'APPLIED'
   ),
   exists (
@@ -383,9 +402,9 @@ select
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (await reader.ReadAsync(cancellationToken))
             {
-                schemaReady = Enumerable.Range(0, 11).All(reader.GetBoolean);
-                outboxDispatcherReady = reader.GetBoolean(11);
-                settlementWorkerReady = reader.GetBoolean(12);
+                schemaReady = Enumerable.Range(0, 13).All(reader.GetBoolean);
+                outboxDispatcherReady = reader.GetBoolean(13);
+                settlementWorkerReady = reader.GetBoolean(14);
             }
 
             if (!schemaReady)
@@ -993,6 +1012,59 @@ values (
         return await reader.ReadAsync(cancellationToken) ? MapOutcome(reader) : null;
     }
 
+    private static async Task<DrawExecutionManifest?> FindExecutionManifestAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        Guid drawId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+select
+  execution_manifest_id,
+  draw_id,
+  schedule_version_id,
+  game_definition_version_id,
+  draw_authority_version_id,
+  engine_name,
+  engine_version,
+  outcome_provider_id,
+  outcome_provider_version,
+  evaluator_version,
+  paytable_version,
+  scheduled_execution_at,
+  schedule_hash,
+  draw_identity_hash,
+  canonical_manifest_hash,
+  created_at
+from game_engine.draw_execution_manifests
+where draw_id = @draw_id
+limit 1;
+""";
+        command.Parameters.AddWithValue("draw_id", drawId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new DrawExecutionManifest(
+                reader.GetGuid(0),
+                reader.GetGuid(1),
+                reader.GetGuid(2),
+                reader.GetGuid(3),
+                reader.GetGuid(4),
+                reader.GetString(5),
+                reader.GetString(6),
+                reader.GetString(7),
+                reader.GetString(8),
+                reader.GetString(9),
+                reader.GetString(10),
+                reader.GetFieldValue<DateTimeOffset>(11),
+                reader.GetString(12),
+                reader.GetString(13),
+                reader.GetString(14),
+                reader.GetFieldValue<DateTimeOffset>(15))
+            : null;
+    }
+
     private static async Task<OutcomeSettlementRequest?> FindSettlementRequestByIdempotencyAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -1051,26 +1123,28 @@ limit 1;
         return new CanonicalOutcomeVersion(
             reader.GetGuid(0),
             reader.GetGuid(1),
-            reader.GetString(2),
+            reader.GetGuid(2),
             reader.GetString(3),
             reader.GetString(4),
-            reader.GetInt32(5),
-            Enum.Parse<CanonicalOutcomeVersionKind>(reader.GetString(6)),
-            reader.GetGuid(7),
-            reader.GetGuid(8),
-            reader.GetString(9),
-            reader.IsDBNull(10) ? null : reader.GetGuid(10),
+            reader.GetString(5),
+            reader.GetString(6),
+            reader.GetInt32(7),
+            Enum.Parse<CanonicalOutcomeVersionKind>(reader.GetString(8)),
+            reader.GetGuid(9),
+            reader.GetGuid(10),
             reader.GetString(11),
-            reader.GetString(12),
-            reader.GetFieldValue<DateTimeOffset>(13),
+            reader.IsDBNull(12) ? null : reader.GetGuid(12),
+            reader.GetString(13),
             reader.GetString(14),
-            reader.GetString(15),
+            reader.GetFieldValue<DateTimeOffset>(15),
             reader.GetString(16),
             reader.GetString(17),
             reader.GetString(18),
             reader.GetString(19),
-            reader.GetGuid(20),
-            reader.GetFieldValue<DateTimeOffset>(21));
+            reader.GetString(20),
+            reader.GetString(21),
+            reader.GetGuid(22),
+            reader.GetFieldValue<DateTimeOffset>(23));
     }
 
     private static OutcomeSettlementRequest MapSettlementRequest(NpgsqlDataReader reader)
@@ -1094,6 +1168,8 @@ limit 1;
 select
   outcome_version_id,
   draw_id,
+  execution_manifest_id,
+  execution_manifest_hash,
   product_reference,
   engine_name,
   engine_version,

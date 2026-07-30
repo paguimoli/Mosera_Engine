@@ -265,6 +265,7 @@
     "qa:canonical-outcome-pipeline": "node scripts/qa/canonical-outcome-pipeline.mjs",
     "qa:canonical-draw-orchestration": "node scripts/qa/canonical-draw-orchestration.mjs",
     "qa:canonical-draw-orchestrator": "node scripts/run-ts-script.mjs scripts/qa/canonical-draw-orchestrator.ts",
+    "qa:immutable-draw-authority": "node scripts/run-ts-script.mjs scripts/qa/immutable-draw-authority.ts",
     "qa:backend-launch-api-consolidation": "node scripts/qa/backend-launch-api-consolidation.mjs",
     "qa:backend-authority-consolidation": "node scripts/run-ts-script.mjs scripts/qa/backend-authority-consolidation.ts",
     "qa:canonical-scope-resolver": "node scripts/run-ts-script.mjs scripts/qa/canonical-scope-resolver.ts",

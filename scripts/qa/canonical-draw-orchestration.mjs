@@ -83,6 +83,65 @@ async function scalar(statement, values = []) {
   return result.rows[0] ? Object.values(result.rows[0])[0] : null;
 }
 
+async function seedDrawLineage(drawId, suffix) {
+  const dependency = await pool.query(`
+select definition.id game_definition_id, definition.active_version_id game_definition_version_id,
+       assignment.id assignment_id, assignment.draw_authority_version_id,
+       module.code engine_name, module_version.version engine_version,
+       authority.code provider_id, authority_version.provider_version
+from game_engine.draw_authority_assignments assignment
+join game_engine.game_definitions definition on definition.id = assignment.game_definition_id
+join game_engine.game_modules module on module.id = definition.game_module_id
+join game_engine.game_module_versions module_version on module_version.id = module.active_version_id
+join game_engine.draw_authorities authority on authority.id = assignment.draw_authority_id
+join game_engine.draw_authority_versions authority_version on authority_version.id = assignment.draw_authority_version_id
+order by assignment.effective_from, assignment.id limit 1;
+`);
+  if (dependency.rowCount !== 1) throw new Error("Draw lineage dependency fixture is unavailable.");
+  const row = dependency.rows[0];
+  const scheduleId = randomUUID();
+  const scheduleVersionId = randomUUID();
+  const manifestId = randomUUID();
+  const scheduledAt = new Date(Date.now() + 60_000);
+  const scheduleHash = hash(`orchestration-schedule:${suffix}`);
+  const identityHash = hash(`orchestration-draw:${drawId}`);
+  const manifestHash = hash(`orchestration-manifest:${drawId}`);
+  await pool.query(
+    `insert into game_engine.published_draw_schedule_versions
+      (schedule_version_id, schedule_id, version_number, game_definition_id,
+       draw_authority_assignment_id, schedule_kind, schedule_configuration,
+       time_zone_id, schedule_hash, published_at)
+     values ($1,$2,1,$3,$4,'QA_FIXED','{}'::jsonb,'UTC',$5,now())`,
+    [scheduleVersionId, scheduleId, row.game_definition_id, row.assignment_id, scheduleHash],
+  );
+  await pool.query(
+    `insert into game_engine.draw_schedules
+      (id, game_definition_id, draw_authority_assignment_id, sales_open_at,
+       sales_close_at, draw_at, status, schedule_version_id,
+       scheduled_execution_at, schedule_hash, draw_identity_hash)
+     values ($1,$2,$3,$4::timestamptz - interval '10 minutes',
+       $4::timestamptz - interval '1 minute',$4,'Certified',$5,$4,$6,$7)`,
+    [drawId, row.game_definition_id, row.assignment_id, scheduledAt, scheduleVersionId, scheduleHash, identityHash],
+  );
+  await pool.query(
+    `insert into game_engine.draw_execution_manifests
+      (execution_manifest_id, draw_id, schedule_version_id,
+       game_definition_version_id, draw_authority_version_id,
+       engine_name, engine_version, outcome_provider_id, outcome_provider_version,
+       evaluator_version, paytable_version, scheduled_execution_at,
+       schedule_hash, draw_identity_hash, canonical_manifest_hash, created_at)
+     select $1,$2,$3,$4,$5,$6,$7,$8,$9,
+       definition.evaluator_version,definition.paytable_version,$10,$11,$12,$13,now()
+     from game_engine.game_definition_versions definition where definition.id=$4`,
+    [
+      manifestId, drawId, scheduleVersionId, row.game_definition_version_id,
+      row.draw_authority_version_id, row.engine_name, row.engine_version,
+      row.provider_id, row.provider_version, scheduledAt, scheduleHash,
+      identityHash, manifestHash,
+    ],
+  );
+}
+
 async function seedCertifiedOutcome(suffix) {
   const strategyId = `strategy:orchestration:${suffix}`;
   const providerId = `provider:orchestration:${suffix}`;
@@ -102,6 +161,7 @@ async function seedCertifiedOutcome(suffix) {
     prizeFactsHash: mathHash,
     ticketReference: `ticket:${suffix}`,
   };
+  await seedDrawLineage(drawId, suffix);
 
   await pool.query(
     `

@@ -137,6 +137,8 @@ const requiredTables = [
   "game_engine.game_modules",
   "game_engine.game_definitions",
   "game_engine.draw_schedules",
+  "game_engine.published_draw_schedule_versions",
+  "game_engine.draw_execution_manifests",
   "game_engine.evaluation_runs",
   "game_engine.evaluation_batches",
   "game_engine.evaluation_records",

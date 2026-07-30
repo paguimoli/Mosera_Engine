@@ -12,6 +12,10 @@ public interface ICanonicalOutcomePipelineRepository
         string canonicalRequestHash,
         CancellationToken cancellationToken);
 
+    Task<DrawExecutionManifest?> FindExecutionManifestAsync(
+        Guid drawId,
+        CancellationToken cancellationToken);
+
     Task<OutcomeSettlementRequest> EmitSettlementRequestAsync(
         OutcomeSettlementRequestCommand command,
         string canonicalRequestHash,
@@ -26,12 +30,22 @@ public interface ICanonicalOutcomePipelineRepository
 
 public sealed class CanonicalDrawOrchestrator(ICanonicalOutcomePipelineRepository repository)
 {
-    public Task<CanonicalOutcomeVersion> PublishAsync(
+    public async Task<CanonicalOutcomeVersion> PublishAsync(
         CanonicalOutcomePublicationCommand command,
         CancellationToken cancellationToken)
     {
         ValidatePublication(command);
-        return repository.PublishAsync(command, HashPublication(command), cancellationToken);
+        var manifest = await repository.FindExecutionManifestAsync(command.DrawId, cancellationToken)
+            ?? throw new InvalidOperationException("The Draw Instance has no authoritative Execution Manifest.");
+        var authoritativeCommand = command with
+        {
+            EngineName = manifest.EngineName,
+            EngineVersion = manifest.EngineVersion
+        };
+        return await repository.PublishAsync(
+            authoritativeCommand,
+            HashPublication(authoritativeCommand, manifest),
+            cancellationToken);
     }
 
     public Task<OutcomeSettlementRequest> EmitSettlementRequestAsync(
@@ -69,7 +83,9 @@ public sealed class CanonicalDrawOrchestrator(ICanonicalOutcomePipelineRepositor
         return repository.RecoverAsync(limit, cancellationToken);
     }
 
-    private static string HashPublication(CanonicalOutcomePublicationCommand command)
+    private static string HashPublication(
+        CanonicalOutcomePublicationCommand command,
+        DrawExecutionManifest manifest)
     {
         var payload = new SortedDictionary<string, object?>(StringComparer.Ordinal)
         {
@@ -80,6 +96,8 @@ public sealed class CanonicalDrawOrchestrator(ICanonicalOutcomePipelineRepositor
             ["drawId"] = command.DrawId,
             ["engineName"] = command.EngineName,
             ["engineVersion"] = command.EngineVersion,
+            ["executionManifestHash"] = manifest.CanonicalManifestHash,
+            ["executionManifestId"] = manifest.ExecutionManifestId,
             ["outcomeCertificateHash"] = command.OutcomeCertificateHash,
             ["outcomeCertificateId"] = command.OutcomeCertificateId,
             ["previousOutcomeVersionId"] = command.PreviousOutcomeVersionId,
@@ -179,6 +197,11 @@ public sealed class DisabledCanonicalOutcomePipelineRepository : ICanonicalOutco
         string canonicalRequestHash,
         CancellationToken cancellationToken) =>
         Task.FromException<OutcomeSettlementRequest>(new InvalidOperationException(Message));
+
+    public Task<DrawExecutionManifest?> FindExecutionManifestAsync(
+        Guid drawId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<DrawExecutionManifest?>(null);
 
     public Task<CanonicalOutcomeVersion?> FindCurrentAsync(Guid drawId, CancellationToken cancellationToken) =>
         Task.FromResult<CanonicalOutcomeVersion?>(null);
