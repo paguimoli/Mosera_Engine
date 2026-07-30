@@ -24,7 +24,7 @@ public interface ICanonicalOutcomePipelineRepository
     Task<CanonicalOutcomeRecoveryResult> RecoverAsync(int limit, CancellationToken cancellationToken);
 }
 
-public sealed class CanonicalOutcomePipelineService(ICanonicalOutcomePipelineRepository repository)
+public sealed class CanonicalDrawOrchestrator(ICanonicalOutcomePipelineRepository repository)
 {
     public Task<CanonicalOutcomeVersion> PublishAsync(
         CanonicalOutcomePublicationCommand command,

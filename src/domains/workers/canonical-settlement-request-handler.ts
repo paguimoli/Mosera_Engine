@@ -214,28 +214,36 @@ where settlement_request_id = $1::uuid
       if (existing.rows[0].canonical_message_hash !== canonicalMessageHash) {
         throw new Error("Conflicting duplicate settlement.requested payload.");
       }
-      await client.query("commit");
-      return {
-        eventId,
-        eventType: message.type,
-        status: "HANDLED",
-        duplicate: true,
-        message: "Canonical Settlement request already consumed idempotently.",
-        metadata: {
-          settlementRequestId: payload.settlementRequestId,
-          consumptionId: existing.rows[0].consumption_id,
-        },
-      };
+      const completed = await client.query<{ completion_id: string }>(
+        `
+select completion_id::text
+from game_engine.canonical_draw_completion_evidence
+where settlement_request_id = $1::uuid
+`,
+        [payload.settlementRequestId]
+      );
+      if (completed.rows[0]) {
+        await client.query("commit");
+        return {
+          eventId,
+          eventType: message.type,
+          status: "HANDLED",
+          duplicate: true,
+          message: "Canonical Settlement acknowledgement already completed this draw.",
+          metadata: {
+            settlementRequestId: payload.settlementRequestId,
+            consumptionId: existing.rows[0].consumption_id,
+            completionId: completed.rows[0].completion_id,
+          },
+        };
+      }
     }
 
-    const consumptionId = deterministicUuid(`consumption:${eventId}`);
-    const completionId = deterministicUuid(`completion:${payload.outcomeVersionId}`);
-    const completionHash = hash(
-      `${payload.drawId}|${payload.outcomeVersionId}|${payload.settlementRequestId}|${consumptionId}|${canonicalMessageHash}`
-    );
-
-    await client.query(
-      `
+    const consumptionId =
+      existing.rows[0]?.consumption_id ?? deterministicUuid(`consumption:${eventId}`);
+    if (!existing.rows[0]) {
+      await client.query(
+        `
 insert into game_engine.outcome_settlement_consumptions (
   consumption_id,
   settlement_request_id,
@@ -248,14 +256,112 @@ insert into game_engine.outcome_settlement_consumptions (
 )
 values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'settlement-worker', $5, $6, $7)
 `,
+        [
+          consumptionId,
+          payload.settlementRequestId,
+          payload.outcomeVersionId,
+          eventId,
+          canonicalMessageHash,
+          message.correlationId ?? payload.settlementRequestId,
+          payload.auditReference,
+        ]
+      );
+    }
+
+    if (!payload.settlementInputId || !payload.settlementInputHash) {
+      throw new Error(
+        "Canonical draw completion requires SettlementInput-backed authoritative Settlement acknowledgement."
+      );
+    }
+
+    const settlementEvidence = await client.query<{
+      settlement_id: string;
+      settlement_request_id: string;
+      canonical_settlement_hash: string;
+    }>(
+      `
+select
+  record.settlement_id::text,
+  record.settlement_request_id::text,
+  record.canonical_settlement_hash
+from settlement_service.authoritative_settlement_records record
+where record.settlement_input_id = $1::uuid
+  and record.settlement_input_hash = $2
+  and record.outcome_certificate_id = $3::uuid
+  and record.outcome_certificate_hash = $4
+order by record.issued_at, record.settlement_id
+limit 2
+`,
       [
-        consumptionId,
+        payload.settlementInputId,
+        payload.settlementInputHash,
+        payload.outcomeCertificateId,
+        payload.outcomeCertificateHash,
+      ]
+    );
+    if (settlementEvidence.rowCount !== 1) {
+      throw new Error(
+        settlementEvidence.rowCount === 0
+          ? "Authoritative Settlement acknowledgement is not available."
+          : "Multiple authoritative Settlement records conflict with one canonical request."
+      );
+    }
+
+    const authority = settlementEvidence.rows[0];
+    const acknowledgementId = deterministicUuid(
+      `settlement-acknowledgement:${payload.settlementRequestId}`
+    );
+    const acknowledgementHash = hash(
+      `${payload.settlementRequestId}|${payload.outcomeVersionId}|${consumptionId}|${authority.settlement_request_id}|${authority.settlement_id}|${authority.canonical_settlement_hash}`
+    );
+    const completionId = deterministicUuid(`completion:${payload.outcomeVersionId}`);
+    const completionHash = hash(
+      `${payload.drawId}|${payload.outcomeVersionId}|${payload.settlementRequestId}|${acknowledgementId}|${authority.canonical_settlement_hash}`
+    );
+
+    await client.query(
+      `
+insert into game_engine.outcome_settlement_acknowledgements (
+  settlement_acknowledgement_id,
+  settlement_request_id,
+  outcome_version_id,
+  consumption_id,
+  settlement_authority_request_id,
+  authoritative_settlement_id,
+  canonical_settlement_hash,
+  acknowledgement_status,
+  canonical_acknowledgement_hash
+)
+values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6::uuid, $7, 'ACKNOWLEDGED', $8)
+`,
+      [
+        acknowledgementId,
         payload.settlementRequestId,
         payload.outcomeVersionId,
-        eventId,
-        canonicalMessageHash,
-        message.correlationId ?? payload.settlementRequestId,
-        payload.auditReference,
+        consumptionId,
+        authority.settlement_request_id,
+        authority.settlement_id,
+        authority.canonical_settlement_hash,
+        acknowledgementHash,
+      ]
+    );
+    await client.query(
+      `
+insert into game_engine.canonical_draw_orchestration_events (
+  orchestration_event_id,
+  draw_id,
+  event_type,
+  evidence_reference,
+  canonical_evidence_hash
+)
+values ($1::uuid, $2::uuid, 'SETTLEMENT_ACKNOWLEDGED', $3, $4)
+on conflict (draw_id, event_type, evidence_reference) do nothing
+`,
+      [
+        deterministicUuid(`orchestration:settlement-acknowledged:${acknowledgementId}`),
+        payload.drawId,
+        acknowledgementId,
+        acknowledgementHash,
       ]
     );
     await client.query(
@@ -266,10 +372,11 @@ insert into game_engine.canonical_draw_completion_evidence (
   outcome_version_id,
   settlement_request_id,
   consumption_id,
+  settlement_acknowledgement_id,
   completion_kind,
   canonical_evidence_hash
 )
-values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6, $7)
+values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6::uuid, $7, $8)
 `,
       [
         completionId,
@@ -277,7 +384,27 @@ values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6, $7)
         payload.outcomeVersionId,
         payload.settlementRequestId,
         consumptionId,
+        acknowledgementId,
         payload.requestKind,
+        completionHash,
+      ]
+    );
+    await client.query(
+      `
+insert into game_engine.canonical_draw_orchestration_events (
+  orchestration_event_id,
+  draw_id,
+  event_type,
+  evidence_reference,
+  canonical_evidence_hash
+)
+values ($1::uuid, $2::uuid, 'DRAW_COMPLETED', $3, $4)
+on conflict (draw_id, event_type, evidence_reference) do nothing
+`,
+      [
+        deterministicUuid(`orchestration:draw-completed:${completionId}`),
+        payload.drawId,
+        completionId,
         completionHash,
       ]
     );
@@ -288,8 +415,10 @@ values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6, $7)
       eventType: message.type,
       status: "HANDLED",
       duplicate: false,
-      message: "Canonical Settlement request consumed; draw completion evidence appended.",
+      message: "Authoritative Settlement acknowledgement bound; draw completion evidence appended.",
       metadata: {
+        acknowledgementId,
+        authoritativeSettlementId: authority.settlement_id,
         completionId,
         consumptionId,
         outcomeVersionId: payload.outcomeVersionId,

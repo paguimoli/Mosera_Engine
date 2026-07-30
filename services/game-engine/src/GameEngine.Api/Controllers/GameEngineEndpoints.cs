@@ -46,9 +46,9 @@ public static class GameEngineEndpoints
         group.MapGet("/outcome-publication-status", async (
             HttpContext context,
             ServiceConfiguration configuration,
-            CanonicalOutcomePipelineService pipeline) =>
+            CanonicalDrawOrchestrator orchestrator) =>
         {
-            var readiness = await pipeline.CheckReadinessAsync(context.RequestAborted);
+            var readiness = await orchestrator.CheckReadinessAsync(context.RequestAborted);
             return Results.Ok(new
             {
                 success = true,
@@ -1122,7 +1122,7 @@ public static class GameEngineEndpoints
         CanonicalOutcomePublicationCommand command,
         HttpContext context,
         ServiceConfiguration configuration,
-        CanonicalOutcomePipelineService pipeline)
+        CanonicalDrawOrchestrator orchestrator)
     {
         if (!configuration.CanonicalOutcomePipelineEnabled)
         {
@@ -1136,7 +1136,7 @@ public static class GameEngineEndpoints
 
         try
         {
-            var result = await pipeline.PublishAsync(command, context.RequestAborted);
+            var result = await orchestrator.PublishAsync(command, context.RequestAborted);
             return Results.Ok(new
             {
                 success = true,
@@ -1168,9 +1168,9 @@ public static class GameEngineEndpoints
     private static async Task<IResult> GetCurrentCanonicalOutcomeAsync(
         Guid drawId,
         HttpContext context,
-        CanonicalOutcomePipelineService pipeline)
+        CanonicalDrawOrchestrator orchestrator)
     {
-        var result = await pipeline.FindCurrentAsync(drawId, context.RequestAborted);
+        var result = await orchestrator.FindCurrentAsync(drawId, context.RequestAborted);
         return result is null
             ? Results.NotFound(new
             {
@@ -1191,7 +1191,7 @@ public static class GameEngineEndpoints
         OutcomeSettlementRequestCommand command,
         HttpContext context,
         ServiceConfiguration configuration,
-        CanonicalOutcomePipelineService pipeline)
+        CanonicalDrawOrchestrator orchestrator)
     {
         if (!configuration.CanonicalOutcomePipelineEnabled)
         {
@@ -1205,7 +1205,7 @@ public static class GameEngineEndpoints
 
         try
         {
-            var result = await pipeline.EmitSettlementRequestAsync(command, context.RequestAborted);
+            var result = await orchestrator.EmitSettlementRequestAsync(command, context.RequestAborted);
             return Results.Ok(new
             {
                 success = true,
@@ -1238,7 +1238,7 @@ public static class GameEngineEndpoints
     private static async Task<IResult> RecoverCanonicalOutcomeRequestsAsync(
         HttpContext context,
         ServiceConfiguration configuration,
-        CanonicalOutcomePipelineService pipeline)
+        CanonicalDrawOrchestrator orchestrator)
     {
         if (!configuration.CanonicalOutcomePipelineEnabled ||
             !configuration.CanonicalOutcomeRecoveryEnabled)
@@ -1251,7 +1251,7 @@ public static class GameEngineEndpoints
             }, statusCode: 503);
         }
 
-        var result = await pipeline.RecoverAsync(25, context.RequestAborted);
+        var result = await orchestrator.RecoverAsync(25, context.RequestAborted);
         return Results.Ok(new
         {
             success = true,

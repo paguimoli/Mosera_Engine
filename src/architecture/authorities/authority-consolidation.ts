@@ -35,7 +35,7 @@ export const coreAuthorityOwnership: readonly CoreAuthorityOwnership[] = [
     authority: "DRAW",
     canonicalOwner: "Game Engine canonical outcome pipeline",
     productionBoundary: [
-      "services/game-engine/src/GameEngine.Application/Services/CanonicalOutcomePipelineService.cs",
+      "services/game-engine/src/GameEngine.Application/Services/CanonicalDrawOrchestrator.cs",
       "services/game-engine/src/GameEngine.Infrastructure/Persistence/PostgresCanonicalOutcomePipelineRepository.cs",
     ],
     retainedCompatibility: [

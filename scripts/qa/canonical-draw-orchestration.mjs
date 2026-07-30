@@ -92,6 +92,8 @@ async function seedCertifiedOutcome(suffix) {
   const certificateId = randomUUID();
   const settlementInputId = randomUUID();
   const mathCertificateId = randomUUID();
+  const ticketId = randomUUID();
+  const ticketLineId = randomUUID();
   const outcomePayload = { numbers: [2, 7, 11, 19, 31] };
   const outcomeHash = hash(JSON.stringify(outcomePayload));
   const mathHash = hash(`math:${suffix}`);
@@ -232,7 +234,7 @@ values (
       mathHash,
       certificateId,
       outcomeHash,
-      `ticket:${suffix}`,
+      ticketId,
       hash(`manifest:${suffix}`),
       hash(`math-model:${suffix}`),
       hash(`paytable:${suffix}`),
@@ -244,7 +246,202 @@ values (
     ],
   );
 
-  return { certificateId, drawId, outcomeHash, settlementInputId };
+  return {
+    certificateId,
+    drawId,
+    mathCertificateId,
+    mathHash,
+    outcomeHash,
+    settlementInputId,
+    ticketId,
+    ticketLineId,
+  };
+}
+
+async function seedAuthoritativeSettlement(evidence, suffix) {
+  const organizationId = randomUUID();
+  const tenantId = randomUUID();
+  const brandId = randomUUID();
+  const playerId = randomUUID();
+  const walletId = randomUUID();
+  const reservationOperationId = randomUUID();
+  const authorityRequestId = randomUUID();
+  const settlementId = randomUUID();
+  const compactSuffix = randomUUID().replaceAll("-", "").slice(0, 12);
+  const gameReference = "manifest:orchestration-qa:1.0.0";
+  const drawOutcomeReference =
+    `${evidence.certificateId.replaceAll("-", "")}:${evidence.outcomeHash}`;
+
+  await pool.query(
+    `
+insert into platform.organizations
+  (id, organization_code, name, status, version, content_hash, audit_metadata)
+values ($1, $2, $3, 'Active', '1.0.0', $4, '{"source":"bf-4.1"}'::jsonb);
+`,
+    [
+      organizationId,
+      `bf-4-1-org-${compactSuffix}`,
+      `BF-4.1 Organization ${compactSuffix}`,
+      hash(`organization:${suffix}`),
+    ],
+  );
+  await pool.query(
+    `
+insert into platform.tenants (
+  id, organization_id, tenant_code, name, status, default_language,
+  default_currency, default_timezone, credit_enabled, cashier_enabled,
+  version, content_hash, audit_metadata)
+values (
+  $1, $2, $3, $4, 'Active', 'en', 'USD', 'UTC', true, false,
+  '1.0.0', $5, '{"source":"bf-4.1"}'::jsonb);
+`,
+    [
+      tenantId,
+      organizationId,
+      `bf-4-1-tenant-${compactSuffix}`,
+      `BF-4.1 Tenant ${compactSuffix}`,
+      hash(`tenant:${suffix}`),
+    ],
+  );
+  await pool.query(
+    `
+insert into platform.brands (
+  id, tenant_id, brand_code, name, display_name, status, version,
+  content_hash, audit_metadata)
+values (
+  $1, $2, $3, $3, $3, 'Active', '1.0.0', $4,
+  '{"source":"bf-4.1"}'::jsonb);
+`,
+    [brandId, tenantId, `bf-4-1-brand-${compactSuffix}`, hash(`brand:${suffix}`)],
+  );
+  await pool.query(
+    `
+insert into public.accounts (id, account_type, account_code, display_name, status)
+values ($1, 'PLAYER', $2, $3, 'ACTIVE');
+`,
+    [playerId, `bf-4-1-player-${compactSuffix}`, `BF-4.1 Player ${compactSuffix}`],
+  );
+  await pool.query(
+    `
+insert into public.financial_wallets (
+  id, account_id, wallet_type, currency_code, balance_authority, status,
+  balance, credit_limit, funding_model)
+values ($1, $2, 'CREDIT', 'USD', 'INTERNAL', 'ACTIVE', 100000, 100000, 'HYBRID');
+`,
+    [walletId, playerId],
+  );
+  await pool.query(
+    `
+insert into credit_wallet_service.wallet_scopes (
+  wallet_id, tenant_id, brand_id, player_id, instrument_code, currency,
+  authority, audit_metadata)
+values (
+  $1, $2, $3, $4, 'CREDIT', 'USD', 'CREDIT_WALLET_SERVICE',
+  '{"source":"bf-4.1"}'::jsonb);
+`,
+    [walletId, tenantId, brandId, playerId],
+  );
+  const reservation = await pool.query(
+    `
+select credit_wallet_service.reserve_wallet(
+  $1, $2, $3, $4, $5, 'CREDIT', $6, 100, 'USD', $7, $8,
+  '{"source":"bf-4.1"}'::jsonb) as reservation;
+`,
+    [
+      reservationOperationId,
+      walletId,
+      tenantId,
+      brandId,
+      playerId,
+      evidence.ticketId,
+      `bf-4.1:reservation:${suffix}`,
+      `bf-4.1:correlation:${suffix}`,
+    ],
+  );
+  const reservationId = reservation.rows[0]?.reservation?.id;
+  if (!reservationId) {
+    throw new Error("Canonical Settlement reservation fixture was not created.");
+  }
+  const scopeHash = hash(
+    [
+      tenantId,
+      brandId,
+      playerId,
+      reservationId,
+      evidence.ticketId,
+      gameReference,
+      drawOutcomeReference,
+    ].join("|"),
+  );
+
+  await pool.query(
+    `
+insert into settlement_service.settlement_requests (
+  settlement_request_id, idempotency_key, canonical_request_hash,
+  settlement_input_id, settlement_input_hash, math_evaluation_certificate_id,
+  math_evaluation_certificate_hash, outcome_certificate_id, outcome_certificate_hash,
+  ticket_id, ticket_line_id, player_account_reference,
+  accepted_wager_financial_context_reference, accepted_stake_amount_minor,
+  currency, minor_unit_precision, rounding_policy_reference,
+  credit_reservation_reference, settlement_policy_version, accepted_at,
+  mode, status, request_provenance, tenant_id, brand_id, game_reference,
+  draw_outcome_reference, scope_hash)
+select
+  $1, $2, $3, input.settlement_input_id, input.canonical_payload_hash,
+  input.math_evaluation_certificate_id, input.math_evaluation_certificate_hash,
+  input.outcome_certificate_id, input.outcome_certificate_hash,
+  $4, $5, $6, $7, 100, 'USD', 2, 'rounding:v1', $8,
+  'settlement:v1', now(), 'DryRun', 'Accepted',
+  '{"source":"bf-4.1"}'::jsonb, $9, $10, $11, $12, $13
+from game_engine.settlement_input_records input
+where input.settlement_input_id = $14;
+`,
+    [
+      authorityRequestId,
+      `bf-4.1-authority-request:${suffix}`,
+      hash(`authority-request:${suffix}`),
+      evidence.ticketId,
+      evidence.ticketLineId,
+      playerId,
+      `financial-context:${suffix}`,
+      reservationId,
+      tenantId,
+      brandId,
+      gameReference,
+      drawOutcomeReference,
+      scopeHash,
+      evidence.settlementInputId,
+    ],
+  );
+  await pool.query(
+    `
+insert into settlement_service.authoritative_settlement_records (
+  settlement_id, settlement_request_id, settlement_input_id, settlement_input_hash,
+  math_evaluation_certificate_id, math_evaluation_certificate_hash,
+  outcome_certificate_id, outcome_certificate_hash, ticket_id, ticket_line_id,
+  player_account_reference, currency, minor_unit_precision, stake_amount_minor,
+  gross_payout_amount_minor, net_result_amount_minor, settlement_outcome,
+  policy_version, canonical_settlement_hash, idempotency_key, issued_at,
+  provenance, tenant_id, brand_id, game_reference, draw_outcome_reference, scope_hash)
+select
+  $1, request.settlement_request_id, request.settlement_input_id,
+  request.settlement_input_hash, request.math_evaluation_certificate_id,
+  request.math_evaluation_certificate_hash, request.outcome_certificate_id,
+  request.outcome_certificate_hash, request.ticket_id, request.ticket_line_id,
+  request.player_account_reference, 'USD', 2, 100, 200, 100, 'WIN',
+  'settlement:v1', $2, $3, now(), '{"authority":"SettlementAuthority"}'::jsonb,
+  request.tenant_id, request.brand_id, request.game_reference,
+  request.draw_outcome_reference, request.scope_hash
+from settlement_service.settlement_requests request
+where request.settlement_request_id = $4;
+`,
+    [
+      settlementId,
+      hash(`authoritative-settlement:${suffix}`),
+      `bf-4.1-authority-record:${suffix}`,
+      authorityRequestId,
+    ],
+  );
 }
 
 async function publish(evidence, suffix) {
@@ -371,6 +568,7 @@ try {
       duplicateSettlement.body?.data?.settlementRequestId === settlementRequestId,
     "duplicate settlement request returns existing evidence",
   );
+  await seedAuthoritativeSettlement(normal, `${suffix}:normal`);
   await waitForCompletion(settlementRequestId);
 
   const outboxEventId = await scalar(
@@ -445,6 +643,7 @@ where outcome_version_id = $1
       [missingVersionId],
     );
   });
+  await seedAuthoritativeSettlement(missing, `${suffix}:missing`);
   await waitForCompletion(recoveredRequestId);
   assert(
     Number(
@@ -497,6 +696,7 @@ where settlement_request_id = $1
     ])) === "PENDING",
     "unconfirmed published event is safely requeued",
   );
+  await seedAuthoritativeSettlement(interrupted, `${suffix}:interrupted`);
   runDocker("compose", "start", "worker-settlement");
   await waitForComponent("settlement-worker");
   await waitForCompletion(interruptedRequestId);

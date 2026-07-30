@@ -1139,6 +1139,17 @@ addCheck("canonical_draw_completion_version_unique", indexExists("game_engine", 
 addCheck("canonical_draw_completion_validate_trigger", triggerExists("game_engine", "canonical_draw_completion_evidence", "trg_validate_canonical_draw_completion"));
 addCheck("canonical_draw_completion_update_trigger", triggerExists("game_engine", "canonical_draw_completion_evidence", "trg_prevent_canonical_draw_completion_update"));
 addCheck("canonical_draw_completion_delete_trigger", triggerExists("game_engine", "canonical_draw_completion_evidence", "trg_prevent_canonical_draw_completion_delete"));
+addCheck("canonical_draw_execution_leases_table", existsRegclass("game_engine.canonical_draw_execution_leases"));
+addCheck("canonical_draw_execution_lease_claim", functionExists("game_engine", "claim_canonical_draw_execution_lease"));
+addCheck("canonical_draw_execution_lease_release", functionExists("game_engine", "release_canonical_draw_execution_lease"));
+addCheck("canonical_draw_orchestration_events_table", existsRegclass("game_engine.canonical_draw_orchestration_events"));
+addCheck("canonical_draw_orchestration_events_update_guard", triggerExists("game_engine", "canonical_draw_orchestration_events", "trg_prevent_canonical_draw_orchestration_event_update"));
+addCheck("canonical_draw_orchestration_events_delete_guard", triggerExists("game_engine", "canonical_draw_orchestration_events", "trg_prevent_canonical_draw_orchestration_event_delete"));
+addCheck("outcome_settlement_acknowledgements_table", existsRegclass("game_engine.outcome_settlement_acknowledgements"));
+addCheck("outcome_settlement_acknowledgements_request_unique", indexExists("game_engine", "outcome_settlement_acknowledgements", "ux_outcome_settlement_acknowledgements_request"));
+addCheck("outcome_settlement_acknowledgements_validate_trigger", triggerExists("game_engine", "outcome_settlement_acknowledgements", "trg_validate_outcome_settlement_acknowledgement"));
+addCheck("outcome_settlement_acknowledgements_update_guard", triggerExists("game_engine", "outcome_settlement_acknowledgements", "trg_prevent_outcome_settlement_acknowledgement_update"));
+addCheck("canonical_draw_completion_acknowledgement", columnExists("game_engine", "canonical_draw_completion_evidence", "settlement_acknowledgement_id"));
 addCheck("canonical_outcome_recovery_version_index", indexExists("game_engine", "canonical_outcome_recovery_events", "idx_canonical_outcome_recovery_version"));
 addCheck("canonical_outcome_recovery_update_trigger", triggerExists("game_engine", "canonical_outcome_recovery_events", "trg_prevent_canonical_outcome_recovery_update"));
 addCheck("canonical_outcome_recovery_delete_trigger", triggerExists("game_engine", "canonical_outcome_recovery_events", "trg_prevent_canonical_outcome_recovery_delete"));

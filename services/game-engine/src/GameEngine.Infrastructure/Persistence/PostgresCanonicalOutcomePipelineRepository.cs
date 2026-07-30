@@ -27,66 +27,70 @@ public sealed class PostgresCanonicalOutcomePipelineRepository : ICanonicalOutco
         string canonicalRequestHash,
         CancellationToken cancellationToken)
     {
-        await using var connection = new NpgsqlConnection(connectionString);
-        await connection.OpenAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
-        await AcquireLockAsync(connection, transaction, $"canonical-outcome:{command.DrawId:N}", cancellationToken);
-
-        var existing = await FindByIdempotencyAsync(
-            connection,
-            transaction,
-            command.IdempotencyKey,
-            cancellationToken);
-        if (existing is not null)
+        var leaseToken = Guid.NewGuid();
+        await ClaimExecutionLeaseAsync(command.DrawId, leaseToken, cancellationToken);
+        try
         {
-            EnsureSameHash(existing.CanonicalRequestHash, canonicalRequestHash, "outcome publication");
-            await transaction.CommitAsync(cancellationToken);
-            return existing;
-        }
+            await using var connection = new NpgsqlConnection(connectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
+            await AcquireLockAsync(connection, transaction, $"canonical-outcome:{command.DrawId:N}", cancellationToken);
 
-        var source = await LoadSourceOutcomeAsync(connection, transaction, command, cancellationToken);
-        var current = await FindCurrentAsync(connection, transaction, command.DrawId, cancellationToken);
-        ValidateVersionTransition(command, current, source);
+            var existing = await FindByIdempotencyAsync(
+                connection,
+                transaction,
+                command.IdempotencyKey,
+                cancellationToken);
+            if (existing is not null)
+            {
+                EnsureSameHash(existing.CanonicalRequestHash, canonicalRequestHash, "outcome publication");
+                await transaction.CommitAsync(cancellationToken);
+                return existing;
+            }
 
-        var outcomeVersionId = Guid.NewGuid();
-        var outboxEventId = Guid.NewGuid();
-        var versionNumber = (current?.VersionNumber ?? 0) + 1;
-        var publishedAt = DateTimeOffset.UtcNow;
-        var outboxPayload = JsonSerializer.Serialize(new SortedDictionary<string, object?>(StringComparer.Ordinal)
-        {
-            ["auditReference"] = command.AuditReference,
-            ["authoritativeSource"] = command.AuthoritativeSource,
-            ["causationId"] = command.CausationId,
-            ["correlationId"] = command.CorrelationId,
-            ["drawId"] = command.DrawId,
-            ["engineName"] = command.EngineName,
-            ["engineVersion"] = command.EngineVersion,
-            ["generatedAt"] = source.GeneratedAt,
-            ["outcomeCertificateHash"] = command.OutcomeCertificateHash,
-            ["outcomeCertificateId"] = command.OutcomeCertificateId,
-            ["outcomeHash"] = source.CanonicalOutcomeHash,
-            ["outcomeVersionId"] = outcomeVersionId,
-            ["previousOutcomeVersionId"] = command.PreviousOutcomeVersionId,
-            ["productReference"] = command.ProductReference,
-            ["versionKind"] = command.VersionKind.ToString(),
-            ["versionNumber"] = versionNumber
-        });
+            var source = await LoadSourceOutcomeAsync(connection, transaction, command, cancellationToken);
+            var current = await FindCurrentAsync(connection, transaction, command.DrawId, cancellationToken);
+            ValidateVersionTransition(command, current, source);
 
-        await InsertOutboxAsync(
-            connection,
-            transaction,
-            outboxEventId,
-            $"outcome.{command.VersionKind.ToString().ToLowerInvariant()}",
-            "canonical_outcome",
-            outcomeVersionId.ToString("N"),
-            outboxPayload,
-            command.CorrelationId,
-            cancellationToken);
+            var outcomeVersionId = Guid.NewGuid();
+            var outboxEventId = Guid.NewGuid();
+            var versionNumber = (current?.VersionNumber ?? 0) + 1;
+            var publishedAt = DateTimeOffset.UtcNow;
+            var outboxPayload = JsonSerializer.Serialize(new SortedDictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["auditReference"] = command.AuditReference,
+                ["authoritativeSource"] = command.AuthoritativeSource,
+                ["causationId"] = command.CausationId,
+                ["correlationId"] = command.CorrelationId,
+                ["drawId"] = command.DrawId,
+                ["engineName"] = command.EngineName,
+                ["engineVersion"] = command.EngineVersion,
+                ["generatedAt"] = source.GeneratedAt,
+                ["outcomeCertificateHash"] = command.OutcomeCertificateHash,
+                ["outcomeCertificateId"] = command.OutcomeCertificateId,
+                ["outcomeHash"] = source.CanonicalOutcomeHash,
+                ["outcomeVersionId"] = outcomeVersionId,
+                ["previousOutcomeVersionId"] = command.PreviousOutcomeVersionId,
+                ["productReference"] = command.ProductReference,
+                ["versionKind"] = command.VersionKind.ToString(),
+                ["versionNumber"] = versionNumber
+            });
 
-        await using (var insert = connection.CreateCommand())
-        {
-            insert.Transaction = transaction;
-            insert.CommandText = """
+            await InsertOutboxAsync(
+                connection,
+                transaction,
+                outboxEventId,
+                $"outcome.{command.VersionKind.ToString().ToLowerInvariant()}",
+                "canonical_outcome",
+                outcomeVersionId.ToString("N"),
+                outboxPayload,
+                command.CorrelationId,
+                cancellationToken);
+
+            await using (var insert = connection.CreateCommand())
+            {
+                insert.Transaction = transaction;
+                insert.CommandText = """
 insert into game_engine.canonical_outcome_versions (
   outcome_version_id,
   draw_id,
@@ -134,41 +138,46 @@ values (
   @outbox_event_id,
   @published_at);
 """;
-            insert.Parameters.AddWithValue("outcome_version_id", outcomeVersionId);
-            insert.Parameters.AddWithValue("draw_id", command.DrawId);
-            insert.Parameters.AddWithValue("product_reference", command.ProductReference);
-            insert.Parameters.AddWithValue("engine_name", command.EngineName);
-            insert.Parameters.AddWithValue("engine_version", command.EngineVersion);
-            insert.Parameters.AddWithValue("version_number", versionNumber);
-            insert.Parameters.AddWithValue("version_kind", command.VersionKind.ToString());
-            insert.Parameters.AddWithValue("outcome_id", source.OutcomeId);
-            insert.Parameters.AddWithValue("outcome_certificate_id", command.OutcomeCertificateId);
-            insert.Parameters.AddWithValue("outcome_certificate_hash", command.OutcomeCertificateHash);
-            insert.Parameters.AddWithValue(
-                "previous_outcome_version_id",
-                command.PreviousOutcomeVersionId is null ? DBNull.Value : command.PreviousOutcomeVersionId.Value);
-            insert.Parameters.AddWithValue("outcome_payload", NpgsqlDbType.Jsonb, source.OutcomePayloadJson);
-            insert.Parameters.AddWithValue("canonical_outcome_hash", source.CanonicalOutcomeHash);
-            insert.Parameters.AddWithValue("generated_at", source.GeneratedAt);
-            insert.Parameters.AddWithValue("authoritative_source", command.AuthoritativeSource);
-            insert.Parameters.AddWithValue("correlation_id", command.CorrelationId);
-            insert.Parameters.AddWithValue("causation_id", command.CausationId);
-            insert.Parameters.AddWithValue("audit_reference", command.AuditReference);
-            insert.Parameters.AddWithValue("canonical_request_hash", canonicalRequestHash);
-            insert.Parameters.AddWithValue("idempotency_key", command.IdempotencyKey);
-            insert.Parameters.AddWithValue("outbox_event_id", outboxEventId);
-            insert.Parameters.AddWithValue("published_at", publishedAt);
-            await insert.ExecuteNonQueryAsync(cancellationToken);
-        }
+                insert.Parameters.AddWithValue("outcome_version_id", outcomeVersionId);
+                insert.Parameters.AddWithValue("draw_id", command.DrawId);
+                insert.Parameters.AddWithValue("product_reference", command.ProductReference);
+                insert.Parameters.AddWithValue("engine_name", command.EngineName);
+                insert.Parameters.AddWithValue("engine_version", command.EngineVersion);
+                insert.Parameters.AddWithValue("version_number", versionNumber);
+                insert.Parameters.AddWithValue("version_kind", command.VersionKind.ToString());
+                insert.Parameters.AddWithValue("outcome_id", source.OutcomeId);
+                insert.Parameters.AddWithValue("outcome_certificate_id", command.OutcomeCertificateId);
+                insert.Parameters.AddWithValue("outcome_certificate_hash", command.OutcomeCertificateHash);
+                insert.Parameters.AddWithValue(
+                    "previous_outcome_version_id",
+                    command.PreviousOutcomeVersionId is null ? DBNull.Value : command.PreviousOutcomeVersionId.Value);
+                insert.Parameters.AddWithValue("outcome_payload", NpgsqlDbType.Jsonb, source.OutcomePayloadJson);
+                insert.Parameters.AddWithValue("canonical_outcome_hash", source.CanonicalOutcomeHash);
+                insert.Parameters.AddWithValue("generated_at", source.GeneratedAt);
+                insert.Parameters.AddWithValue("authoritative_source", command.AuthoritativeSource);
+                insert.Parameters.AddWithValue("correlation_id", command.CorrelationId);
+                insert.Parameters.AddWithValue("causation_id", command.CausationId);
+                insert.Parameters.AddWithValue("audit_reference", command.AuditReference);
+                insert.Parameters.AddWithValue("canonical_request_hash", canonicalRequestHash);
+                insert.Parameters.AddWithValue("idempotency_key", command.IdempotencyKey);
+                insert.Parameters.AddWithValue("outbox_event_id", outboxEventId);
+                insert.Parameters.AddWithValue("published_at", publishedAt);
+                await insert.ExecuteNonQueryAsync(cancellationToken);
+            }
 
-        var result = await FindByIdempotencyAsync(
-            connection,
-            transaction,
-            command.IdempotencyKey,
-            cancellationToken)
-            ?? throw new InvalidOperationException("Canonical outcome publication was not persisted.");
-        await transaction.CommitAsync(cancellationToken);
-        return result;
+            var result = await FindByIdempotencyAsync(
+                connection,
+                transaction,
+                command.IdempotencyKey,
+                cancellationToken)
+                ?? throw new InvalidOperationException("Canonical outcome publication was not persisted.");
+            await transaction.CommitAsync(cancellationToken);
+            return result;
+        }
+        finally
+        {
+            await ReleaseExecutionLeaseAsync(command.DrawId, leaseToken, CancellationToken.None);
+        }
     }
 
     public async Task<OutcomeSettlementRequest> EmitSettlementRequestAsync(
@@ -345,10 +354,13 @@ select
   to_regclass('game_engine.canonical_draw_completion_evidence') is not null,
   to_regclass('game_engine.canonical_outcome_recovery_events') is not null,
   to_regclass('game_engine.canonical_runtime_components') is not null,
+  to_regclass('game_engine.canonical_draw_execution_leases') is not null,
+  to_regclass('game_engine.canonical_draw_orchestration_events') is not null,
+  to_regclass('game_engine.outcome_settlement_acknowledgements') is not null,
   exists (
     select 1
     from platform_migrations.migration_history
-    where migration_id = '080_add_canonical_draw_orchestration'
+    where migration_id = '092_add_canonical_draw_orchestrator'
       and status = 'APPLIED'
   ),
   exists (
@@ -371,9 +383,9 @@ select
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (await reader.ReadAsync(cancellationToken))
             {
-                schemaReady = Enumerable.Range(0, 8).All(reader.GetBoolean);
-                outboxDispatcherReady = reader.GetBoolean(8);
-                settlementWorkerReady = reader.GetBoolean(9);
+                schemaReady = Enumerable.Range(0, 11).All(reader.GetBoolean);
+                outboxDispatcherReady = reader.GetBoolean(11);
+                settlementWorkerReady = reader.GetBoolean(12);
             }
 
             if (!schemaReady)
@@ -790,6 +802,45 @@ where outcome_version_id = @outcome_version_id
         {
             throw new InvalidOperationException($"Timed out acquiring canonical outcome lock for {scope}.", error);
         }
+    }
+
+    private async Task ClaimExecutionLeaseAsync(
+        Guid drawId,
+        Guid leaseToken,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+select game_engine.claim_canonical_draw_execution_lease(
+  @draw_id,
+  @lease_token,
+  @owner_reference,
+  interval '30 seconds');
+""";
+        command.Parameters.AddWithValue("draw_id", drawId);
+        command.Parameters.AddWithValue("lease_token", leaseToken);
+        command.Parameters.AddWithValue("owner_reference", $"game-engine:{Environment.MachineName}");
+        var acquired = (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+        if (!acquired)
+        {
+            throw new InvalidOperationException($"Draw {drawId} already has an active canonical execution lease.");
+        }
+    }
+
+    private async Task ReleaseExecutionLeaseAsync(
+        Guid drawId,
+        Guid leaseToken,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "select game_engine.release_canonical_draw_execution_lease(@draw_id, @lease_token);";
+        command.Parameters.AddWithValue("draw_id", drawId);
+        command.Parameters.AddWithValue("lease_token", leaseToken);
+        await command.ExecuteScalarAsync(cancellationToken);
     }
 
     private static async Task<SourceOutcome> LoadSourceOutcomeAsync(

@@ -15,7 +15,7 @@ public sealed class InfrastructureReadinessChecks
     private readonly DurableMathEvaluationService mathEvaluationService;
     private readonly MathEvaluationBatchService mathEvaluationBatchService;
     private readonly SettlementInputAdapter settlementInputAdapter;
-    private readonly CanonicalOutcomePipelineService canonicalOutcomePipeline;
+    private readonly CanonicalDrawOrchestrator canonicalDrawOrchestrator;
     private readonly ProvablyFairRuntimeService provablyFairRuntime;
     private readonly ExternalOfficialResultRuntimeService externalOfficialResultRuntime;
     private readonly PhysicalDrawResultRuntimeService physicalDrawRuntime;
@@ -29,7 +29,7 @@ public sealed class InfrastructureReadinessChecks
         DurableMathEvaluationService mathEvaluationService,
         MathEvaluationBatchService mathEvaluationBatchService,
         SettlementInputAdapter settlementInputAdapter,
-        CanonicalOutcomePipelineService canonicalOutcomePipeline,
+        CanonicalDrawOrchestrator canonicalDrawOrchestrator,
         ProvablyFairRuntimeService provablyFairRuntime,
         ExternalOfficialResultRuntimeService externalOfficialResultRuntime,
         PhysicalDrawResultRuntimeService physicalDrawRuntime,
@@ -42,7 +42,7 @@ public sealed class InfrastructureReadinessChecks
         this.mathEvaluationService = mathEvaluationService;
         this.mathEvaluationBatchService = mathEvaluationBatchService;
         this.settlementInputAdapter = settlementInputAdapter;
-        this.canonicalOutcomePipeline = canonicalOutcomePipeline;
+        this.canonicalDrawOrchestrator = canonicalDrawOrchestrator;
         this.provablyFairRuntime = provablyFairRuntime;
         this.externalOfficialResultRuntime = externalOfficialResultRuntime;
         this.physicalDrawRuntime = physicalDrawRuntime;
@@ -208,7 +208,7 @@ public sealed class InfrastructureReadinessChecks
 
     public async Task<DependencyHealthResult> CheckCanonicalOutcomePipelineAsync(CancellationToken cancellationToken)
     {
-        var readiness = await canonicalOutcomePipeline.CheckReadinessAsync(cancellationToken);
+            var readiness = await canonicalDrawOrchestrator.CheckReadinessAsync(cancellationToken);
         var ready = readiness.DurablePersistenceConfigured &&
             readiness.DurablePersistenceReachable &&
             readiness.ImmutableVersioningReady &&

@@ -53,7 +53,7 @@ builder.Services.AddSingleton<MathCertificateEvaluationService>();
 builder.Services.AddSingleton<DurableMathEvaluationService>();
 builder.Services.AddSingleton<MathEvaluationBatchService>();
 builder.Services.AddSingleton<SettlementInputAdapter>();
-builder.Services.AddSingleton<CanonicalOutcomePipelineService>();
+builder.Services.AddSingleton<CanonicalDrawOrchestrator>();
 if (string.IsNullOrWhiteSpace(databaseUrl))
 {
     builder.Services.AddSingleton<IDrawScheduleRepository, InMemoryDrawScheduleRepository>();
