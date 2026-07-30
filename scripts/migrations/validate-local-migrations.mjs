@@ -1310,6 +1310,17 @@ addCheck("compensation_entitlement_tenant_scope", columnExists("compensation", "
 addCheck("compensation_entitlement_brand_scope", columnExists("compensation", "entitlements", "brand_id"));
 addCheck("compensation_entitlement_market_scope", columnExists("compensation", "entitlements", "market_id"));
 addCheck("compensation_entitlement_scope_index", indexExists("compensation", "entitlements", "idx_compensation_entitlement_scope"));
+addCheck("funding_authority_resolution_table", existsRegclass("funding_authority.resolution_events"));
+addCheck("funding_authority_resolution_function", functionExists("funding_authority", "resolve_funding_instrument"));
+addCheck("funding_authority_ticket_reporting", existsRegclass("funding_authority.ticket_totals_by_instrument"));
+addCheck("funding_authority_idempotency", uniqueIndexExists("funding_authority", "resolution_events", "idempotency_key"));
+addCheck("funding_authority_update_guard", triggerExists("funding_authority", "resolution_events", "funding_resolution_update_guard"));
+addCheck("funding_authority_delete_guard", triggerExists("funding_authority", "resolution_events", "funding_resolution_delete_guard"));
+addCheck("canonical_ticket_funding_instrument", columnExists("ticket_authority", "tickets", "funding_instrument"));
+addCheck("canonical_ticket_reservation_type", columnExists("ticket_authority", "tickets", "reservation_type"));
+addCheck("canonical_ticket_funding_resolution", columnExists("ticket_authority", "tickets", "funding_resolution_id"));
+addCheck("canonical_ticket_funding_binding", triggerExists("ticket_authority", "tickets", "ticket_funding_binding"));
+addCheck("canonical_ticket_funding_immutable", triggerExists("ticket_authority", "tickets", "ticket_funding_update_guard"));
 addCheck("auth_identity_profiles_table", existsRegclass("auth_service.identity_profiles"));
 addCheck("auth_external_identity_bindings_table", existsRegclass("auth_service.external_identity_bindings"));
 addCheck("auth_password_credential_versions_table", existsRegclass("auth_service.password_credential_versions"));

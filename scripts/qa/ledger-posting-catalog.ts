@@ -293,7 +293,7 @@ async function verifyReadiness() {
     && c.exactRuleResolutionReady && c.accountRoleResolutionReady && c.settlementMappingsReady
     && c.commissionAccrualMappingReady && c.rebateMappingReady && c.promotionMappingReady
     && c.manualAdjustmentMappingReady && c.stakeRecognitionReady === false
-    && c.freePlayReady === false && c.cashierMappingsDisabled === true
+    && c.freePlayReady === true && c.cashierMappingsDisabled === true
     && c.serviceAuthorityEnabled === false, "Posting catalog readiness must expose active mappings and explicit blockers.", body);
   pass("catalog readiness is explicit and production Ledger authority remains disabled");
 }
@@ -349,9 +349,20 @@ async function main() {
 
     await expectDisabled(wallet, { ruleId: "WAGER_ACCEPTED_STAKE", instructionType: "WAGER_ACCEPTED_STAKE", authority: "wager-authority", transactionType: "TICKET_STAKE", direction: "DEBIT" });
     pass("stake recognition remains blocked until accepted-wager authority evidence exists");
-    await expectDisabled(wallet, { ruleId: "FREE_PLAY_ISSUANCE", instructionType: "FREE_PLAY_ISSUANCE", authority: "promotion-authority", transactionType: "FREE_PLAY_CREDIT", direction: "CREDIT" });
-    await expectDisabled(wallet, { ruleId: "FREE_PLAY_CONVERSION", instructionType: "FREE_PLAY_CONVERSION", authority: "settlement-service", transactionType: "FREE_PLAY_WIN", direction: "CREDIT" });
-    pass("free-play mappings remain explicit blockers without fabricated policy");
+    const freePlayPayout = await expectRule(pool, wallet,
+      { ruleId: "FREE_PLAY_SETTLEMENT_PAYOUT", instructionType: "FREE_PLAY_SETTLEMENT_PAYOUT", authority: "settlement-service", transactionType: "FREE_PLAY_WIN", direction: "CREDIT" },
+      "SETTLEMENT_CLEARING", "FREE_PLAY_LIABILITY");
+    await expectRule(pool, wallet,
+      { ruleId: "FREE_PLAY_SETTLEMENT_REFUND", instructionType: "FREE_PLAY_SETTLEMENT_REFUND", authority: "settlement-service", transactionType: "FREE_PLAY_CREDIT", direction: "CREDIT" },
+      "SETTLEMENT_CLEARING", "FREE_PLAY_LIABILITY");
+    await expectRule(pool, wallet,
+      { ruleId: "FREE_PLAY_COMMISSION_CREDIT", instructionType: "FREE_PLAY_CREDIT", authority: "commission-authority", transactionType: "FREE_PLAY_CREDIT", direction: "CREDIT" },
+      "AGENT_COMMISSION_EXPENSE_OR_GGR_ALLOCATION", "FREE_PLAY_LIABILITY");
+    await expectRule(pool, wallet,
+      { ruleId: "FREE_PLAY_REBATE_CREDIT", instructionType: "FREE_PLAY_CREDIT", authority: "rebate-authority", transactionType: "FREE_PLAY_CREDIT", direction: "CREDIT" },
+      "PLAYER_REBATE_EXPENSE", "FREE_PLAY_LIABILITY");
+    await reverse(pool, freePlayPayout, "settlement-service");
+    pass("free-play settlement, compensation, reporting classifications, and reversal are active");
     await expectDisabled(wallet, { ruleId: "CASHIER_DEPOSIT", instructionType: "CASHIER_DEPOSIT", authority: "cashier-service", transactionType: "DEPOSIT", direction: "CREDIT" });
     await expectDisabled(wallet, { ruleId: "CASHIER_WITHDRAWAL", instructionType: "CASHIER_WITHDRAWAL", authority: "cashier-service", transactionType: "WITHDRAWAL", direction: "DEBIT" });
     pass("cashier mappings and payment-provider execution remain disabled");

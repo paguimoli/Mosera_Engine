@@ -55,11 +55,12 @@ export type CompensationEntitlement = {
   rateBasisPoints: number;
   compensationAmountMinor: number;
   currency: string;
-  fundingInstrument: "CREDIT";
+  fundingInstrument: CompensationFundingInstrument;
   walletId: string;
   ledgerTransactionType:
     | "AGENT_COMMISSION_ACCRUAL"
-    | "PLAYER_REBATE_CREDIT";
+    | "PLAYER_REBATE_CREDIT"
+    | "FREE_PLAY_CREDIT";
   canonicalEntitlementHash: string;
   reversalOfEntitlementId: string | null;
   createdAt: string;

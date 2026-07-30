@@ -64,7 +64,10 @@ export class CommissionCompensationStrategy implements CompensationStrategy {
       reportingClassification: "COMMISSION",
       calculationBasis: "NET_LOSS",
       rateBasisPoints: configuration.rateBasisPoints,
-      ledgerTransactionType: "AGENT_COMMISSION_ACCRUAL",
+      ledgerTransactionType:
+        configuration.fundingInstrument === "FREE_PLAY"
+          ? "FREE_PLAY_CREDIT"
+          : "AGENT_COMMISSION_ACCRUAL",
       ...amounts,
     };
   }
@@ -86,7 +89,10 @@ export class RebateCompensationStrategy implements CompensationStrategy {
       reportingClassification: "REBATE",
       calculationBasis: "NET_LOSS",
       rateBasisPoints: configuration.rateBasisPoints,
-      ledgerTransactionType: "PLAYER_REBATE_CREDIT",
+      ledgerTransactionType:
+        configuration.fundingInstrument === "FREE_PLAY"
+          ? "FREE_PLAY_CREDIT"
+          : "PLAYER_REBATE_CREDIT",
       ...amounts,
     };
   }
@@ -117,9 +123,7 @@ export function compensationStrategyReadiness() {
     commissionReady: strategies.has("COMMISSION"),
     rebateReady: strategies.has("REBATE"),
     additionalStrategiesEnabled: false,
-    fundingInstrument: "CREDIT",
-    futureFundingInstrument: "FREE_PLAY",
+    fundingInstruments: ["CREDIT", "FREE_PLAY"],
     accountingPeriod: "WEEKLY",
   } as const;
 }
-

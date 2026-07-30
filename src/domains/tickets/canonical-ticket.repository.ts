@@ -1,5 +1,6 @@
 import { Pool } from "pg";
 
+import { resolveFundingInstrument } from "../financial-authority/funding-instrument-authority";
 import type {
   AcceptCanonicalTicketInput,
   CanonicalTicket,
@@ -62,8 +63,18 @@ function mapTicket(row: TicketRow): CanonicalTicket {
     playerProfileId: stringValue(row, "player_profile_id"),
     agentAccountId: optionalString(row, "agent_account_id"),
     masterAgentAccountId: optionalString(row, "master_agent_account_id"),
+    fundingInstrument: stringValue(
+      row,
+      "funding_instrument"
+    ) as CanonicalTicket["fundingInstrument"],
     walletId: stringValue(row, "wallet_id"),
+    reservationType: stringValue(
+      row,
+      "reservation_type"
+    ) as CanonicalTicket["reservationType"],
     reservationId: stringValue(row, "reservation_id"),
+    fundingResolutionId: stringValue(row, "funding_resolution_id"),
+    fundingSnapshotHash: stringValue(row, "funding_snapshot_hash"),
     productId: stringValue(row, "product_id"),
     productVersionId: stringValue(row, "product_version_id"),
     productVersion: Number(row.product_version),
@@ -107,6 +118,15 @@ function translateError(error: unknown): never {
 
 export async function acceptCanonicalTicket(input: AcceptCanonicalTicketInput) {
   try {
+    const funding = await resolveFundingInstrument({
+      playerAccountId: input.playerAccountId,
+      requestedInstrument: input.fundingInstrument,
+      requestedWalletId: input.walletId,
+      currency: input.currency,
+      operation: "TICKET_ACCEPTANCE",
+      idempotencyKey: `ticket-funding:${input.idempotencyKey}`,
+      correlationId: input.correlationId,
+    });
     const result = await database().query<{ result: Record<string, unknown> }>(
       `select ticket_authority.accept_ticket(
         $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6::uuid,
@@ -116,7 +136,7 @@ export async function acceptCanonicalTicket(input: AcceptCanonicalTicketInput) {
       [
         input.playerAccountId,
         input.playerProfileId,
-        input.walletId,
+        funding.walletId,
         input.gameAvailabilityId,
         input.productId,
         input.manifestId,

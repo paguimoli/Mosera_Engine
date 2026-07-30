@@ -40,6 +40,12 @@ export class LedgerServiceCompensationGateway
       entitlement.strategy === "COMMISSION"
         ? "commission-authority"
         : "rebate-authority";
+    const postingRuleId =
+      entitlement.fundingInstrument === "FREE_PLAY"
+        ? entitlement.strategy === "COMMISSION"
+          ? "FREE_PLAY_COMMISSION_CREDIT"
+          : "FREE_PLAY_REBATE_CREDIT"
+        : entitlement.ledgerTransactionType;
     const idempotencyKey = `compensation:${entitlement.id}`;
     const instructionId = entitlement.id;
     const instructionHash = sha256(
@@ -63,7 +69,7 @@ export class LedgerServiceCompensationGateway
         ledgerWalletId: entitlement.walletId,
         minorUnitPrecision: 2,
         originatingAuthority,
-        postingRuleId: entitlement.ledgerTransactionType,
+        postingRuleId,
         postingRuleVersion: "1.0.0",
         referenceId: entitlement.id,
         referenceType: "COMPENSATION_ENTITLEMENT",
@@ -108,8 +114,9 @@ export class LedgerServiceCompensationGateway
           marketId: entitlement.marketId,
           compensationStrategy: entitlement.strategy,
           reportingClassification: entitlement.reportingClassification,
+          fundingInstrument: entitlement.fundingInstrument,
         },
-        postingRuleId: entitlement.ledgerTransactionType,
+        postingRuleId,
         postingRuleVersion: "1.0.0",
       }),
     });

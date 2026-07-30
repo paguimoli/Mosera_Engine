@@ -78,6 +78,7 @@ try {
     player: randomUUID(),
     profile: randomUUID(),
     wallet: randomUUID(),
+    freePlayWallet: randomUUID(),
     manifest: randomUUID(),
     paytable: randomUUID(),
     availability: randomUUID(),
@@ -122,16 +123,21 @@ try {
     `insert into public.financial_wallets (
       id, account_id, wallet_type, currency_code, balance_authority,
       status, balance, credit_limit, funding_model
-    ) values ($1,$2,'CREDIT',$3,'INTERNAL','ACTIVE',0,100000,'CREDIT')`,
-    [ids.wallet, ids.player, scope.currency]
+    ) values
+      ($1,$2,'CREDIT',$4,'INTERNAL','ACTIVE',0,100000,'CREDIT'),
+      ($3,$2,'FREE_PLAY',$4,'INTERNAL','ACTIVE',100000,0,'CREDIT')`,
+    [ids.wallet, ids.player, ids.freePlayWallet, scope.currency]
   );
   await client.query(
     `insert into credit_wallet_service.wallet_scopes (
       wallet_id, tenant_id, brand_id, player_id, instrument_code,
       currency, authority
-    ) values ($1,$2,$3,$4,'CREDIT',$5,'CREDIT_WALLET_SERVICE')`,
+    ) values
+      ($1,$3,$4,$5,'CREDIT',$6,'CREDIT_WALLET_SERVICE'),
+      ($2,$3,$4,$5,'FREE_PLAY',$6,'CREDIT_WALLET_SERVICE')`,
     [
       ids.wallet,
+      ids.freePlayWallet,
       scope.tenant_id,
       scope.brand_id,
       ids.player,
@@ -268,6 +274,53 @@ try {
   const acceptSql = `select ticket_authority.accept_ticket(
     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16,$17,$18
   ) result`;
+  const fundingSql = `select * from funding_authority.resolve_funding_instrument(
+    $1::uuid,$2,$3::uuid,$4,$5,$6,$7
+  )`;
+  const fundingKey = `funding-authority:${runId}`;
+  const fundingArgs = [
+    ids.player,
+    "CREDIT",
+    ids.wallet,
+    scope.currency,
+    "TICKET_ACCEPTANCE",
+    fundingKey,
+    `funding-correlation:${runId}`,
+  ];
+  const fundingFirst = await client.query(fundingSql, fundingArgs);
+  const fundingDuplicate = await client.query(fundingSql, fundingArgs);
+  check(
+    "Funding Instrument Authority resolves CREDIT deterministically and idempotently",
+    fundingFirst.rows[0].funding_instrument === "CREDIT" &&
+      fundingFirst.rows[0].wallet_id === ids.wallet &&
+      fundingFirst.rows[0].reservation_type === "CREDIT_EXPOSURE" &&
+      fundingFirst.rows[0].reused === false &&
+      fundingDuplicate.rows[0].resolution_id ===
+        fundingFirst.rows[0].resolution_id &&
+      fundingDuplicate.rows[0].reused === true
+  );
+  await rejected(
+    "conflicting funding decision fails closed",
+    () =>
+      client.query(fundingSql, [
+        ...fundingArgs.slice(0, 1),
+        "FREE_PLAY",
+        ids.freePlayWallet,
+        ...fundingArgs.slice(3),
+      ]),
+    /conflict/
+  );
+  await rejected(
+    "funding decision evidence is append-only",
+    () =>
+      client.query(
+        `update funding_authority.resolution_events
+            set correlation_id='tampered'
+          where resolution_id=$1`,
+        [fundingFirst.rows[0].resolution_id]
+      ),
+    /append-only/
+  );
 
   const accepted = (await client.query(acceptSql, baseArgs)).rows[0].result;
   const ticketId = accepted.ticketId;
@@ -293,6 +346,94 @@ try {
       Number(atomic.rows[0].reservations) === 1 &&
       Number(atomic.rows[0].outbox) === 1,
     atomic.rows[0]
+  );
+  const creditSnapshot = await client.query(
+    `select ticket.funding_instrument, ticket.wallet_id,
+            ticket.reservation_type, ticket.funding_resolution_id,
+            ticket.funding_snapshot_hash, reservation.instrument_code
+       from ticket_authority.tickets ticket
+       join public.credit_reservations reservation
+         on reservation.id = ticket.reservation_id
+      where ticket.ticket_id = $1`,
+    [ticketId]
+  );
+  check(
+    "CREDIT ticket permanently snapshots the authoritative funding decision",
+    creditSnapshot.rows[0].funding_instrument === "CREDIT" &&
+      creditSnapshot.rows[0].wallet_id === ids.wallet &&
+      creditSnapshot.rows[0].reservation_type === "CREDIT_EXPOSURE" &&
+      creditSnapshot.rows[0].instrument_code === "CREDIT" &&
+      Boolean(creditSnapshot.rows[0].funding_resolution_id) &&
+      Boolean(creditSnapshot.rows[0].funding_snapshot_hash),
+    creditSnapshot.rows[0]
+  );
+
+  const freePlayArgs = [
+    ...baseArgs.slice(0, 2),
+    ids.freePlayWallet,
+    ...baseArgs.slice(3, 10),
+    `free-play-${suffix}`,
+    ...baseArgs.slice(11, 13),
+    `free-play:${runId}`,
+    `free-play-correlation:${runId}`,
+    ...baseArgs.slice(15),
+  ];
+  const freePlayAccepted = (
+    await client.query(acceptSql, freePlayArgs)
+  ).rows[0].result;
+  const freePlaySnapshot = await client.query(
+    `select ticket.funding_instrument, ticket.wallet_id,
+            ticket.reservation_type, ticket.funding_resolution_id,
+            ticket.funding_snapshot_hash, reservation.instrument_code,
+            reservation.status
+       from ticket_authority.tickets ticket
+       join public.credit_reservations reservation
+         on reservation.id = ticket.reservation_id
+      where ticket.ticket_id = $1`,
+    [freePlayAccepted.ticketId]
+  );
+  check(
+    "FREE_PLAY acceptance uses the same atomic lifecycle with its own immutable classification",
+    freePlayAccepted.accepted === true &&
+      freePlaySnapshot.rows[0].funding_instrument === "FREE_PLAY" &&
+      freePlaySnapshot.rows[0].wallet_id === ids.freePlayWallet &&
+      freePlaySnapshot.rows[0].reservation_type === "FREE_PLAY_STAKE" &&
+      freePlaySnapshot.rows[0].instrument_code === "FREE_PLAY" &&
+      freePlaySnapshot.rows[0].status === "RESERVED" &&
+      Boolean(freePlaySnapshot.rows[0].funding_resolution_id) &&
+      Boolean(freePlaySnapshot.rows[0].funding_snapshot_hash),
+    freePlaySnapshot.rows[0]
+  );
+  const freePlayDuplicate = (
+    await client.query(acceptSql, freePlayArgs)
+  ).rows[0].result;
+  check(
+    "FREE_PLAY acceptance is idempotent",
+    freePlayDuplicate.duplicate === true &&
+      freePlayDuplicate.ticketId === freePlayAccepted.ticketId
+  );
+  const fundingTotals = await client.query(
+    `select funding_instrument, ticket_count::text, total_stake_minor::text
+       from funding_authority.ticket_totals_by_instrument
+      where tenant_id=$1 and brand_id=$2 and market_id=$3
+        and funding_instrument in ('CREDIT', 'FREE_PLAY')`,
+    [scope.tenant_id, scope.brand_id, scope.market_id]
+  );
+  check(
+    "CREDIT and FREE_PLAY ticket reporting remains independently classified",
+    fundingTotals.rows.some(
+      (row) =>
+        row.funding_instrument === "CREDIT" &&
+        Number(row.ticket_count) >= 1 &&
+        Number(row.total_stake_minor) >= 300
+    ) &&
+      fundingTotals.rows.some(
+        (row) =>
+          row.funding_instrument === "FREE_PLAY" &&
+          Number(row.ticket_count) >= 1 &&
+          Number(row.total_stake_minor) >= 300
+      ),
+    { fundingTotals: fundingTotals.rows }
   );
 
   const duplicate = (await client.query(acceptSql, baseArgs)).rows[0].result;
@@ -532,6 +673,17 @@ try {
     () =>
       client.query(
         "update ticket_authority.tickets set total_stake_minor=1 where ticket_id=$1",
+        [ticketId]
+      ),
+    /immutable/
+  );
+  await rejected(
+    "ticket funding snapshot cannot be changed",
+    () =>
+      client.query(
+        `update ticket_authority.tickets
+            set funding_instrument='FREE_PLAY'
+          where ticket_id=$1`,
         [ticketId]
       ),
     /immutable/

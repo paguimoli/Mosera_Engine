@@ -76,6 +76,17 @@ function optionalUuid(body: Record<string, unknown>, name: string) {
   return value;
 }
 
+function optionalFundingInstrument(body: Record<string, unknown>) {
+  const value = body.fundingInstrument;
+  if (value == null || value === "") return null;
+  if (value !== "CREDIT" && value !== "FREE_PLAY") {
+    throw new CanonicalTicketRepositoryError(
+      "fundingInstrument must be CREDIT or FREE_PLAY when provided."
+    );
+  }
+  return value;
+}
+
 function parseItems(value: unknown): CanonicalTicketItemInput[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new CanonicalTicketRepositoryError("items must contain at least one wager.");
@@ -166,7 +177,8 @@ export async function POST(request: Request) {
     const input: AcceptCanonicalTicketInput = {
       playerAccountId,
       playerProfileId: requiredUuid(body, "playerProfileId"),
-      walletId: requiredUuid(body, "walletId"),
+      fundingInstrument: optionalFundingInstrument(body),
+      walletId: optionalUuid(body, "walletId"),
       gameAvailabilityId: requiredUuid(body, "gameAvailabilityId"),
       productId: requiredUuid(body, "productId"),
       manifestId: requiredUuid(body, "manifestId"),

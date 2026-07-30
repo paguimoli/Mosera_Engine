@@ -108,6 +108,7 @@ public sealed class SettlementLedgerServiceClient
     public async Task<(SettlementExternalReferenceDto Reference, string ResponseHash)> PostFinancialInstructionAsync(
         FinancialInstructionExecutionContext context,
         Guid walletId,
+        string fundingInstrument,
         string targetIdempotencyKey,
         string correlationId,
         CancellationToken cancellationToken)
@@ -130,10 +131,22 @@ public sealed class SettlementLedgerServiceClient
                 "SKIPPED"), "sha256:noop");
         }
 
+        if (fundingInstrument is not ("CREDIT" or "FREE_PLAY"))
+        {
+            throw new SettlementIntegrationException(
+                $"Unsupported authoritative funding instrument {fundingInstrument}.");
+        }
+        var freePlay = fundingInstrument == "FREE_PLAY";
         var (transactionType, direction, amount) = instruction.InstructionType switch
         {
-            FinancialInstructionType.LEDGER_PAYOUT => ("SETTLEMENT_CREDIT", "CREDIT", context.SettlementRecord.GrossPayoutAmountMinor),
-            FinancialInstructionType.LEDGER_REFUND => ("TICKET_REFUND", "CREDIT", context.SettlementRecord.StakeAmountMinor),
+            FinancialInstructionType.LEDGER_PAYOUT => (
+                freePlay ? "FREE_PLAY_WIN" : "SETTLEMENT_CREDIT",
+                "CREDIT",
+                context.SettlementRecord.GrossPayoutAmountMinor),
+            FinancialInstructionType.LEDGER_REFUND => (
+                freePlay ? "FREE_PLAY_CREDIT" : "TICKET_REFUND",
+                "CREDIT",
+                context.SettlementRecord.StakeAmountMinor),
             FinancialInstructionType.LEDGER_REVERSAL => ("REVERSAL", "DEBIT", Math.Abs(context.SettlementRecord.NetResultAmountMinor)),
             _ => throw new SettlementIntegrationException($"Instruction {instruction.InstructionType} is not a Ledger instruction.")
         };
@@ -153,14 +166,20 @@ public sealed class SettlementLedgerServiceClient
         var effectiveAt = instruction.CreatedAt.ToUniversalTime();
         var postingRuleId = instruction.InstructionType switch
         {
-            FinancialInstructionType.LEDGER_PAYOUT => "SETTLEMENT_PAYOUT",
-            FinancialInstructionType.LEDGER_REFUND => "SETTLEMENT_REFUND",
+            FinancialInstructionType.LEDGER_PAYOUT =>
+                freePlay ? "FREE_PLAY_SETTLEMENT_PAYOUT" : "SETTLEMENT_PAYOUT",
+            FinancialInstructionType.LEDGER_REFUND =>
+                freePlay ? "FREE_PLAY_SETTLEMENT_REFUND" : "SETTLEMENT_REFUND",
             _ => null
         };
+        var ledgerInstructionType = freePlay && instruction.InstructionType is
+            FinancialInstructionType.LEDGER_PAYOUT or FinancialInstructionType.LEDGER_REFUND
+                ? postingRuleId!
+                : instruction.InstructionType.ToString();
         var postingRuleVersion = postingRuleId is null ? null : "1.0.0";
         var canonicalRequestHash = ComputeCanonicalLedgerRequestHash(
             instruction.InstructionId.ToString(),
-            instruction.InstructionType.ToString(),
+            ledgerInstructionType,
             instruction.CanonicalPayloadHash,
             "settlement-service",
             context.SettlementRecord.SettlementId.ToString(),
@@ -189,7 +208,7 @@ public sealed class SettlementLedgerServiceClient
             walletId,
             ledgerAccountId = (Guid?)null,
             instructionId = instruction.InstructionId.ToString(),
-            instructionType = instruction.InstructionType.ToString(),
+            instructionType = ledgerInstructionType,
             instructionHash = instruction.CanonicalPayloadHash,
             originatingAuthority = "settlement-service",
             settlementRecordId = context.SettlementRecord.SettlementId,
@@ -217,6 +236,7 @@ public sealed class SettlementLedgerServiceClient
                 ["settlementRequestId"] = context.SettlementRecord.SettlementRequestId,
                 ["instructionId"] = instruction.InstructionId,
                 ["instructionType"] = instruction.InstructionType.ToString(),
+                ["fundingInstrument"] = fundingInstrument,
                 ["canonicalPayloadHash"] = instruction.CanonicalPayloadHash,
                 ["tenantId"] = context.SettlementRecord.TenantId,
                 ["brandId"] = context.SettlementRecord.BrandId,

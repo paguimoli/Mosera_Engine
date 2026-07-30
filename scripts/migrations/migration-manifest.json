@@ -856,6 +856,19 @@
       "reason": "Binds server-derived tenant, brand, and market scope to immutable compensation entitlements for governed Ledger catalog posting and reporting."
     },
     {
+      "id": "091_add_funding_instrument_authority",
+      "path": "scripts/migrations/local/091_add_funding_instrument_authority.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "funding_authority",
+        "ticket_authority",
+        "credit_wallet_service",
+        "compensation",
+        "ledger_service"
+      ],
+      "reason": "Adds canonical CREDIT and FREE_PLAY resolution evidence, immutable ticket funding snapshots, funding-aware compensation, and production Ledger mappings."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

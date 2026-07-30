@@ -45,10 +45,28 @@ export function assertFinancialOperatingMode(
 export function assertFundingInstrument(
   instrument: CanonicalFundingInstrument
 ) {
-  if (instrument !== "CREDIT") {
+  if (instrument !== "CREDIT" && instrument !== "FREE_PLAY") {
     throw new FinancialAuthorityError(
-      `${instrument} is architecture-supported but not enabled for launch.`
+      `${instrument} is not a launch funding instrument.`
     );
   }
   return instrument;
+}
+
+export function resolveTicketFundingSnapshot(
+  value: string
+): CanonicalFundingInstrument | null {
+  switch (value.trim().toUpperCase()) {
+    case "CREDIT":
+      return "CREDIT";
+    case "FREEPLAY":
+    case "FREE_PLAY":
+      return "FREE_PLAY";
+    case "CASH":
+      return null;
+    default:
+      throw new FinancialAuthorityError(
+        "Ticket funding snapshot is unsupported."
+      );
+  }
 }

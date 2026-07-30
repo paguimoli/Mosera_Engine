@@ -142,9 +142,22 @@ public sealed class FinancialInstructionExecutionService(
         CancellationToken cancellationToken)
     {
         var walletId = ParseGuid(context.SettlementRecord.PlayerAccountReference, "playerAccountReference");
+        if (string.IsNullOrWhiteSpace(context.CreditReservationReference))
+        {
+            throw new SettlementIntegrationException(
+                "Ledger instruction requires the accepted ticket reservation reference.");
+        }
+        var reservationId = ParseGuid(
+            context.CreditReservationReference,
+            "creditReservationReference");
+        var fundingInstrument = await creditClient.GetReservationInstrumentAsync(
+            reservationId,
+            correlationId,
+            cancellationToken);
         return await ledgerClient.PostFinancialInstructionAsync(
             context,
             walletId,
+            fundingInstrument,
             targetIdempotencyKey,
             correlationId,
             cancellationToken);

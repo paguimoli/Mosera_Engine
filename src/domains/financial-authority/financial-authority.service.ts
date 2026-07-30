@@ -42,8 +42,8 @@ export function getFinancialAuthorityReadiness(): FinancialAuthorityReadiness {
     settlementAuthority: "CANONICAL",
     operatingModeAuthority: "CANONICAL",
     fundingInstrumentAuthority: "CANONICAL",
-    launchFundingInstruments: ["CREDIT"],
-    futureFundingInstruments: ["FREE_PLAY"],
+    launchFundingInstruments: ["CREDIT", "FREE_PLAY"],
+    futureFundingInstruments: [],
     compensationConsumerEnabled: true,
   };
 }

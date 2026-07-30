@@ -1,4 +1,5 @@
 import { applyCreditSettlement } from "../financial-authority/financial-authority-credit";
+import { resolveTicketFundingSnapshot } from "../financial-authority/financial-authority.policy";
 import type { CreditSettlementApplicationResult } from "../credit/credit-reservation.types";
 import type { Ticket } from "../tickets/ticket.types";
 import type { SettlementRecord } from "./settlement.types";
@@ -45,8 +46,9 @@ function createIdempotencyKey(record: SettlementRecord) {
 }
 
 function isCreditSettlementEligible(record: SettlementRecord, ticket: Ticket) {
-  if (ticket.fundingType !== "credit") {
-    return "Ticket is not credit funded.";
+  const fundingInstrument = resolveTicketFundingSnapshot(ticket.fundingType);
+  if (!fundingInstrument) {
+    return "Ticket does not use a reservable launch funding instrument.";
   }
 
   if (!ticket.reservationId) {
@@ -98,6 +100,7 @@ export async function applyCreditSettlementForRecord({
       idempotencyKey: idempotencyKey || createIdempotencyKey(settlementRecord),
       correlationId,
       metadata: {
+        fundingInstrument: resolveTicketFundingSnapshot(ticket.fundingType),
         settlementRunId: settlementRecord.settlementRunId,
         ticketLineId: settlementRecord.ticketLineId,
         outcome: settlementRecord.outcome,

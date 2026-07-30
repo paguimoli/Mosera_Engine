@@ -70,10 +70,31 @@ async function main() {
   );
 
   check(
-    "CREDIT is launch-enabled and FREE_PLAY remains disabled",
+    "CREDIT and FREE_PLAY are the exact launch funding instruments",
     authorityPolicy.includes('instrument !== "CREDIT"') &&
-      authorityService.includes('launchFundingInstruments: ["CREDIT"]') &&
-      authorityService.includes('futureFundingInstruments: ["FREE_PLAY"]')
+      authorityPolicy.includes('instrument !== "FREE_PLAY"') &&
+      authorityService.includes(
+        'launchFundingInstruments: ["CREDIT", "FREE_PLAY"]'
+      ) &&
+      authorityService.includes("futureFundingInstruments: []")
+  );
+  const fundingAuthority = await source(
+    "src/domains/financial-authority/funding-instrument-authority.ts"
+  );
+  const canonicalTicket = await source(
+    "src/domains/tickets/canonical-ticket.repository.ts"
+  );
+  const compensationService = await source(
+    "src/domains/compensation/compensation.service.ts"
+  );
+  check(
+    "Ticket and Compensation wallet routing use one Funding Instrument Authority",
+    fundingAuthority.includes(
+      "funding_authority.resolve_funding_instrument"
+    ) &&
+      canonicalTicket.includes("resolveFundingInstrument") &&
+      compensationService.includes("resolveFundingInstrument") &&
+      !compensationService.includes("findActiveCreditWallet")
   );
 
   const runtimeFiles = (
@@ -115,9 +136,6 @@ async function main() {
       )
   );
 
-  const compensation = await source(
-    "src/domains/compensation/compensation.service.ts"
-  );
   const compatibilityGateway = await source(
     "src/domains/compensation/compensation-ledger.gateway.ts"
   );
@@ -126,7 +144,7 @@ async function main() {
   );
   check(
     "Compensation consumes Financial Authority posting orchestration",
-    compensation.includes(
+    compensationService.includes(
       "../financial-authority/compensation-ledger.gateway"
     ) &&
       compatibilityGateway.includes(

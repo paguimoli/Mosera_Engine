@@ -21,7 +21,7 @@ export type FinancialAuthorityReadiness = {
   settlementAuthority: "CANONICAL";
   operatingModeAuthority: "CANONICAL";
   fundingInstrumentAuthority: "CANONICAL";
-  launchFundingInstruments: readonly ["CREDIT"];
-  futureFundingInstruments: readonly ["FREE_PLAY"];
+  launchFundingInstruments: readonly ["CREDIT", "FREE_PLAY"];
+  futureFundingInstruments: readonly [];
   compensationConsumerEnabled: true;
 };

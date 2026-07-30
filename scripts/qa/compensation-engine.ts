@@ -47,13 +47,34 @@ assert(rebate.compensationAmountMinor === 2_000, "Rebate NET_LOSS calculation ho
 assert(rebate.ledgerTransactionType === "PLAYER_REBATE_CREDIT", "Rebate uses its own ledger classification.");
 assert(rebate.reportingClassification === "REBATE", "Rebate reporting remains separate.");
 
+const freePlayCommission = new CommissionCompensationStrategy().calculate(
+  { ...base, fundingInstrument: "FREE_PLAY" },
+  -15_000
+);
+assert(
+  freePlayCommission.ledgerTransactionType === "FREE_PLAY_CREDIT",
+  "FREE_PLAY Commission uses the shared compensation strategy with a distinct Ledger classification."
+);
+const freePlayRebate = new RebateCompensationStrategy().calculate(
+  { ...base, strategy: "REBATE", fundingInstrument: "FREE_PLAY" },
+  -15_000
+);
+assert(
+  freePlayRebate.ledgerTransactionType === "FREE_PLAY_CREDIT" &&
+    freePlayRebate.reportingClassification === "REBATE",
+  "FREE_PLAY Rebate preserves independent Rebate reporting."
+);
+
 const noLoss = resolveCompensationStrategy("REBATE").calculate(
   { ...base, strategy: "REBATE" },
   5_000
 );
 assert(noLoss.compensationAmountMinor === 0, "Positive settled results do not generate NET_LOSS compensation.");
 assert(compensationStrategyReadiness().strategyTypes.length === 2, "Exactly two launch strategies are registered.");
-assert(compensationStrategyReadiness().fundingInstrument === "CREDIT", "CREDIT is the only enabled launch funding instrument.");
+assert(
+  compensationStrategyReadiness().fundingInstruments.join(",") ===
+    "CREDIT,FREE_PLAY",
+  "CREDIT and FREE_PLAY are the exact enabled launch funding instruments."
+);
 
 console.log(JSON.stringify({ status: "PASS", checks }, null, 2));
-

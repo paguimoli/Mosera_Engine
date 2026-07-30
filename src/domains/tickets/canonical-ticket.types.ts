@@ -25,7 +25,8 @@ export type CanonicalTicketItemInput = {
 export type AcceptCanonicalTicketInput = {
   playerAccountId: string;
   playerProfileId: string;
-  walletId: string;
+  fundingInstrument?: "CREDIT" | "FREE_PLAY" | null;
+  walletId?: string | null;
   gameAvailabilityId: string;
   productId: string;
   manifestId: string;
@@ -52,8 +53,12 @@ export type CanonicalTicket = CanonicalTicketScope & {
   playerProfileId: string;
   agentAccountId?: string | null;
   masterAgentAccountId?: string | null;
+  fundingInstrument: "CREDIT" | "FREE_PLAY";
   walletId: string;
+  reservationType: "CREDIT_EXPOSURE" | "FREE_PLAY_STAKE";
   reservationId: string;
+  fundingResolutionId: string;
+  fundingSnapshotHash: string;
   productId: string;
   productVersionId: string;
   productVersion: number;

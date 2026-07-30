@@ -22,6 +22,23 @@ public sealed class SettlementCreditWalletServiceClient
 
     public bool Configured => !string.IsNullOrWhiteSpace(configuration.Integrations.CreditServiceUrl);
 
+    public async Task<string> GetReservationInstrumentAsync(
+        Guid reservationId,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        var reservation = await GetReservationContextAsync(
+            reservationId,
+            correlationId,
+            cancellationToken);
+        if (reservation.Instrument is not ("CREDIT" or "FREE_PLAY"))
+        {
+            throw new SettlementIntegrationException(
+                $"Unsupported authoritative funding instrument {reservation.Instrument}.");
+        }
+        return reservation.Instrument;
+    }
+
     public async Task<SettlementTargetServiceReadiness> CheckReadinessAsync(CancellationToken cancellationToken)
     {
         if (!Configured)

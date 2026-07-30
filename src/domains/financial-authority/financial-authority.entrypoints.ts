@@ -2,6 +2,7 @@
 // facade remain implementation details of the canonical Financial Authority.
 
 export * from "./financial-authority.service";
+export * from "./funding-instrument-authority";
 export type * from "./financial-authority.types";
 
 export {

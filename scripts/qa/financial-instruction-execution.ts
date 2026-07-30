@@ -20,6 +20,7 @@ type WalletScope = {
   brandId: string;
   playerId: string;
   walletId: string;
+  instrument: "CREDIT" | "FREE_PLAY";
 };
 
 function trimTrailingSlash(value: string) {
@@ -84,7 +85,8 @@ async function optionalTableCount(pool: Pool, table: string) {
 async function seedAccountWallet(
   pool: Pool,
   accountId: string,
-  withWallet = true
+  withWallet = true,
+  instrument: "CREDIT" | "FREE_PLAY" = "CREDIT"
 ): Promise<WalletScope | null> {
   await pool.query(
     `
@@ -139,20 +141,26 @@ insert into public.financial_wallets (
   credit_limit,
   funding_model
 )
-values ($1, $1, 'CREDIT', 'USD', 'INTERNAL', 'ACTIVE', 100000, 100000, 'HYBRID')
+values ($1, $1, $2, 'USD', 'INTERNAL', 'ACTIVE', 100000, 100000, 'HYBRID')
 on conflict (id) do nothing;
 `,
-    [accountId]
+    [accountId, instrument]
   );
 
   await pool.query(
     `insert into credit_wallet_service.wallet_scopes
        (wallet_id, tenant_id, brand_id, player_id, instrument_code, currency, authority, audit_metadata)
-     values ($1, $2, $3, $4, 'CREDIT', 'USD', 'CREDIT_WALLET_SERVICE', '{"source":"qa"}')`,
-    [accountId, tenantId, brandId, accountId]
+     values ($1, $2, $3, $4, $5, 'USD', 'CREDIT_WALLET_SERVICE', '{"source":"qa"}')`,
+    [accountId, tenantId, brandId, accountId, instrument]
   );
 
-  return { tenantId, brandId, playerId: accountId, walletId: accountId };
+  return {
+    tenantId,
+    brandId,
+    playerId: accountId,
+    walletId: accountId,
+    instrument,
+  };
 }
 
 async function seedCreditReservation(scope: WalletScope, ticketId: string) {
@@ -172,7 +180,7 @@ async function seedCreditReservation(scope: WalletScope, ticketId: string) {
       brandId: scope.brandId,
       playerId: scope.playerId,
       walletId: scope.walletId,
-      instrument: "CREDIT",
+      instrument: scope.instrument,
       operation: "RESERVE",
       money: { amount: 100, currency: "USD" },
       balanceImpact: null,
@@ -316,13 +324,22 @@ values (
 async function createSettlement(
   pool: Pool,
   outcome: Outcome,
-  options: { withCredit?: boolean; withWallet?: boolean } = {}
+  options: {
+    withCredit?: boolean;
+    withWallet?: boolean;
+    fundingInstrument?: "CREDIT" | "FREE_PLAY";
+  } = {}
 ) {
   const input = buildStoredSettlementInput(outcome);
   await seedSettlementInput(pool, input);
 
   const playerId = randomUUID();
-  const walletScope = await seedAccountWallet(pool, playerId, options.withWallet ?? true);
+  const walletScope = await seedAccountWallet(
+    pool,
+    playerId,
+    options.withWallet ?? true,
+    options.fundingInstrument ?? "CREDIT"
+  );
   const reservationId = await seedCreditReservation(walletScope!, input.ticketId);
   const acceptedAt = new Date().toISOString();
   const contextReference = `accepted-wager-context:v1:${randomUUID()}`;
@@ -484,6 +501,56 @@ async function main() {
     const ledgerAttempts = await executionAttemptCount(pool, ledgerInstruction.instructionId);
     assert(ledgerAttempts === 1, "Ledger instruction should have one terminal attempt after duplicate execution.", { ledgerAttempts });
     pass("target idempotency prevents duplicate Ledger effects");
+
+    const freePlayWin = await createSettlement(pool, "Win", {
+      fundingInstrument: "FREE_PLAY",
+    });
+    const freePlayExecution = await executeSettlement(
+      freePlayWin.settlement.settlementId
+    );
+    assert(
+      freePlayExecution.response.ok &&
+        freePlayExecution.body.results.every(
+          (result: { status: string }) => result.status === "Posted"
+        ),
+      "FREE_PLAY should use the same Settlement orchestration.",
+      {
+        status: freePlayExecution.response.status,
+        body: freePlayExecution.body,
+      }
+    );
+    const freePlayJournal = await pool.query(
+      `select tx.posting_rule_id, tx.transaction_type
+         from ledger_service.ledger_transactions tx
+        where tx.instruction_id=$1
+        order by tx.created_at desc
+        limit 1`,
+      [findInstruction(freePlayWin, "LEDGER_PAYOUT").instructionId]
+    );
+    const freePlayReservation = await pool.query(
+      `select reservation.instrument_code,
+              application.instrument_code as application_instrument,
+              application.id as application_id
+         from public.credit_reservations reservation
+         join public.credit_settlement_applications application
+           on application.reservation_id=reservation.id
+        where reservation.id=$1`,
+      [freePlayWin.reservationId]
+    );
+    assert(
+      freePlayJournal.rows[0]?.posting_rule_id ===
+        "FREE_PLAY_SETTLEMENT_PAYOUT" &&
+        freePlayJournal.rows[0]?.transaction_type === "FREE_PLAY_WIN" &&
+        freePlayReservation.rows[0]?.instrument_code === "FREE_PLAY" &&
+        freePlayReservation.rows[0]?.application_instrument === "FREE_PLAY" &&
+        Boolean(freePlayReservation.rows[0]?.application_id),
+      "FREE_PLAY Settlement must preserve authoritative Wallet and Ledger classification.",
+      {
+        journal: freePlayJournal.rows,
+        reservation: freePlayReservation.rows,
+      }
+    );
+    pass("FREE_PLAY settlement uses authoritative funding for Wallet and Ledger posting");
 
     const push = await createSettlement(pool, "Push");
     const pushExecution = await executeSettlement(push.settlement.settlementId);

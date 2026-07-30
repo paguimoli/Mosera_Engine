@@ -14,6 +14,10 @@ public static class FinancialPostingRuleIds
     public const string PromotionalCredit = "PROMOTIONAL_CREDIT";
     public const string ManualCreditAdjustment = "MANUAL_CREDIT_ADJUSTMENT";
     public const string ManualDebitAdjustment = "MANUAL_DEBIT_ADJUSTMENT";
+    public const string FreePlaySettlementPayout = "FREE_PLAY_SETTLEMENT_PAYOUT";
+    public const string FreePlaySettlementRefund = "FREE_PLAY_SETTLEMENT_REFUND";
+    public const string FreePlayCommissionCredit = "FREE_PLAY_COMMISSION_CREDIT";
+    public const string FreePlayRebateCredit = "FREE_PLAY_REBATE_CREDIT";
     public const string CurrentVersion = "1.0.0";
     public const string LegacyRuleId = "LEGACY_MINIMAL_BALANCED_JOURNAL";
     public const string LegacyRuleVersion = "1.0.0";
@@ -68,6 +72,8 @@ public sealed class FinancialPostingCatalog
             "PLAYER_REBATE_ACCRUAL", "PLAYER_REBATE_CREDIT", "PROMOTIONAL_CREDIT",
             "MANUAL_CREDIT_ADJUSTMENT", "MANUAL_DEBIT_ADJUSTMENT",
             "WAGER_ACCEPTED_STAKE", "FREE_PLAY_ISSUANCE", "FREE_PLAY_CONVERSION",
+            "FREE_PLAY_SETTLEMENT_PAYOUT", "FREE_PLAY_SETTLEMENT_REFUND",
+            "FREE_PLAY_CREDIT",
             "AGENT_COMMISSION_PAYMENT", "CASHIER_DEPOSIT", "CASHIER_WITHDRAWAL"
         };
 
@@ -169,7 +175,11 @@ where rule_version = '1.0.0';
         var required = new[] { FinancialPostingRuleIds.SettlementPayout, FinancialPostingRuleIds.SettlementRefund,
             FinancialPostingRuleIds.AgentCommissionAccrual, FinancialPostingRuleIds.PlayerRebateCredit,
             FinancialPostingRuleIds.PromotionalCredit, FinancialPostingRuleIds.ManualCreditAdjustment,
-            FinancialPostingRuleIds.ManualDebitAdjustment };
+            FinancialPostingRuleIds.ManualDebitAdjustment,
+            FinancialPostingRuleIds.FreePlaySettlementPayout,
+            FinancialPostingRuleIds.FreePlaySettlementRefund,
+            FinancialPostingRuleIds.FreePlayCommissionCredit,
+            FinancialPostingRuleIds.FreePlayRebateCredit };
         var blockers = rules.Values.Where(value => !string.IsNullOrWhiteSpace(value.Blocker))
             .Select(value => value.Blocker!).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         return new(
@@ -183,7 +193,10 @@ where rule_version = '1.0.0';
             Enabled(FinancialPostingRuleIds.PromotionalCredit),
             Enabled(FinancialPostingRuleIds.ManualCreditAdjustment) && Enabled(FinancialPostingRuleIds.ManualDebitAdjustment),
             Enabled("WAGER_ACCEPTED_STAKE"),
-            Enabled("FREE_PLAY_ISSUANCE") && Enabled("FREE_PLAY_CONVERSION"),
+            Enabled(FinancialPostingRuleIds.FreePlaySettlementPayout)
+                && Enabled(FinancialPostingRuleIds.FreePlaySettlementRefund)
+                && Enabled(FinancialPostingRuleIds.FreePlayCommissionCredit)
+                && Enabled(FinancialPostingRuleIds.FreePlayRebateCredit),
             rules.TryGetValue("CASHIER_DEPOSIT", out var deposit) && !deposit.Enabled
                 && rules.TryGetValue("CASHIER_WITHDRAWAL", out var withdrawal) && !withdrawal.Enabled,
             blockers);

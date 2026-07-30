@@ -6,6 +6,7 @@ import {
   resolveCanonicalMarketScope,
 } from "../hierarchy/canonical-hierarchy-authority";
 import { LedgerServiceCompensationGateway } from "../financial-authority/compensation-ledger.gateway";
+import { resolveFundingInstrument } from "../financial-authority/funding-instrument-authority";
 import type { CompensationLedgerGateway } from "./compensation-ledger.gateway";
 import {
   appendCalculatedEntitlement,
@@ -13,7 +14,6 @@ import {
   appendCompensationReversalEntitlement,
   claimCompensationExecution,
   createCompensationConfigurationRecord,
-  findActiveCreditWallet,
   findCompensationEntitlementForReversal,
   findCompensationPeriod,
   getAuthoritativeSettledNetResult,
@@ -85,9 +85,12 @@ function validateConfiguration(input: CreateCompensationConfigurationInput) {
       "Compensation thresholds must be non-negative integer minor units."
     );
   }
-  if (input.fundingInstrument !== "CREDIT") {
+  if (
+    input.fundingInstrument !== "CREDIT" &&
+    input.fundingInstrument !== "FREE_PLAY"
+  ) {
     throw new CompensationAuthorityError(
-      "CREDIT is the only enabled compensation funding instrument."
+      "Only CREDIT and FREE_PLAY compensation funding instruments are enabled."
     );
   }
 }
@@ -211,21 +214,21 @@ export async function executeWeeklyCompensation(
     ).calculate(configuration, settledNetResultMinor);
     if (calculation.compensationAmountMinor === 0) continue;
 
-    const wallet = await findActiveCreditWallet(
-      configuration.beneficiaryAccountId
-    );
-    if (!wallet) {
-      throw new CompensationAuthorityError(
-        "Compensation beneficiary requires an active CREDIT wallet."
-      );
-    }
+    const funding = await resolveFundingInstrument({
+      playerAccountId: configuration.beneficiaryAccountId,
+      requestedInstrument: configuration.fundingInstrument,
+      operation: "COMPENSATION",
+      idempotencyKey: `compensation-funding:${period.id}:${configuration.id}`,
+      correlationId: input.correlationId ?? executionId,
+    });
     const canonicalEntitlementHash = hash({
       accountingPeriodId: period.id,
       beneficiaryAccountId: configuration.beneficiaryAccountId,
       calculation,
       configurationHash: configuration.contentHash,
-      currency: wallet.currency,
-      fundingInstrument: "CREDIT",
+      currency: funding.currency,
+      fundingInstrument: funding.instrument,
+      fundingResolutionHash: funding.canonicalResolutionHash,
       hierarchyOwnerAccountId: configuration.hierarchyOwnerAccountId,
     });
     const entitlement = await appendCalculatedEntitlement({
@@ -238,9 +241,9 @@ export async function executeWeeklyCompensation(
         marketId: scope.marketId,
         hierarchyOwnerAccountId: configuration.hierarchyOwnerAccountId,
         beneficiaryAccountId: configuration.beneficiaryAccountId,
-        currency: wallet.currency,
-        fundingInstrument: "CREDIT",
-        walletId: wallet.id,
+        currency: funding.currency,
+        fundingInstrument: funding.instrument,
+        walletId: funding.walletId,
         canonicalEntitlementHash,
         reversalOfEntitlementId: null,
         ...calculation,

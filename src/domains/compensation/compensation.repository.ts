@@ -102,7 +102,10 @@ function mapEntitlement(row: Row): CompensationEntitlement {
     rateBasisPoints: number(row, "rate_basis_points"),
     compensationAmountMinor: number(row, "compensation_amount_minor"),
     currency: text(row, "currency"),
-    fundingInstrument: "CREDIT",
+    fundingInstrument: text(
+      row,
+      "funding_instrument"
+    ) as CompensationEntitlement["fundingInstrument"],
     walletId: text(row, "wallet_id"),
     ledgerTransactionType: text(
       row,
@@ -237,7 +240,6 @@ export async function listEligibleCompensationConfigurations(
        join public.accounts owner
          on owner.id = configuration.hierarchy_owner_account_id
       where configuration.enabled
-        and configuration.funding_instrument = 'CREDIT'
         and configuration.effective_from < $3
         and (configuration.effective_to is null or configuration.effective_to >= $2)
         and owner.status = 'ACTIVE'
@@ -263,35 +265,23 @@ export async function getAuthoritativeSettledNetResult(
      )
      select coalesce(sum(application.balance_impact), 0)::bigint as net_result
        from public.credit_settlement_applications application
+       join public.credit_reservations reservation
+         on reservation.id = application.reservation_id
        join descendants scope on scope.id = application.player_id
       where application.created_at >= $2
         and application.created_at < $3
         and application.operation_id is not null
         and application.settlement_authority = 'settlement-service'
-        and application.authentication_result = 'AUTHENTICATED'`,
+        and application.authentication_result = 'AUTHENTICATED'
+        and reservation.instrument_code = $4`,
     [
       configuration.hierarchyOwnerAccountId,
       period.startsAt,
       period.endsAt,
+      configuration.fundingInstrument,
     ]
   );
   return number(result.rows[0], "net_result");
-}
-
-export async function findActiveCreditWallet(accountId: string) {
-  const result = await databasePool().query<Row>(
-    `select id, currency_code
-       from public.financial_wallets
-      where account_id = $1 and wallet_type = 'CREDIT' and status = 'ACTIVE'
-      limit 1`,
-    [accountId]
-  );
-  return result.rows[0]
-    ? {
-        id: text(result.rows[0], "id"),
-        currency: text(result.rows[0], "currency_code"),
-      }
-    : null;
 }
 
 export async function appendCalculatedEntitlement(input: {
