@@ -104,6 +104,85 @@ static OutcomeProviderRuntimeRequest RuntimeRequest(
         canonicalHash);
 }
 
+static ExternalResultSourceDefinition OfficialSource(
+    string sourceId,
+    ExternalResultSourceType sourceType,
+    ExternalResultAuthenticationMethod authenticationMethod,
+    ExternalResultSignatureRequirement signatureRequirement,
+    ExternalResultTransportSecurityRequirement transportSecurity) =>
+    new(
+        Guid.NewGuid(),
+        sourceId,
+        "1.0.0",
+        $"QA {sourceId}",
+        sourceType,
+        new Dictionary<string, object?> { ["endpointReference"] = $"qa:{sourceId}" },
+        authenticationMethod,
+        signatureRequirement,
+        transportSecurity,
+        ["LOTTO-OFFICIAL"],
+        [
+            ExternalResultSchemaType.UniqueNumberSet,
+            ExternalResultSchemaType.BonusNumberSet
+        ],
+        "UTC",
+        new ExternalResultPublicationDelayPolicy(
+            TimeSpan.FromMinutes(5),
+            TimeSpan.FromDays(1),
+            FutureTimestampsRejected: true),
+        ReplayRetrievalCapability: true,
+        ProductionEligible: true,
+        ExternalResultSourceLifecycleState.Active,
+        ExternalResultFailureMode.FailClosed,
+        $"sha256:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sourceId))).ToLowerInvariant()}",
+        CertificationBinding: null,
+        VerificationKeyId:
+            signatureRequirement == ExternalResultSignatureRequirement.NotRequired
+                ? null
+                : $"key:{sourceId}",
+        VerificationAlgorithmVersion:
+            signatureRequirement == ExternalResultSignatureRequirement.NotRequired
+                ? null
+                : "SHA256_V1",
+        VerificationKeyRevokedAt: null,
+        SupersedesSourceVersion: null);
+
+static OfficialResultIngestionRequest OfficialRequest(
+    DrawExecutionManifest manifest,
+    ExternalResultSourceDefinition source,
+    OfficialResultAcquisitionMethod acquisitionMethod,
+    IReadOnlyList<int> officialNumbers,
+    IReadOnlyList<int> bonusNumbers,
+    string idempotencyKey,
+    Guid? supersedesEvidenceId = null,
+    string? correctionReason = null) =>
+    new(
+        Guid.NewGuid(),
+        idempotencyKey,
+        $"correlation:{idempotencyKey}",
+        source.SourceId,
+        source.SourceVersion,
+        acquisitionMethod,
+        Jurisdiction: null,
+        "LOTTO-OFFICIAL",
+        manifest.DrawId,
+        manifest.ScheduleVersionId,
+        manifest.ExecutionManifestId,
+        manifest.ScheduledExecutionAt,
+        officialNumbers,
+        bonusNumbers,
+        new Dictionary<string, object?>
+        {
+            ["externalDrawId"] = $"external:{manifest.DrawId:N}",
+            ["schemaVersion"] = "1.0.0"
+        },
+        $"sha256:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"raw:{idempotencyKey}"))).ToLowerInvariant()}",
+        $"sha256:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"auth:{idempotencyKey}"))).ToLowerInvariant()}",
+        $"sha256:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"transport:{idempotencyKey}"))).ToLowerInvariant()}",
+        DateTimeOffset.UtcNow,
+        supersedesEvidenceId,
+        correctionReason);
+
 var runtimeResolver = new OutcomeProviderResolver();
 var runtimeProvider = RuntimeProvider(
     "outcome-provider:runtime:certified-csprng",
@@ -478,6 +557,310 @@ finally
     CryptographicOperations.ZeroMemory(statisticalPersonalization);
 }
 
+var officialProviderRepository = new CanonicalCsprngTestRepository(
+    CanonicalOutcomeProviderCategory.OfficialResults);
+var officialDefinitions = new InMemoryGameDefinitionRepository();
+var officialDefinitionVersions = new InMemoryGameDefinitionVersionRepository();
+var officialDefinitionId = Guid.NewGuid();
+var officialDefinitionVersionId = Guid.NewGuid();
+await officialDefinitions.UpsertAsync(
+    new GameDefinition(
+        officialDefinitionId,
+        "LOTTO-OFFICIAL",
+        "Official Results QA",
+        officialDefinitionVersionId,
+        Guid.NewGuid(),
+        DateTimeOffset.UnixEpoch),
+    CancellationToken.None);
+await officialDefinitionVersions.UpsertAsync(
+    new GameDefinitionVersion(
+        officialDefinitionVersionId,
+        officialDefinitionId,
+        1,
+        "sha256:official-definition",
+        "paytable:official:1",
+        "evaluator:official:1",
+        "official-results:2.0.0",
+        DateTimeOffset.UnixEpoch,
+        null,
+        new NumberOutcomeGenerationDefinition(
+            Enumerable.Range(1, 40).ToArray(),
+            5,
+            Unique: true,
+            WithReplacement: false,
+            OutcomeNumberOrdering.Ascending,
+            new BonusNumberOutcomeDefinition(
+                Enumerable.Range(1, 10).ToArray(),
+                1,
+                Unique: true,
+                WithReplacement: false,
+                MayOverlapPrimary: false,
+                OutcomeNumberOrdering.Ascending))),
+    CancellationToken.None);
+var officialSources = new[]
+{
+    (
+        OfficialSource(
+            "official-api:qa",
+            ExternalResultSourceType.OfficialApi,
+            ExternalResultAuthenticationMethod.MutualTls,
+            ExternalResultSignatureRequirement.NotRequired,
+            ExternalResultTransportSecurityRequirement.MutualTlsRequired),
+        OfficialResultAcquisitionMethod.OfficialApi),
+    (
+        OfficialSource(
+            "official-file:qa",
+            ExternalResultSourceType.SignedFileFeed,
+            ExternalResultAuthenticationMethod.DetachedSignature,
+            ExternalResultSignatureRequirement.DetachedRequired,
+            ExternalResultTransportSecurityRequirement.OfflineSignedFile),
+        OfficialResultAcquisitionMethod.OfficialFile),
+    (
+        OfficialSource(
+            "official-scraper:qa",
+            ExternalResultSourceType.ApprovedOperatorFeed,
+            ExternalResultAuthenticationMethod.SignedPayload,
+            ExternalResultSignatureRequirement.SignedEnvelopeRequired,
+            ExternalResultTransportSecurityRequirement.HttpsRequired),
+        OfficialResultAcquisitionMethod.OfficialScraper),
+    (
+        OfficialSource(
+            "manual-import:qa",
+            ExternalResultSourceType.ManualRegulatorImport,
+            ExternalResultAuthenticationMethod.OperatorAttestation,
+            ExternalResultSignatureRequirement.NotRequired,
+            ExternalResultTransportSecurityRequirement.HttpsRequired),
+        OfficialResultAcquisitionMethod.ManualImport)
+};
+var officialSourceRepository = new InMemoryExternalResultSourceRepository();
+foreach (var (source, _) in officialSources)
+{
+    officialSourceRepository.Add(source);
+}
+
+var officialResultsProvider = new OfficialResultsProvider(
+    new CanonicalOutcomeProviderAuthority(officialProviderRepository),
+    officialSourceRepository,
+    officialDefinitions,
+    officialDefinitionVersions);
+var officialIngestions = new List<(
+    DrawExecutionManifest Manifest,
+    OfficialResultIngestionRequest Request,
+    OfficialResultIngestionResult Result)>();
+foreach (var (source, method) in officialSources)
+{
+    var scheduledAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+    var manifest = new DrawExecutionManifest(
+        Guid.NewGuid(),
+        Guid.NewGuid(),
+        Guid.NewGuid(),
+        officialDefinitionVersionId,
+        Guid.NewGuid(),
+        "lotto-official",
+        "1.0.0",
+        "mosera-official-results",
+        "2.0.0",
+        "1",
+        "evaluator:official:1",
+        "paytable:official:1",
+        scheduledAt,
+        "sha256:official-schedule",
+        $"sha256:official-draw:{method}",
+        $"sha256:official-manifest:{method}",
+        scheduledAt.AddMinutes(-1));
+    var request = OfficialRequest(
+        manifest,
+        source,
+        method,
+        [40, 3, 21, 8, 12],
+        [7],
+        $"official-result:{method}:{Guid.NewGuid():N}");
+    var result = await officialResultsProvider.IngestAsync(
+        manifest,
+        request,
+        CancellationToken.None);
+    if (!result.NormalizedResult.OfficialNumbers.SequenceEqual([3, 8, 12, 21, 40]) ||
+        !result.NormalizedResult.BonusNumbers.SequenceEqual([7]) ||
+        result.NormalizedResult.AcquisitionMethod != method ||
+        result.Evidence.AcquisitionMethod != method ||
+        !result.Evidence.ValidationPassed ||
+        string.IsNullOrWhiteSpace(result.Evidence.ReplayIdentifier) ||
+        result.CanonicalEvidenceId == Guid.Empty)
+    {
+        throw new InvalidOperationException(
+            $"{method} must normalize through the canonical Official Results contract.");
+    }
+
+    officialIngestions.Add((manifest, request, result));
+}
+
+var firstOfficial = officialIngestions[0];
+var duplicateOfficial = await officialResultsProvider.IngestAsync(
+    firstOfficial.Manifest,
+    firstOfficial.Request,
+    CancellationToken.None);
+if (!duplicateOfficial.Duplicate ||
+    duplicateOfficial.ExecutionId != firstOfficial.Result.ExecutionId ||
+    duplicateOfficial.CanonicalEvidenceId != firstOfficial.Result.CanonicalEvidenceId)
+{
+    throw new InvalidOperationException(
+        "Duplicate Official Results ingestion must return the persisted execution and evidence.");
+}
+
+AssertThrows(
+    () => officialResultsProvider.IngestAsync(
+        firstOfficial.Manifest,
+        OfficialRequest(
+            firstOfficial.Manifest,
+            officialSources[0].Item1,
+            OfficialResultAcquisitionMethod.OfficialApi,
+            [1, 2, 3, 4, 5],
+            [6],
+            $"official-conflict:{Guid.NewGuid():N}"),
+        CancellationToken.None).GetAwaiter().GetResult(),
+    "Conflicting Official Result without explicit supersession must fail closed.");
+
+var correctionRequest = OfficialRequest(
+    firstOfficial.Manifest,
+    officialSources[0].Item1,
+    OfficialResultAcquisitionMethod.OfficialApi,
+    [1, 2, 3, 4, 5],
+    [6],
+    $"official-correction:{Guid.NewGuid():N}",
+    firstOfficial.Result.CanonicalEvidenceId,
+    "Official source correction");
+var correctedOfficial = await officialResultsProvider.IngestAsync(
+    firstOfficial.Manifest,
+    correctionRequest,
+    CancellationToken.None);
+if (!correctedOfficial.Superseding ||
+    correctedOfficial.Evidence.ExecutionVersion != 2 ||
+    correctedOfficial.Evidence.SupersedesExecutionId != firstOfficial.Result.ExecutionId ||
+    correctedOfficial.Evidence.SupersedesEvidenceId != firstOfficial.Result.CanonicalEvidenceId)
+{
+    throw new InvalidOperationException(
+        "Official Result correction must create an immutable superseding execution and evidence version.");
+}
+
+var officialReplay = await officialResultsProvider.VerifyReplayAsync(
+    firstOfficial.Manifest,
+    CancellationToken.None);
+if (!officialReplay.Valid)
+{
+    throw new InvalidOperationException(
+        "Official Results replay must validate canonical hashes without republishing.");
+}
+
+var officialCertificate = await officialResultsProvider.BindOutcomeCertificateAsync(
+    firstOfficial.Manifest,
+    Guid.NewGuid(),
+    correctedOfficial.NormalizedResult.CanonicalPayloadHash,
+    CancellationToken.None);
+if (officialCertificate.Stage != OutcomeProviderEvidenceStage.Authoritative ||
+    officialCertificate.ExecutionId != correctedOfficial.ExecutionId ||
+    officialProviderRepository.AuthoritativeEvidence.Count != 1)
+{
+    throw new InvalidOperationException(
+        "Only canonical Official Results evidence may bind to an Outcome Certificate.");
+}
+
+var invalidIdentityManifest = officialIngestions[1].Manifest with
+{
+    ExecutionManifestId = Guid.NewGuid(),
+    DrawId = Guid.NewGuid(),
+    CanonicalManifestHash = "sha256:invalid-identity-manifest"
+};
+AssertThrows(
+    () => officialResultsProvider.IngestAsync(
+        invalidIdentityManifest,
+        OfficialRequest(
+            invalidIdentityManifest,
+            officialSources[1].Item1,
+            OfficialResultAcquisitionMethod.OfficialFile,
+            [1, 2, 3, 4, 5],
+            [6],
+            $"official-invalid-identity:{Guid.NewGuid():N}") with
+        {
+            DrawId = Guid.NewGuid()
+        },
+        CancellationToken.None).GetAwaiter().GetResult(),
+    "Official Result with a mismatched draw identity must fail closed.");
+
+var invalidNumbersManifest = invalidIdentityManifest with
+{
+    ExecutionManifestId = Guid.NewGuid(),
+    DrawId = Guid.NewGuid(),
+    CanonicalManifestHash = "sha256:invalid-numbers-manifest"
+};
+AssertThrows(
+    () => officialResultsProvider.IngestAsync(
+        invalidNumbersManifest,
+        OfficialRequest(
+            invalidNumbersManifest,
+            officialSources[1].Item1,
+            OfficialResultAcquisitionMethod.OfficialFile,
+            [1, 1, 2, 3, 41],
+            [1],
+            $"official-invalid-numbers:{Guid.NewGuid():N}"),
+        CancellationToken.None).GetAwaiter().GetResult(),
+    "Official Result violating count, universe, uniqueness, or bonus rules must fail closed.");
+
+var recoverySource = OfficialSource(
+    "official-recovery:qa",
+    ExternalResultSourceType.OfficialApi,
+    ExternalResultAuthenticationMethod.MutualTls,
+    ExternalResultSignatureRequirement.NotRequired,
+    ExternalResultTransportSecurityRequirement.MutualTlsRequired);
+var recoveryManifest = invalidNumbersManifest with
+{
+    ExecutionManifestId = Guid.NewGuid(),
+    DrawId = Guid.NewGuid(),
+    CanonicalManifestHash = "sha256:official-recovery-manifest"
+};
+var recoveryRequest = OfficialRequest(
+    recoveryManifest,
+    recoverySource,
+    OfficialResultAcquisitionMethod.OfficialApi,
+    [1, 2, 3, 4, 5],
+    [6],
+    $"official-recovery:{Guid.NewGuid():N}");
+AssertThrows(
+    () => officialResultsProvider.IngestAsync(
+        recoveryManifest,
+        recoveryRequest,
+        CancellationToken.None).GetAwaiter().GetResult(),
+    "Interrupted Official Result ingestion must retain failed attempt evidence.");
+officialSourceRepository.Add(recoverySource);
+var recoveredOfficial = await officialResultsProvider.IngestAsync(
+    recoveryManifest,
+    recoveryRequest,
+    CancellationToken.None);
+if (recoveredOfficial.Duplicate ||
+    officialProviderRepository.Attempts.Count(attempt =>
+        attempt.ExecutionId == recoveredOfficial.ExecutionId) != 2)
+{
+    throw new InvalidOperationException(
+        "Official Result recovery must resume the durable claim as a new attempt.");
+}
+
+var officialReadiness = await officialResultsProvider.CheckReadinessAsync(
+    CancellationToken.None);
+if (!officialReadiness.ProductionReady ||
+    officialReadiness.ProductionActive ||
+    officialProviderRepository.GeneratedEvidence.Any(item =>
+        item.OutcomeCertificateId is not null))
+{
+    throw new InvalidOperationException(
+        "Official Results provider must be production-ready but inactive, with no implicit outcome publication.");
+}
+
+if (args.Contains("official-results-provider", StringComparer.Ordinal))
+{
+    Console.WriteLine(
+        $"Official Results provider tests passed; methods={officialIngestions.Count}; corrections=1; recoveryAttempts=2.");
+    return;
+}
+
 if (args.Contains("internal-csprng-provider", StringComparer.Ordinal))
 {
     Console.WriteLine(
@@ -605,7 +988,6 @@ var runtimeOrchestrator = new OutcomeProviderOrchestrationService(
     runtimeLockManager,
     [
         new ProvablyFairOutcomeProviderRuntime(),
-        new ExternalOfficialResultOutcomeProviderRuntime(),
         new PhysicalDrawResultOutcomeProviderRuntime(),
         new SimulationTestOutcomeProviderRuntime()
     ],
@@ -2445,173 +2827,6 @@ AssertThrows(
         CancellationToken.None).GetAwaiter().GetResult(),
     "Provably Fair conflicting duplicate request must fail closed.");
 
-var externalSource = new ExternalResultSourceDefinition(
-    Guid.NewGuid(),
-    "official-source:test",
-    "1.0.0",
-    "Official Source Test",
-    ExternalResultSourceType.SignedFileFeed,
-    new Dictionary<string, object?> { ["endpointReference"] = "qa-offline-feed" },
-    ExternalResultAuthenticationMethod.DetachedSignature,
-    ExternalResultSignatureRequirement.DetachedRequired,
-    ExternalResultTransportSecurityRequirement.OfflineSignedFile,
-    ["LOTTO-EXT"],
-    [ExternalResultSchemaType.UniqueNumberSet],
-    "UTC",
-    new ExternalResultPublicationDelayPolicy(TimeSpan.FromMinutes(5), TimeSpan.FromDays(1), FutureTimestampsRejected: true),
-    ReplayRetrievalCapability: true,
-    ProductionEligible: false,
-    ExternalResultSourceLifecycleState.Active,
-    ExternalResultFailureMode.FailClosed,
-    ExternalOfficialResultRuntimeService.HashCanonical("official-source:test|1.0.0"),
-    CertificationBinding: null,
-    VerificationKeyId: "test-key-1",
-    VerificationAlgorithmVersion: "TEST_SHA256_DETACHED_V1",
-    VerificationKeyRevokedAt: null,
-    SupersedesSourceVersion: null);
-if (!ExternalOfficialResultValidator.ValidateSource(externalSource).IsValid)
-{
-    throw new InvalidOperationException("Valid External Official Result source must pass validation.");
-}
-
-var externalProvider = RuntimeProvider(
-    "external-official:test",
-    "1.0.0",
-    OutcomeProviderType.ExternalOfficialResult);
-var externalEnvelope = new ExternalOfficialResultEnvelope(
-    Guid.NewGuid(),
-    "external-result-idempotency",
-    externalSource.SourceId,
-    externalSource.SourceVersion,
-    externalProvider.ProviderId,
-    externalProvider.ProviderVersion,
-    "manifest-external",
-    "1.0.0",
-    "LOTTO-EXT",
-    "draw-external-001",
-    "external-draw-001",
-    DateTimeOffset.UtcNow.AddMinutes(-2),
-    DateTimeOffset.UtcNow.AddMinutes(-2),
-    DateTimeOffset.UtcNow,
-    ExternalOfficialResultRuntimeService.HashCanonical("source-payload-001"),
-    SourceSignature: null,
-    externalSource.VerificationAlgorithmVersion!,
-    "official-numbers-v1",
-    ExternalResultSchemaType.UniqueNumberSet,
-    new Dictionary<string, object?> { ["numbers"] = new[] { 9, 1, 5, 2, 7 } },
-    "transport-evidence:test",
-    "source-metadata:test");
-externalEnvelope = externalEnvelope with
-{
-    SourceSignature = ExternalOfficialResultRuntimeService.CreateTestSignature(externalSource, externalEnvelope)
-};
-var externalRequest = RuntimeRequest(
-    "external-result-idempotency",
-    "draw-external-001",
-    externalProvider.ProviderId,
-    externalProvider.ProviderVersion,
-    OutcomeProviderType.ExternalOfficialResult,
-    canonicalHash: ExternalOfficialResultRuntimeService.HashCanonical("external-result-request-001")) with
-{
-    GameManifestId = "manifest-external",
-    GameManifestVersion = "1.0.0",
-    ExternalOfficialResult = externalEnvelope
-};
-var externalSourceRepository = new InMemoryExternalResultSourceRepository();
-externalSourceRepository.Add(externalSource);
-var externalEvidenceRepository = new InMemoryExternalResultEvidenceRepository();
-var externalRuntimeService = new ExternalOfficialResultRuntimeService(externalSourceRepository, externalEvidenceRepository);
-var normalizedExternal = ExternalOfficialResultRuntimeService.Normalize(externalEnvelope);
-var normalizedAgain = ExternalOfficialResultRuntimeService.Normalize(externalEnvelope with
-{
-    ResultPayload = new Dictionary<string, object?> { ["numbers"] = new[] { 7, 2, 5, 1, 9 } }
-});
-if (normalizedExternal.CanonicalPayloadHash != normalizedAgain.CanonicalPayloadHash)
-{
-    throw new InvalidOperationException("External official unique number set normalization must be deterministic.");
-}
-
-var externalContext = new OutcomeProviderRuntimeContext(externalRequest, externalProvider);
-var ingestedExternal = await externalRuntimeService.IngestAsync(externalContext, CancellationToken.None);
-if (ingestedExternal.Evidence.Status != ExternalResultVerificationStatus.Verified ||
-    ingestedExternal.OutcomeCertificate.CanonicalOutcomeHash != normalizedExternal.CanonicalPayloadHash)
-{
-    throw new InvalidOperationException("External Official Result runtime must verify, normalize, and certify dry-run evidence.");
-}
-
-AssertThrows(
-    () => externalRuntimeService.IngestAsync(
-        new OutcomeProviderRuntimeContext(
-            externalRequest with { ExternalOfficialResult = externalEnvelope with { SourceSignature = "sha256:invalid" } },
-            externalProvider),
-        CancellationToken.None).GetAwaiter().GetResult(),
-    "Invalid External Official Result signature must fail closed.");
-
-var externalRuntime = new ExternalOfficialResultOutcomeProviderRuntime(externalRuntimeService);
-var externalOrchestrator = new OutcomeProviderOrchestrationService(
-    runtimeResolver,
-    new InMemoryOutcomeRuntimeRequestRepository(),
-    new InMemoryOutcomeRuntimeLockManager(),
-    [externalRuntime]);
-var orchestratedExternal = await externalOrchestrator.ExecuteAsync(
-    externalRequest,
-    [externalProvider],
-    CancellationToken.None);
-if (orchestratedExternal.Status != OutcomeRuntimeStatus.Accepted ||
-    orchestratedExternal.EvidenceReference is null ||
-    !orchestratedExternal.EvidenceReference.StartsWith("placeholder:external-official-result:", StringComparison.Ordinal))
-{
-    throw new InvalidOperationException("External Official Result runtime must accept signed dry-run ingestion and return an evidence reference.");
-}
-
-var duplicateExternal = await externalOrchestrator.ExecuteAsync(
-    externalRequest,
-    [externalProvider],
-    CancellationToken.None);
-if (duplicateExternal.Status != OutcomeRuntimeStatus.DuplicateReturned ||
-    duplicateExternal.EvidenceReference != orchestratedExternal.EvidenceReference)
-{
-    throw new InvalidOperationException("External Official Result duplicate idempotent request must return the same evidence reference.");
-}
-
-var conflictingEnvelope = externalEnvelope with
-{
-    IngestionRequestId = Guid.NewGuid(),
-    IdempotencyKey = "external-result-idempotency-conflict",
-    SourcePayloadHash = ExternalOfficialResultRuntimeService.HashCanonical("source-payload-conflict"),
-    ResultPayload = new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4, 10 } }
-};
-conflictingEnvelope = conflictingEnvelope with
-{
-    SourceSignature = ExternalOfficialResultRuntimeService.CreateTestSignature(externalSource, conflictingEnvelope)
-};
-var conflictResult = await externalRuntime.CreateOutcomeAsync(
-    new OutcomeProviderRuntimeContext(
-        externalRequest with
-        {
-            RuntimeRequestId = Guid.NewGuid(),
-            IdempotencyKey = "external-result-idempotency-conflict",
-            CanonicalRequestHash = ExternalOfficialResultRuntimeService.HashCanonical("external-result-conflict"),
-            ExternalOfficialResult = conflictingEnvelope
-        },
-        externalProvider),
-    CancellationToken.None);
-if (conflictResult.Status != OutcomeRuntimeStatus.FailedClosed ||
-    conflictResult.FailureCode != OutcomeRuntimeFailureCode.ExternalResultConflict)
-{
-    throw new InvalidOperationException("Conflicting External Official Result must fail closed and require supersession.");
-}
-
-var productionExternal = await externalRuntime.CreateOutcomeAsync(
-    new OutcomeProviderRuntimeContext(
-        externalRequest with { Mode = OutcomeRuntimeExecutionMode.Production },
-        externalProvider),
-    CancellationToken.None);
-if (productionExternal.Status != OutcomeRuntimeStatus.ProductionDisabled)
-{
-    throw new InvalidOperationException("External Official Result runtime must reject production mode.");
-}
-
 var physicalAuthority = new PhysicalDrawAuthorityDefinition(
     Guid.NewGuid(),
     "physical-authority:test",
@@ -4093,11 +4308,15 @@ sealed class ConfiguredEntropyProvider(OsEntropyPlatform platform) : IOsEntropyP
     }
 }
 
-sealed class CanonicalCsprngTestRepository : ICanonicalOutcomeProviderRepository
+sealed class CanonicalCsprngTestRepository(
+    CanonicalOutcomeProviderCategory providerCategory =
+        CanonicalOutcomeProviderCategory.InternalCsprng)
+    : ICanonicalOutcomeProviderRepository
 {
-    private readonly Dictionary<Guid, OutcomeProviderExecutionClaim> claims = [];
+    private readonly Dictionary<Guid, OutcomeProviderExecutionClaim> claimsByExecution = [];
     private readonly Dictionary<string, Guid> executionByIdempotencyKey =
         new(StringComparer.Ordinal);
+    private readonly List<OutcomeProviderExecutionAttempt> attempts = [];
     private readonly List<OutcomeProviderExecutionEvidence> evidence = [];
 
     public IReadOnlyCollection<OutcomeProviderExecutionEvidence> GeneratedEvidence =>
@@ -4105,6 +4324,8 @@ sealed class CanonicalCsprngTestRepository : ICanonicalOutcomeProviderRepository
 
     public IReadOnlyCollection<OutcomeProviderExecutionEvidence> AuthoritativeEvidence =>
         evidence.Where(item => item.Stage == OutcomeProviderEvidenceStage.Authoritative).ToArray();
+
+    public IReadOnlyCollection<OutcomeProviderExecutionAttempt> Attempts => attempts;
 
     public Task<CanonicalOutcomeProviderRegistration?> ResolveRegistrationAsync(
         DrawExecutionManifest manifest,
@@ -4115,7 +4336,7 @@ sealed class CanonicalCsprngTestRepository : ICanonicalOutcomeProviderRepository
             manifest.OutcomeProviderId,
             manifest.OutcomeProviderVersion,
             manifest.ProviderConfigurationVersion,
-            CanonicalOutcomeProviderCategory.InternalCsprng,
+            providerCategory,
             "sha256:test-configuration",
             ["UniqueNumberSet", "OrderedNumberSequence"],
             new Dictionary<string, object?>(),
@@ -4132,9 +4353,22 @@ sealed class CanonicalCsprngTestRepository : ICanonicalOutcomeProviderRepository
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (claims.TryGetValue(claim.ExecutionManifestId, out var existing) ||
-            executionByIdempotencyKey.TryGetValue(claim.IdempotencyKey, out var manifestId) &&
-            claims.TryGetValue(manifestId, out existing))
+        OutcomeProviderExecutionClaim? existing = null;
+        if (executionByIdempotencyKey.TryGetValue(
+                claim.IdempotencyKey,
+                out var idempotentExecutionId))
+        {
+            existing = claimsByExecution[idempotentExecutionId];
+        }
+        else
+        {
+            existing = claimsByExecution.Values
+                .Where(item => item.ExecutionManifestId == claim.ExecutionManifestId)
+                .OrderByDescending(item => item.ExecutionVersion)
+                .FirstOrDefault();
+        }
+
+        if (existing is not null)
         {
             if (existing.CanonicalRequestHash != claim.CanonicalRequestHash ||
                 existing.ExecutionManifestId != claim.ExecutionManifestId)
@@ -4149,12 +4383,74 @@ sealed class CanonicalCsprngTestRepository : ICanonicalOutcomeProviderRepository
                 Duplicate: true));
         }
 
-        claims.Add(claim.ExecutionManifestId, claim);
-        executionByIdempotencyKey.Add(claim.IdempotencyKey, claim.ExecutionManifestId);
+        claimsByExecution.Add(claim.ExecutionId, claim);
+        executionByIdempotencyKey.Add(claim.IdempotencyKey, claim.ExecutionId);
         return Task.FromResult(new OutcomeProviderClaimResult(
             claim,
             Created: true,
             Duplicate: false));
+    }
+
+    public Task<OutcomeProviderClaimResult> ClaimSupersedingExecutionAsync(
+        OutcomeProviderExecutionClaim claim,
+        Guid supersedesExecutionId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!claimsByExecution.TryGetValue(supersedesExecutionId, out var previous))
+        {
+            throw new InvalidOperationException("Superseded execution does not exist.");
+        }
+
+        if (executionByIdempotencyKey.TryGetValue(
+                claim.IdempotencyKey,
+                out var idempotentExecutionId))
+        {
+            var existing = claimsByExecution[idempotentExecutionId];
+            if (existing.CanonicalRequestHash != claim.CanonicalRequestHash ||
+                existing.SupersedesExecutionId != supersedesExecutionId)
+            {
+                throw new InvalidOperationException(
+                    "Conflicting superseding provider execution request.");
+            }
+
+            return Task.FromResult(new OutcomeProviderClaimResult(
+                existing,
+                Created: false,
+                Duplicate: true));
+        }
+
+        if (previous.ExecutionManifestId != claim.ExecutionManifestId)
+        {
+            throw new InvalidOperationException(
+                "Supersession must remain within the same Execution Manifest.");
+        }
+
+        var version = claimsByExecution.Values
+            .Where(existing => existing.ExecutionManifestId == claim.ExecutionManifestId)
+            .Select(existing => existing.ExecutionVersion)
+            .DefaultIfEmpty()
+            .Max() + 1;
+        var versionedClaim = claim with
+        {
+            ExecutionVersion = version,
+            SupersedesExecutionId = supersedesExecutionId
+        };
+        claimsByExecution.Add(versionedClaim.ExecutionId, versionedClaim);
+        executionByIdempotencyKey.Add(versionedClaim.IdempotencyKey, versionedClaim.ExecutionId);
+        return Task.FromResult(new OutcomeProviderClaimResult(
+            versionedClaim,
+            Created: true,
+            Duplicate: false));
+    }
+
+    public Task<int> GetNextAttemptNumberAsync(
+        Guid executionId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(
+            attempts.Count(attempt => attempt.ExecutionId == executionId) + 1);
     }
 
     public Task AppendAttemptAsync(
@@ -4162,6 +4458,7 @@ sealed class CanonicalCsprngTestRepository : ICanonicalOutcomeProviderRepository
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        attempts.Add(attempt);
         return Task.CompletedTask;
     }
 
@@ -4193,22 +4490,22 @@ sealed class CanonicalCsprngTestRepository : ICanonicalOutcomeProviderRepository
     public Task<OutcomeProviderExecutionEvidence?> FindGeneratedEvidenceAsync(
         Guid executionManifestId,
         CancellationToken cancellationToken) =>
-        Task.FromResult(evidence.SingleOrDefault(item =>
-            item.ExecutionManifestId == executionManifestId &&
-            item.Stage == OutcomeProviderEvidenceStage.Generated));
+        Task.FromResult(FindLatestEvidence(
+            executionManifestId,
+            OutcomeProviderEvidenceStage.Generated));
 
     public Task<OutcomeProviderExecutionEvidence?> FindAuthoritativeEvidenceAsync(
         Guid executionManifestId,
         CancellationToken cancellationToken) =>
-        Task.FromResult(evidence.SingleOrDefault(item =>
-            item.ExecutionManifestId == executionManifestId &&
-            item.Stage == OutcomeProviderEvidenceStage.Authoritative));
+        Task.FromResult(FindLatestEvidence(
+            executionManifestId,
+            OutcomeProviderEvidenceStage.Authoritative));
 
     public Task<IReadOnlyCollection<OutcomeProviderExecutionClaim>> FindIncompleteExecutionsAsync(
         int limit,
         CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyCollection<OutcomeProviderExecutionClaim>>(
-            claims.Values
+            claimsByExecution.Values
                 .Where(claim => evidence.All(item =>
                     item.ExecutionId != claim.ExecutionId ||
                     item.Stage != OutcomeProviderEvidenceStage.Generated))
@@ -4227,4 +4524,23 @@ sealed class CanonicalCsprngTestRepository : ICanonicalOutcomeProviderRepository
             true,
             true,
             []));
+
+    public Task<bool> IsProviderCategoryProductionReadyAsync(
+        CanonicalOutcomeProviderCategory category,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(category == providerCategory);
+    }
+
+    private OutcomeProviderExecutionEvidence? FindLatestEvidence(
+        Guid executionManifestId,
+        OutcomeProviderEvidenceStage stage) =>
+        evidence
+            .Where(item =>
+                item.ExecutionManifestId == executionManifestId &&
+                item.Stage == stage)
+            .OrderByDescending(item =>
+                claimsByExecution[item.ExecutionId].ExecutionVersion)
+            .FirstOrDefault();
 }

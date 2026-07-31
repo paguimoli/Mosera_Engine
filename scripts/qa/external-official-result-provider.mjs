@@ -87,7 +87,16 @@ const runId = randomUUID();
 const providerId = `external-provider:${runId}`;
 const sourceId = `external-source:${runId}`;
 
-addCheck("runtime service source exists", readFileSync("services/game-engine/src/GameEngine.Application/Services/ExternalOfficialResultRuntimeServices.cs", "utf8").includes("ExternalOfficialResultRuntimeService"));
+const officialProviderSource = readFileSync(
+  "services/game-engine/src/GameEngine.Application/Services/OfficialResultsProvider.cs",
+  "utf8",
+);
+addCheck(
+  "canonical Official Results provider source exists",
+  officialProviderSource.includes("public sealed class OfficialResultsProvider") &&
+    officialProviderSource.includes("CanonicalOutcomeProviderAuthority") &&
+    officialProviderSource.includes("CompleteGeneratedExecutionAsync"),
+);
 addCheck("source definitions table exists", existsRegclass("game_engine.external_result_source_definitions"));
 addCheck("schema mappings table exists", existsRegclass("game_engine.external_result_schema_mappings"));
 addCheck("ingestion events table exists", existsRegclass("game_engine.external_result_ingestion_events"));

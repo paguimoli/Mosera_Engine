@@ -149,6 +149,15 @@ public sealed record NumberOutcomeGenerationDefinition(
     int NumbersRequired,
     bool Unique,
     bool WithReplacement,
+    OutcomeNumberOrdering Ordering,
+    BonusNumberOutcomeDefinition? BonusNumbers = null);
+
+public sealed record BonusNumberOutcomeDefinition(
+    IReadOnlyList<int> NumberUniverse,
+    int NumbersRequired,
+    bool Unique,
+    bool WithReplacement,
+    bool MayOverlapPrimary,
     OutcomeNumberOrdering Ordering);
 
 public sealed record GameModule(

@@ -906,6 +906,15 @@
       "reason": "Adds the production-ready but disabled Internal CSPRNG provider, immutable game-definition generation rules, and staged replay-safe canonical provider evidence."
     },
     {
+      "id": "096_add_official_results_provider",
+      "path": "scripts/migrations/local/096_add_official_results_provider.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds the production-ready but disabled Official Results provider, exact draw/game validation, canonical evidence supersession, deterministic replay, and recovery-safe execution versioning."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

@@ -1084,7 +1084,7 @@ public static class GameEngineEndpoints
             await readinessChecks.CheckInternalCsprngProviderAsync(context.RequestAborted);
         var canonicalOutcomePipelineReady = await readinessChecks.CheckCanonicalOutcomePipelineAsync(context.RequestAborted);
         var provablyFairRuntimeReady = await readinessChecks.CheckProvablyFairRuntimeAsync(context.RequestAborted);
-        var externalOfficialResultRuntimeReady = await readinessChecks.CheckExternalOfficialResultRuntimeAsync(context.RequestAborted);
+        var officialResultsProviderReady = await readinessChecks.CheckOfficialResultsProviderAsync(context.RequestAborted);
         var physicalDrawRuntimeReady = await readinessChecks.CheckPhysicalDrawRuntimeAsync(context.RequestAborted);
         var dependencies = new[]
         {
@@ -1101,7 +1101,7 @@ public static class GameEngineEndpoints
             internalCsprngProviderReady,
             canonicalOutcomePipelineReady,
             provablyFairRuntimeReady,
-            externalOfficialResultRuntimeReady,
+            officialResultsProviderReady,
             physicalDrawRuntimeReady
         };
         var ready = dependencies.All(dependency => dependency.Ready);

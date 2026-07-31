@@ -12,6 +12,15 @@ public interface ICanonicalOutcomeProviderRepository
         OutcomeProviderExecutionClaim claim,
         CancellationToken cancellationToken);
 
+    Task<OutcomeProviderClaimResult> ClaimSupersedingExecutionAsync(
+        OutcomeProviderExecutionClaim claim,
+        Guid supersedesExecutionId,
+        CancellationToken cancellationToken);
+
+    Task<int> GetNextAttemptNumberAsync(
+        Guid executionId,
+        CancellationToken cancellationToken);
+
     Task AppendAttemptAsync(
         OutcomeProviderExecutionAttempt attempt,
         CancellationToken cancellationToken);
@@ -38,6 +47,10 @@ public interface ICanonicalOutcomeProviderRepository
         CancellationToken cancellationToken);
 
     Task<CanonicalOutcomeProviderReadiness> CheckReadinessAsync(
+        CancellationToken cancellationToken);
+
+    Task<bool> IsProviderCategoryProductionReadyAsync(
+        CanonicalOutcomeProviderCategory category,
         CancellationToken cancellationToken);
 }
 
@@ -92,6 +105,8 @@ public sealed class CanonicalOutcomeProviderAuthority(ICanonicalOutcomeProviderR
         var claim = new OutcomeProviderExecutionClaim(
             Guid.NewGuid(),
             manifest.ExecutionManifestId,
+            1,
+            null,
             registration.ProviderId,
             registration.ProviderVersion,
             registration.ConfigurationVersion,
@@ -100,6 +115,43 @@ public sealed class CanonicalOutcomeProviderAuthority(ICanonicalOutcomeProviderR
             DateTimeOffset.UtcNow);
         return await repository.ClaimExecutionAsync(claim, cancellationToken);
     }
+
+    public async Task<OutcomeProviderClaimResult> ClaimSupersedingExecutionAsync(
+        DrawExecutionManifest manifest,
+        Guid supersedesExecutionId,
+        string idempotencyKey,
+        string canonicalRequestHash,
+        CancellationToken cancellationToken)
+    {
+        if (supersedesExecutionId == Guid.Empty)
+        {
+            throw new ArgumentException("Superseded provider execution id is required.");
+        }
+
+        Require(idempotencyKey, "Provider execution idempotency key");
+        RequireHash(canonicalRequestHash, "Provider execution request hash");
+        var registration = await ResolveAsync(manifest, cancellationToken);
+        var claim = new OutcomeProviderExecutionClaim(
+            Guid.NewGuid(),
+            manifest.ExecutionManifestId,
+            0,
+            supersedesExecutionId,
+            registration.ProviderId,
+            registration.ProviderVersion,
+            registration.ConfigurationVersion,
+            idempotencyKey,
+            canonicalRequestHash,
+            DateTimeOffset.UtcNow);
+        return await repository.ClaimSupersedingExecutionAsync(
+            claim,
+            supersedesExecutionId,
+            cancellationToken);
+    }
+
+    public Task<int> GetNextAttemptNumberAsync(
+        Guid executionId,
+        CancellationToken cancellationToken) =>
+        repository.GetNextAttemptNumberAsync(executionId, cancellationToken);
 
     public async Task AppendAttemptAsync(
         OutcomeProviderExecutionAttempt attempt,
@@ -246,6 +298,11 @@ public sealed class CanonicalOutcomeProviderAuthority(ICanonicalOutcomeProviderR
         CancellationToken cancellationToken) =>
         repository.CheckReadinessAsync(cancellationToken);
 
+    public Task<bool> IsProviderCategoryProductionReadyAsync(
+        CanonicalOutcomeProviderCategory category,
+        CancellationToken cancellationToken) =>
+        repository.IsProviderCategoryProductionReadyAsync(category, cancellationToken);
+
     private static void Require(string? value, string name)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -278,6 +335,17 @@ public sealed class DisabledCanonicalOutcomeProviderRepository : ICanonicalOutco
         OutcomeProviderExecutionClaim claim,
         CancellationToken cancellationToken) =>
         Task.FromException<OutcomeProviderClaimResult>(new InvalidOperationException(Message));
+
+    public Task<OutcomeProviderClaimResult> ClaimSupersedingExecutionAsync(
+        OutcomeProviderExecutionClaim claim,
+        Guid supersedesExecutionId,
+        CancellationToken cancellationToken) =>
+        Task.FromException<OutcomeProviderClaimResult>(new InvalidOperationException(Message));
+
+    public Task<int> GetNextAttemptNumberAsync(
+        Guid executionId,
+        CancellationToken cancellationToken) =>
+        Task.FromException<int>(new InvalidOperationException(Message));
 
     public Task AppendAttemptAsync(
         OutcomeProviderExecutionAttempt attempt,
@@ -322,4 +390,9 @@ public sealed class DisabledCanonicalOutcomeProviderRepository : ICanonicalOutco
             false,
             true,
             [Message]));
+
+    public Task<bool> IsProviderCategoryProductionReadyAsync(
+        CanonicalOutcomeProviderCategory category,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(false);
 }

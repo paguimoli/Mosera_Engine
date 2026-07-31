@@ -53,6 +53,8 @@ public sealed record CanonicalOutcomeProviderRegistration(
 public sealed record OutcomeProviderExecutionClaim(
     Guid ExecutionId,
     Guid ExecutionManifestId,
+    int ExecutionVersion,
+    Guid? SupersedesExecutionId,
     string ProviderId,
     string ProviderVersion,
     string ConfigurationVersion,

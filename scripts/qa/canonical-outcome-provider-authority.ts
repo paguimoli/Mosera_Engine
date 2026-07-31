@@ -71,20 +71,25 @@ async function main() {
          'mosera-manual-certified')`,
     );
     assert(
-      builtIns.rowCount === 4 &&
+      builtIns.rowCount === 5 &&
         builtIns.rows.every(
           (row) => {
             const internalProductionReady =
               row.provider_id === "mosera-internal-csprng" &&
               row.provider_version === "2.0.0";
+            const officialProductionReady =
+              row.provider_id === "mosera-official-results" &&
+              row.provider_version === "2.0.0";
             return (
-              row.production_eligible === internalProductionReady &&
-              row.production_ready === internalProductionReady &&
+              row.production_eligible ===
+                (internalProductionReady || officialProductionReady) &&
+              row.production_ready ===
+                (internalProductionReady || officialProductionReady) &&
               row.activation_state === "DISABLED"
             );
           },
         ),
-      "Internal CSPRNG is production-ready while every built-in provider remains disabled",
+      "Internal CSPRNG and Official Results are production-ready while every built-in provider remains disabled",
     );
 
     await expectFailure("provider versions are immutable", () =>

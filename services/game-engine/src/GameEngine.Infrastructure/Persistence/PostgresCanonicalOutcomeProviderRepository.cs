@@ -89,6 +89,8 @@ limit 1;
 insert into game_engine.outcome_provider_executions (
   execution_id,
   execution_manifest_id,
+  execution_version,
+  supersedes_execution_id,
   provider_id,
   provider_version,
   configuration_version,
@@ -98,6 +100,8 @@ insert into game_engine.outcome_provider_executions (
 values (
   @execution_id,
   @execution_manifest_id,
+  @execution_version,
+  @supersedes_execution_id,
   @provider_id,
   @provider_version,
   @configuration_version,
@@ -141,6 +145,115 @@ on conflict do nothing;
             stored,
             Created: stored.ExecutionId == claim.ExecutionId,
             Duplicate: stored.ExecutionId != claim.ExecutionId);
+    }
+
+    public async Task<OutcomeProviderClaimResult> ClaimSupersedingExecutionAsync(
+        OutcomeProviderExecutionClaim claim,
+        Guid supersedesExecutionId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using (var lockCommand = connection.CreateCommand())
+        {
+            lockCommand.Transaction = transaction;
+            lockCommand.CommandText =
+                "select pg_advisory_xact_lock(hashtextextended(@scope, 0));";
+            lockCommand.Parameters.AddWithValue(
+                "scope",
+                $"outcome-provider-supersession:{claim.ExecutionManifestId:N}");
+            await lockCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var previous = await FindClaimByExecutionIdAsync(
+            connection,
+            transaction,
+            supersedesExecutionId,
+            cancellationToken)
+            ?? throw new InvalidOperationException(
+                "Official result supersession references an unknown provider execution.");
+        if (previous.ExecutionManifestId != claim.ExecutionManifestId ||
+            previous.ProviderId != claim.ProviderId ||
+            previous.ProviderVersion != claim.ProviderVersion ||
+            previous.ConfigurationVersion != claim.ConfigurationVersion)
+        {
+            throw new InvalidOperationException(
+                "Official result supersession must remain within the exact provider and Execution Manifest.");
+        }
+
+        var version = checked(previous.ExecutionVersion + 1);
+        var versionedClaim = claim with
+        {
+            ExecutionVersion = version,
+            SupersedesExecutionId = supersedesExecutionId
+        };
+        await using (var insert = connection.CreateCommand())
+        {
+            insert.Transaction = transaction;
+            insert.CommandText = """
+insert into game_engine.outcome_provider_executions (
+  execution_id,
+  execution_manifest_id,
+  execution_version,
+  supersedes_execution_id,
+  provider_id,
+  provider_version,
+  configuration_version,
+  idempotency_key,
+  canonical_request_hash,
+  claimed_at)
+values (
+  @execution_id,
+  @execution_manifest_id,
+  @execution_version,
+  @supersedes_execution_id,
+  @provider_id,
+  @provider_version,
+  @configuration_version,
+  @idempotency_key,
+  @canonical_request_hash,
+  @claimed_at)
+on conflict do nothing;
+""";
+            AddClaimParameters(insert, versionedClaim);
+            await insert.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var stored = await FindClaimByIdempotencyAsync(
+            connection,
+            transaction,
+            claim.IdempotencyKey,
+            cancellationToken)
+            ?? throw new InvalidOperationException(
+                "Superseding Outcome Provider execution claim could not be read back.");
+        if (stored.ExecutionManifestId != claim.ExecutionManifestId ||
+            stored.SupersedesExecutionId != supersedesExecutionId ||
+            stored.CanonicalRequestHash != claim.CanonicalRequestHash)
+        {
+            throw new InvalidOperationException(
+                "Conflicting payload for the same superseding Outcome Provider idempotency key.");
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return new OutcomeProviderClaimResult(
+            stored,
+            Created: stored.ExecutionId == claim.ExecutionId,
+            Duplicate: stored.ExecutionId != claim.ExecutionId);
+    }
+
+    public async Task<int> GetNextAttemptNumberAsync(
+        Guid executionId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+select coalesce(max(attempt_number), 0) + 1
+from game_engine.outcome_provider_execution_attempts
+where execution_id = @execution_id;
+""";
+        command.Parameters.AddWithValue("execution_id", executionId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
     }
 
     public async Task AppendAttemptAsync(
@@ -189,6 +302,7 @@ on conflict do nothing;
 {EvidenceSelect}
 where evidence.execution_manifest_id = @execution_manifest_id
   and evidence.status = 'AUTHORITATIVE'
+order by execution.execution_version desc
 limit 1;
 """;
         command.Parameters.AddWithValue("execution_manifest_id", executionManifestId);
@@ -206,6 +320,7 @@ limit 1;
 {EvidenceSelect}
 where evidence.execution_manifest_id = @execution_manifest_id
   and evidence.status = 'GENERATED'
+order by execution.execution_version desc
 limit 1;
 """;
         command.Parameters.AddWithValue("execution_manifest_id", executionManifestId);
@@ -223,6 +338,8 @@ limit 1;
 select
   execution.execution_id,
   execution.execution_manifest_id,
+  execution.execution_version,
+  execution.supersedes_execution_id,
   execution.provider_id,
   execution.provider_version,
   execution.configuration_version,
@@ -364,6 +481,30 @@ select
             ProviderEvidencePersistenceReady: evidencePersistenceReady,
             ProductionActivationDisabled: !providerEnabled,
             Blockers: blockers);
+    }
+
+    public async Task<bool> IsProviderCategoryProductionReadyAsync(
+        CanonicalOutcomeProviderCategory category,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+select exists (
+  select 1
+  from game_engine.outcome_provider_configuration_versions configuration
+  join game_engine.outcome_provider_definitions provider
+    on provider.provider_id = configuration.provider_id
+   and provider.provider_version = configuration.provider_version
+  where configuration.canonical_provider_category = @category
+    and configuration.production_ready
+    and provider.production_eligible
+    and provider.lifecycle_state = 'Active'
+    and configuration.failure_mode = 'FAIL_CLOSED'
+);
+""";
+        command.Parameters.AddWithValue("category", ToDatabaseCategory(category));
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
     }
 
     private static async Task InsertAttemptAsync(
@@ -525,6 +666,8 @@ values (
 select
   execution_id,
   execution_manifest_id,
+  execution_version,
+  supersedes_execution_id,
   provider_id,
   provider_version,
   configuration_version,
@@ -534,10 +677,44 @@ select
 from game_engine.outcome_provider_executions
 where execution_manifest_id = @execution_manifest_id
    or idempotency_key = @idempotency_key
-order by execution_manifest_id = @execution_manifest_id desc
+order by idempotency_key = @idempotency_key desc, execution_version desc
 limit 1;
 """;
         command.Parameters.AddWithValue("execution_manifest_id", executionManifestId);
+        command.Parameters.AddWithValue("idempotency_key", idempotencyKey);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? MapClaim(reader) : null;
+    }
+
+    private static async Task<OutcomeProviderExecutionClaim?> FindClaimByExecutionIdAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid executionId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"""
+{ClaimSelect}
+where execution_id = @execution_id;
+""";
+        command.Parameters.AddWithValue("execution_id", executionId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? MapClaim(reader) : null;
+    }
+
+    private static async Task<OutcomeProviderExecutionClaim?> FindClaimByIdempotencyAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"""
+{ClaimSelect}
+where idempotency_key = @idempotency_key;
+""";
         command.Parameters.AddWithValue("idempotency_key", idempotencyKey);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? MapClaim(reader) : null;
@@ -551,6 +728,12 @@ limit 1;
         command.Parameters.AddWithValue(
             "execution_manifest_id",
             claim.ExecutionManifestId);
+        command.Parameters.AddWithValue("execution_version", claim.ExecutionVersion);
+        command.Parameters.AddWithValue(
+            "supersedes_execution_id",
+            claim.SupersedesExecutionId is null
+                ? DBNull.Value
+                : claim.SupersedesExecutionId.Value);
         command.Parameters.AddWithValue("provider_id", claim.ProviderId);
         command.Parameters.AddWithValue("provider_version", claim.ProviderVersion);
         command.Parameters.AddWithValue(
@@ -567,12 +750,14 @@ limit 1;
         new(
             reader.GetGuid(0),
             reader.GetGuid(1),
-            reader.GetString(2),
-            reader.GetString(3),
+            reader.GetInt32(2),
+            reader.IsDBNull(3) ? null : reader.GetGuid(3),
             reader.GetString(4),
             reader.GetString(5),
             reader.GetString(6),
-            reader.GetFieldValue<DateTimeOffset>(7));
+            reader.GetString(7),
+            reader.GetString(8),
+            reader.GetFieldValue<DateTimeOffset>(9));
 
     private static OutcomeProviderExecutionEvidence MapEvidence(NpgsqlDataReader reader) =>
         new(
@@ -603,6 +788,15 @@ limit 1;
             "MANUAL_CERTIFIED" => CanonicalOutcomeProviderCategory.ManualCertified,
             _ => throw new InvalidOperationException(
                 $"Unsupported canonical Outcome Provider category {value}.")
+        };
+
+    private static string ToDatabaseCategory(CanonicalOutcomeProviderCategory category) =>
+        category switch
+        {
+            CanonicalOutcomeProviderCategory.InternalCsprng => "INTERNAL_CSPRNG",
+            CanonicalOutcomeProviderCategory.OfficialResults => "OFFICIAL_RESULTS",
+            CanonicalOutcomeProviderCategory.ManualCertified => "MANUAL_CERTIFIED",
+            _ => throw new ArgumentOutOfRangeException(nameof(category), category, null)
         };
 
     private static OutcomeProviderActivationState ParseActivationState(string value) =>
@@ -683,5 +877,22 @@ select
   evidence.started_at,
   evidence.completed_at
 from game_engine.outcome_provider_execution_evidence evidence
+join game_engine.outcome_provider_executions execution
+  on execution.execution_id = evidence.execution_id
+""";
+
+    private const string ClaimSelect = """
+select
+  execution_id,
+  execution_manifest_id,
+  execution_version,
+  supersedes_execution_id,
+  provider_id,
+  provider_version,
+  configuration_version,
+  idempotency_key,
+  canonical_request_hash,
+  claimed_at
+from game_engine.outcome_provider_executions
 """;
 }
