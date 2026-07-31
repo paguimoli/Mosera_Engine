@@ -50,7 +50,7 @@ async function main() {
     );
 
     const builtIns = await pool.query(
-      `select provider.provider_id, provider.production_eligible,
+      `select provider.provider_id, provider.provider_version, provider.production_eligible,
               configuration.production_ready, activation.activation_state
        from game_engine.outcome_provider_definitions provider
        join game_engine.outcome_provider_configuration_versions configuration
@@ -71,14 +71,20 @@ async function main() {
          'mosera-manual-certified')`,
     );
     assert(
-      builtIns.rowCount === 3 &&
+      builtIns.rowCount === 4 &&
         builtIns.rows.every(
-          (row) =>
-            row.production_eligible === false &&
-            row.production_ready === false &&
-            row.activation_state === "DISABLED",
+          (row) => {
+            const internalProductionReady =
+              row.provider_id === "mosera-internal-csprng" &&
+              row.provider_version === "2.0.0";
+            return (
+              row.production_eligible === internalProductionReady &&
+              row.production_ready === internalProductionReady &&
+              row.activation_state === "DISABLED"
+            );
+          },
         ),
-      "registered built-in providers remain disabled and not production-ready",
+      "Internal CSPRNG is production-ready while every built-in provider remains disabled",
     );
 
     await expectFailure("provider versions are immutable", () =>
@@ -323,6 +329,13 @@ async function main() {
     const outcomeCertificateHash = hash(`certificate:${suffix}`);
     const resultHash = hash(`result:${suffix}`);
     const providerEvidenceHash = hash(`evidence:${suffix}`);
+    const authoritativeEvidenceHash = hash(`authoritative-evidence:${suffix}`);
+    const providerEvidencePayload = JSON.stringify({
+      requestIdentifier: randomUUID(),
+      generatedBytesHash: hash(`bytes:${suffix}`),
+      generatedNumbers: [1, 2, 3, 4, 5],
+      healthEvidence: { selfTestPassed: true },
+    });
     const outcomeId = randomUUID();
     const strategyId = `bf-4.3-strategy:${suffix}`;
     const rngProviderId = `bf-4.3-rng:${suffix}`;
@@ -405,9 +418,10 @@ async function main() {
          evidence_id, execution_id, execution_manifest_id, draw_id, provider_id,
          provider_version, configuration_version, request_hash, result_hash,
          evidence_hash, outcome_certificate_id, outcome_certificate_hash,
-         execution_attempt, idempotency_key, status, started_at, completed_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,1,$13,
-         'AUTHORITATIVE',now(),now())`,
+         execution_attempt, idempotency_key, status, provider_evidence_payload,
+         started_at, completed_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,null,null,1,$11,
+         'GENERATED',$12::jsonb,now(),now())`,
       [
         randomUUID(),
         executionId,
@@ -419,21 +433,46 @@ async function main() {
         requestHash,
         resultHash,
         providerEvidenceHash,
+        idempotencyKey,
+        providerEvidencePayload,
+      ],
+    );
+    await pool.query(
+      `insert into game_engine.outcome_provider_execution_evidence (
+         evidence_id, execution_id, execution_manifest_id, draw_id, provider_id,
+         provider_version, configuration_version, request_hash, result_hash,
+         evidence_hash, outcome_certificate_id, outcome_certificate_hash,
+         execution_attempt, idempotency_key, status, provider_evidence_payload,
+         started_at, completed_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,1,$13,
+         'AUTHORITATIVE',$14::jsonb,now(),now())`,
+      [
+        randomUUID(),
+        executionId,
+        manifestId,
+        drawId,
+        providerId,
+        providerVersion,
+        configurationVersion,
+        requestHash,
+        resultHash,
+        authoritativeEvidenceHash,
         outcomeCertificateId,
         outcomeCertificateHash,
         idempotencyKey,
+        providerEvidencePayload,
       ],
     );
     const binding = await pool.query(
       `select result_hash, evidence_hash, outcome_certificate_hash
        from game_engine.outcome_provider_execution_evidence
-       where execution_manifest_id = $1`,
+       where execution_manifest_id = $1 and status = 'AUTHORITATIVE'`,
       [manifestId],
     );
     assert(
       binding.rowCount === 1 &&
         binding.rows[0].result_hash === resultHash &&
-        binding.rows[0].evidence_hash === providerEvidenceHash &&
+        binding.rows[0].evidence_hash === authoritativeEvidenceHash &&
         binding.rows[0].outcome_certificate_hash === outcomeCertificateHash,
       "provider result, evidence, and Outcome Certificate hashes are bound durably",
     );
@@ -443,9 +482,10 @@ async function main() {
            evidence_id, execution_id, execution_manifest_id, draw_id, provider_id,
            provider_version, configuration_version, request_hash, result_hash,
            evidence_hash, outcome_certificate_id, outcome_certificate_hash,
-           execution_attempt, idempotency_key, status, started_at, completed_at)
+           execution_attempt, idempotency_key, status, provider_evidence_payload,
+           started_at, completed_at)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,2,$13,
-           'AUTHORITATIVE',now(),now())`,
+           'AUTHORITATIVE',$14::jsonb,now(),now())`,
         [
           randomUUID(),
           executionId,
@@ -460,6 +500,7 @@ async function main() {
           outcomeCertificateId,
           outcomeCertificateHash,
           idempotencyKey,
+          providerEvidencePayload,
         ],
       ),
     );

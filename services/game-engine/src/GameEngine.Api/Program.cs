@@ -41,6 +41,7 @@ builder.Services.AddSingleton<PhysicalDrawResultRuntimeService>();
 builder.Services.AddSingleton<IOutcomeRuntimeCrashInjector, EnvironmentOutcomeRuntimeCrashInjector>();
 builder.Services.AddSingleton<OutcomeRuntimeRecoveryService>();
 builder.Services.AddSingleton<CanonicalOutcomeProviderAuthority>();
+builder.Services.AddSingleton<InternalCsprngOutcomeProvider>();
 builder.Services.AddSingleton<IMathEvaluator, KenoMathEvaluator>();
 builder.Services.AddSingleton<MathEvaluatorRegistry>();
 builder.Services.AddSingleton<MathCertificateEvaluationService>();
@@ -65,7 +66,6 @@ if (string.IsNullOrWhiteSpace(databaseUrl))
     builder.Services.AddSingleton<IOutcomeRuntimeRequestRepository, InMemoryOutcomeRuntimeRequestRepository>();
     builder.Services.AddSingleton<IOutcomeRuntimeLockManager, InMemoryOutcomeRuntimeLockManager>();
     builder.Services.AddSingleton<IOutcomeRuntimeProvenanceRepository, InMemoryOutcomeRuntimeProvenanceRepository>();
-    builder.Services.AddSingleton<ICertifiedCsprngEvidenceRepository, InMemoryCertifiedCsprngEvidenceRepository>();
     builder.Services.AddSingleton<IProvablyFairSeedCustodyRepository, InMemoryProvablyFairSeedCustodyRepository>();
     builder.Services.AddSingleton<IProvablyFairNonceAllocator, InMemoryProvablyFairNonceAllocator>();
     builder.Services.AddSingleton<IProvablyFairRuntimeEvidenceRepository, InMemoryProvablyFairRuntimeEvidenceRepository>();
@@ -96,7 +96,6 @@ else
     builder.Services.AddSingleton<IOutcomeRuntimeRequestRepository>(_ => new PostgresOutcomeRuntimeRequestRepository(databaseUrl));
     builder.Services.AddSingleton<IOutcomeRuntimeLockManager>(_ => new PostgresOutcomeRuntimeLockManager(databaseUrl));
     builder.Services.AddSingleton<IOutcomeRuntimeProvenanceRepository>(_ => new PostgresOutcomeRuntimeProvenanceRepository(databaseUrl));
-    builder.Services.AddSingleton<ICertifiedCsprngEvidenceRepository>(_ => new PostgresCertifiedCsprngEvidenceRepository(databaseUrl));
     builder.Services.AddSingleton<IProvablyFairSeedCustodyRepository, InMemoryProvablyFairSeedCustodyRepository>();
     builder.Services.AddSingleton<IProvablyFairNonceAllocator>(_ => new PostgresProvablyFairNonceAllocator(databaseUrl));
     builder.Services.AddSingleton<IProvablyFairRuntimeEvidenceRepository>(_ => new PostgresProvablyFairRuntimeEvidenceRepository(databaseUrl));

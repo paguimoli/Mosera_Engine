@@ -29,6 +29,12 @@ public enum OutcomeProviderFailureClassification
     NonRetryable
 }
 
+public enum OutcomeProviderEvidenceStage
+{
+    Generated,
+    Authoritative
+}
+
 public sealed record CanonicalOutcomeProviderRegistration(
     string ProviderId,
     string ProviderVersion,
@@ -78,10 +84,12 @@ public sealed record OutcomeProviderExecutionEvidence(
     string RequestHash,
     string ResultHash,
     string EvidenceHash,
-    Guid OutcomeCertificateId,
-    string OutcomeCertificateHash,
+    Guid? OutcomeCertificateId,
+    string? OutcomeCertificateHash,
     int ExecutionAttempt,
     string IdempotencyKey,
+    OutcomeProviderEvidenceStage Stage,
+    string ProviderEvidenceJson,
     DateTimeOffset StartedAt,
     DateTimeOffset CompletedAt);
 

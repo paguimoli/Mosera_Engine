@@ -266,6 +266,225 @@ finally
     CryptographicOperations.ZeroMemory(samplerPersonalization);
 }
 
+var canonicalCsprngRepository = new CanonicalCsprngTestRepository();
+var canonicalGameDefinitions = new InMemoryGameDefinitionVersionRepository();
+var canonicalDefinitionId = Guid.NewGuid();
+var canonicalDefinitionVersionId = Guid.NewGuid();
+await canonicalGameDefinitions.UpsertAsync(
+    new GameDefinitionVersion(
+        canonicalDefinitionVersionId,
+        canonicalDefinitionId,
+        1,
+        "sha256:canonical-definition",
+        "paytable:1",
+        "evaluator:1",
+        "internal-csprng:2.0.0",
+        DateTimeOffset.UnixEpoch,
+        null,
+        new NumberOutcomeGenerationDefinition(
+            Enumerable.Range(1, 80).ToArray(),
+            20,
+            Unique: true,
+            WithReplacement: false,
+            OutcomeNumberOrdering.Ascending)),
+    CancellationToken.None);
+var canonicalManifest = new DrawExecutionManifest(
+    Guid.NewGuid(),
+    Guid.NewGuid(),
+    Guid.NewGuid(),
+    canonicalDefinitionVersionId,
+    Guid.NewGuid(),
+    "keno",
+    "1.0.0",
+    "mosera-internal-csprng",
+    "2.0.0",
+    "1",
+    "evaluator:1",
+    "paytable:1",
+    DateTimeOffset.UtcNow,
+    "sha256:schedule",
+    "sha256:draw-identity",
+    "sha256:manifest",
+    DateTimeOffset.UtcNow);
+var canonicalProvider = new InternalCsprngOutcomeProvider(
+    new CanonicalOutcomeProviderAuthority(canonicalCsprngRepository),
+    canonicalGameDefinitions,
+    new FixedEntropyProvider(Enumerable.Range(1, 64).Select(value => (byte)value).ToArray()),
+    drbgRuntime,
+    sampler);
+var canonicalRequest = new InternalCsprngExecutionRequest(
+    Guid.NewGuid(),
+    $"internal-csprng:{Guid.NewGuid():N}",
+    "application-tests");
+var canonicalGeneration = await canonicalProvider.GenerateAsync(
+    canonicalManifest,
+    canonicalRequest,
+    CancellationToken.None);
+if (canonicalGeneration.Evidence.GeneratedNumbers.Count != 20 ||
+    canonicalGeneration.Evidence.GeneratedNumbers.Distinct().Count() != 20 ||
+    canonicalGeneration.Evidence.GeneratedNumbers.Any(number => number is < 1 or > 80) ||
+    !canonicalGeneration.Evidence.GeneratedNumbers.SequenceEqual(
+        canonicalGeneration.Evidence.GeneratedNumbers.Order()) ||
+    canonicalGeneration.Evidence.GeneratedByteCount <= 0 ||
+    !canonicalGeneration.Evidence.GeneratedBytesHash.StartsWith("sha256:", StringComparison.Ordinal) ||
+    !canonicalGeneration.Evidence.Health.States.Contains(
+        InternalCsprngHealthState.ExecutionSucceeded))
+{
+    throw new InvalidOperationException(
+        "Canonical Internal CSPRNG generation must obey the immutable Game Definition and persist health evidence.");
+}
+
+var canonicalDuplicate = await canonicalProvider.GenerateAsync(
+    canonicalManifest,
+    canonicalRequest,
+    CancellationToken.None);
+if (!canonicalDuplicate.Duplicate ||
+    canonicalDuplicate.CanonicalOutcomeHash != canonicalGeneration.CanonicalOutcomeHash ||
+    canonicalCsprngRepository.GeneratedEvidence.Count != 1)
+{
+    throw new InvalidOperationException(
+        "Duplicate Internal CSPRNG execution must return persisted evidence without generating again.");
+}
+
+var canonicalConflictFailed = false;
+try
+{
+    await canonicalProvider.GenerateAsync(
+        canonicalManifest,
+        canonicalRequest with
+        {
+            RequestId = Guid.NewGuid(),
+            CorrelationId = "conflicting-application-test"
+        },
+        CancellationToken.None);
+}
+catch (InvalidOperationException)
+{
+    canonicalConflictFailed = true;
+}
+
+if (!canonicalConflictFailed)
+{
+    throw new InvalidOperationException(
+        "Conflicting Internal CSPRNG idempotency payload must fail closed.");
+}
+
+var canonicalReplay = await canonicalProvider.VerifyReplayAsync(
+    canonicalManifest,
+    CancellationToken.None);
+if (!canonicalReplay.Valid)
+{
+    throw new InvalidOperationException(
+        "Internal CSPRNG replay must validate the persisted result and evidence hashes.");
+}
+
+var canonicalCertificateBinding = await canonicalProvider.BindOutcomeCertificateAsync(
+    canonicalManifest,
+    Guid.NewGuid(),
+    canonicalGeneration.CanonicalOutcomeHash,
+    CancellationToken.None);
+if (canonicalCertificateBinding.Stage != OutcomeProviderEvidenceStage.Authoritative ||
+    canonicalCertificateBinding.OutcomeCertificateId is null ||
+    canonicalCsprngRepository.AuthoritativeEvidence.Count != 1)
+{
+    throw new InvalidOperationException(
+        "Internal CSPRNG generated evidence must bind immutably to one Outcome Certificate.");
+}
+
+var canonicalReadiness = await canonicalProvider.CheckReadinessAsync(CancellationToken.None);
+if (!canonicalReadiness.ProductionReady || canonicalReadiness.ProductionActive)
+{
+    throw new InvalidOperationException(
+        "Internal CSPRNG must be production-ready without becoming production-active.");
+}
+
+var replacementDefinitionVersionId = Guid.NewGuid();
+await canonicalGameDefinitions.UpsertAsync(
+    new GameDefinitionVersion(
+        replacementDefinitionVersionId,
+        canonicalDefinitionId,
+        2,
+        "sha256:replacement-definition",
+        "paytable:2",
+        "evaluator:2",
+        "internal-csprng:2.0.0",
+        DateTimeOffset.UnixEpoch,
+        null,
+        new NumberOutcomeGenerationDefinition(
+            [3, 7, 11, 15],
+            6,
+            Unique: false,
+            WithReplacement: true,
+            OutcomeNumberOrdering.DrawOrder)),
+    CancellationToken.None);
+var replacementManifest = canonicalManifest with
+{
+    ExecutionManifestId = Guid.NewGuid(),
+    DrawId = Guid.NewGuid(),
+    GameDefinitionVersionId = replacementDefinitionVersionId,
+    CanonicalManifestHash = "sha256:replacement-manifest"
+};
+var replacementGeneration = await canonicalProvider.GenerateAsync(
+    replacementManifest,
+    canonicalRequest with
+    {
+        RequestId = Guid.NewGuid(),
+        IdempotencyKey = $"internal-csprng:{Guid.NewGuid():N}"
+    },
+    CancellationToken.None);
+if (replacementGeneration.Evidence.GeneratedNumbers.Count != 6 ||
+    replacementGeneration.Evidence.GeneratedNumbers.Any(number => number is not (3 or 7 or 11 or 15)))
+{
+    throw new InvalidOperationException(
+        "Internal CSPRNG generation must support a second Game Definition without hardcoded universe assumptions.");
+}
+
+var statisticalEntropy = Enumerable.Range(1, 48).Select(value => (byte)value).ToArray();
+var statisticalNonce = Enumerable.Range(65, 16).Select(value => (byte)value).ToArray();
+var statisticalPersonalization = Encoding.UTF8.GetBytes("bf-4.4-frequency-validation");
+HmacDrbgSession? statisticalSession = null;
+var statisticalCounts = new long[10];
+try
+{
+    statisticalSession = drbgRuntime.Instantiate(
+        CertifiedCsprngHashAlgorithm.Sha256,
+        statisticalEntropy,
+        statisticalNonce,
+        statisticalPersonalization,
+        256);
+    for (var sample = 0; sample < 100_000; sample++)
+    {
+        statisticalCounts[sampler.NextInt32(statisticalSession, 0, 9)]++;
+    }
+
+    var maximumDeviation = statisticalCounts
+        .Select(count => Math.Abs(count / 100_000m - 0.1m))
+        .Max();
+    if (maximumDeviation > 0.01m)
+    {
+        throw new InvalidOperationException(
+            $"Internal CSPRNG frequency deviation {maximumDeviation} exceeded 0.01.");
+    }
+}
+finally
+{
+    if (statisticalSession is not null)
+    {
+        drbgRuntime.Destroy(statisticalSession);
+    }
+
+    CryptographicOperations.ZeroMemory(statisticalEntropy);
+    CryptographicOperations.ZeroMemory(statisticalNonce);
+    CryptographicOperations.ZeroMemory(statisticalPersonalization);
+}
+
+if (args.Contains("internal-csprng-provider", StringComparer.Ordinal))
+{
+    Console.WriteLine(
+        $"Internal CSPRNG provider tests passed; samples=100000; counts={string.Join(",", statisticalCounts)}.");
+    return;
+}
+
 var missingProviderFailed = false;
 try
 {
@@ -370,25 +589,37 @@ var runtimeRecoveryService = new OutcomeRuntimeRecoveryService(
     runtimeProvenanceRepository,
     new EnvironmentOutcomeRuntimeCrashInjector());
 await runtimeRecoveryService.RecordBootAsync(CancellationToken.None);
+var legacySimulationProvider = RuntimeProvider(
+    "outcome-provider:runtime:simulation-shell",
+    "1.0.0",
+    OutcomeProviderType.SimulationTest);
+var legacySimulationRequest = RuntimeRequest(
+    "runtime-idempotency-shell",
+    "draw:runtime-shell",
+    legacySimulationProvider.ProviderId,
+    legacySimulationProvider.ProviderVersion,
+    OutcomeProviderType.SimulationTest);
 var runtimeOrchestrator = new OutcomeProviderOrchestrationService(
     runtimeResolver,
     runtimeRepository,
     runtimeLockManager,
     [
-        new CertifiedCsprngOutcomeProviderRuntime(),
         new ProvablyFairOutcomeProviderRuntime(),
         new ExternalOfficialResultOutcomeProviderRuntime(),
         new PhysicalDrawResultOutcomeProviderRuntime(),
         new SimulationTestOutcomeProviderRuntime()
     ],
     runtimeRecoveryService);
-var runtimeResult = await runtimeOrchestrator.ExecuteAsync(runtimeRequest, [runtimeProvider], CancellationToken.None);
-if (runtimeResult.Status != OutcomeRuntimeStatus.Accepted ||
-    runtimeResult.FailureCode != OutcomeRuntimeFailureCode.None ||
-    runtimeResult.EvidenceReference is null ||
+var runtimeResult = await runtimeOrchestrator.ExecuteAsync(
+    legacySimulationRequest,
+    [legacySimulationProvider],
+    CancellationToken.None);
+if (runtimeResult.Status != OutcomeRuntimeStatus.GenerationNotImplemented ||
+    runtimeResult.FailureCode != OutcomeRuntimeFailureCode.GenerationNotImplemented ||
     runtimeResult.ResultReference is not null)
 {
-    throw new InvalidOperationException("Certified CSPRNG dry-run runtime must persist evidence without creating production outcome references.");
+    throw new InvalidOperationException(
+        "Legacy runtime shell must remain isolated from canonical production outcome references.");
 }
 
 if (runtimeRepository.Requests.Count != 1 || runtimeRepository.Attempts.Count != 1)
@@ -402,7 +633,10 @@ if (runtimeProvenanceRepository.Boots.Count != 1 ||
     throw new InvalidOperationException("Outcome runtime recovery service must persist immutable boot evidence.");
 }
 
-var duplicateRuntimeResult = await runtimeOrchestrator.ExecuteAsync(runtimeRequest, [runtimeProvider], CancellationToken.None);
+var duplicateRuntimeResult = await runtimeOrchestrator.ExecuteAsync(
+    legacySimulationRequest,
+    [legacySimulationProvider],
+    CancellationToken.None);
 if (duplicateRuntimeResult.Status != OutcomeRuntimeStatus.DuplicateReturned ||
     duplicateRuntimeResult.RuntimeRequestId != runtimeResult.RuntimeRequestId)
 {
@@ -418,12 +652,12 @@ var conflictFailed = false;
 try
 {
     await runtimeOrchestrator.ExecuteAsync(
-        runtimeRequest with
+        legacySimulationRequest with
         {
             RuntimeRequestId = Guid.NewGuid(),
             CanonicalRequestHash = "sha256:conflicting-runtime-request"
         },
-        [runtimeProvider],
+        [legacySimulationProvider],
         CancellationToken.None);
 }
 catch (InvalidOperationException)
@@ -441,17 +675,20 @@ var lockedLockManager = new InMemoryOutcomeRuntimeLockManager();
 var lockedRequest = RuntimeRequest(
     "runtime-idempotency-lock",
     "draw:runtime-lock",
-    runtimeProvider.ProviderId,
-    runtimeProvider.ProviderVersion,
-    OutcomeProviderType.CertifiedCsprng,
+    legacySimulationProvider.ProviderId,
+    legacySimulationProvider.ProviderVersion,
+    OutcomeProviderType.SimulationTest,
     canonicalHash: "sha256:runtime-lock");
 lockedLockManager.Hold(OutcomeProviderOrchestrationService.BuildLockScope(lockedRequest));
 var lockedOrchestrator = new OutcomeProviderOrchestrationService(
     runtimeResolver,
     lockedRepository,
     lockedLockManager,
-    [new CertifiedCsprngOutcomeProviderRuntime()]);
-var lockedResult = await lockedOrchestrator.ExecuteAsync(lockedRequest, [runtimeProvider], CancellationToken.None);
+    [new SimulationTestOutcomeProviderRuntime()]);
+var lockedResult = await lockedOrchestrator.ExecuteAsync(
+    lockedRequest,
+    [legacySimulationProvider],
+    CancellationToken.None);
 if (lockedResult.Status != OutcomeRuntimeStatus.FailedClosed ||
     lockedResult.FailureCode != OutcomeRuntimeFailureCode.LockUnavailable)
 {
@@ -3854,4 +4091,140 @@ sealed class ConfiguredEntropyProvider(OsEntropyPlatform platform) : IOsEntropyP
     {
         return new OsEntropyReadiness(Platform, Supported: true, Ready: true, []);
     }
+}
+
+sealed class CanonicalCsprngTestRepository : ICanonicalOutcomeProviderRepository
+{
+    private readonly Dictionary<Guid, OutcomeProviderExecutionClaim> claims = [];
+    private readonly Dictionary<string, Guid> executionByIdempotencyKey =
+        new(StringComparer.Ordinal);
+    private readonly List<OutcomeProviderExecutionEvidence> evidence = [];
+
+    public IReadOnlyCollection<OutcomeProviderExecutionEvidence> GeneratedEvidence =>
+        evidence.Where(item => item.Stage == OutcomeProviderEvidenceStage.Generated).ToArray();
+
+    public IReadOnlyCollection<OutcomeProviderExecutionEvidence> AuthoritativeEvidence =>
+        evidence.Where(item => item.Stage == OutcomeProviderEvidenceStage.Authoritative).ToArray();
+
+    public Task<CanonicalOutcomeProviderRegistration?> ResolveRegistrationAsync(
+        DrawExecutionManifest manifest,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult<CanonicalOutcomeProviderRegistration?>(new(
+            manifest.OutcomeProviderId,
+            manifest.OutcomeProviderVersion,
+            manifest.ProviderConfigurationVersion,
+            CanonicalOutcomeProviderCategory.InternalCsprng,
+            "sha256:test-configuration",
+            ["UniqueNumberSet", "OrderedNumberSequence"],
+            new Dictionary<string, object?>(),
+            ["test-ready"],
+            OutcomeProviderActivationState.Enabled,
+            ProductionEligible: true,
+            ProductionReady: true,
+            FailClosed: true,
+            DateTimeOffset.UnixEpoch));
+    }
+
+    public Task<OutcomeProviderClaimResult> ClaimExecutionAsync(
+        OutcomeProviderExecutionClaim claim,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (claims.TryGetValue(claim.ExecutionManifestId, out var existing) ||
+            executionByIdempotencyKey.TryGetValue(claim.IdempotencyKey, out var manifestId) &&
+            claims.TryGetValue(manifestId, out existing))
+        {
+            if (existing.CanonicalRequestHash != claim.CanonicalRequestHash ||
+                existing.ExecutionManifestId != claim.ExecutionManifestId)
+            {
+                throw new InvalidOperationException(
+                    "Conflicting payload for canonical CSPRNG idempotency key.");
+            }
+
+            return Task.FromResult(new OutcomeProviderClaimResult(
+                existing,
+                Created: false,
+                Duplicate: true));
+        }
+
+        claims.Add(claim.ExecutionManifestId, claim);
+        executionByIdempotencyKey.Add(claim.IdempotencyKey, claim.ExecutionManifestId);
+        return Task.FromResult(new OutcomeProviderClaimResult(
+            claim,
+            Created: true,
+            Duplicate: false));
+    }
+
+    public Task AppendAttemptAsync(
+        OutcomeProviderExecutionAttempt attempt,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.CompletedTask;
+    }
+
+    public Task AppendEvidenceAsync(
+        OutcomeProviderExecutionEvidence item,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (evidence.Any(existing =>
+            existing.ExecutionId == item.ExecutionId &&
+            existing.Stage == item.Stage))
+        {
+            throw new InvalidOperationException("Duplicate CSPRNG evidence stage.");
+        }
+
+        evidence.Add(item);
+        return Task.CompletedTask;
+    }
+
+    public async Task CompleteExecutionAsync(
+        OutcomeProviderExecutionAttempt attempt,
+        OutcomeProviderExecutionEvidence item,
+        CancellationToken cancellationToken)
+    {
+        await AppendAttemptAsync(attempt, cancellationToken);
+        await AppendEvidenceAsync(item, cancellationToken);
+    }
+
+    public Task<OutcomeProviderExecutionEvidence?> FindGeneratedEvidenceAsync(
+        Guid executionManifestId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(evidence.SingleOrDefault(item =>
+            item.ExecutionManifestId == executionManifestId &&
+            item.Stage == OutcomeProviderEvidenceStage.Generated));
+
+    public Task<OutcomeProviderExecutionEvidence?> FindAuthoritativeEvidenceAsync(
+        Guid executionManifestId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(evidence.SingleOrDefault(item =>
+            item.ExecutionManifestId == executionManifestId &&
+            item.Stage == OutcomeProviderEvidenceStage.Authoritative));
+
+    public Task<IReadOnlyCollection<OutcomeProviderExecutionClaim>> FindIncompleteExecutionsAsync(
+        int limit,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyCollection<OutcomeProviderExecutionClaim>>(
+            claims.Values
+                .Where(claim => evidence.All(item =>
+                    item.ExecutionId != claim.ExecutionId ||
+                    item.Stage != OutcomeProviderEvidenceStage.Generated))
+                .Take(limit)
+                .ToArray());
+
+    public Task<CanonicalOutcomeProviderReadiness> CheckReadinessAsync(
+        CancellationToken cancellationToken) =>
+        Task.FromResult(new CanonicalOutcomeProviderReadiness(
+            true,
+            true,
+            true,
+            true,
+            false,
+            true,
+            true,
+            true,
+            []));
 }

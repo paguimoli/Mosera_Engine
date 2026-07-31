@@ -16,6 +16,7 @@ public sealed class InfrastructureReadinessChecks
     private readonly MathEvaluationBatchService mathEvaluationBatchService;
     private readonly SettlementInputAdapter settlementInputAdapter;
     private readonly CanonicalOutcomeProviderAuthority canonicalOutcomeProviderAuthority;
+    private readonly InternalCsprngOutcomeProvider internalCsprngProvider;
     private readonly CanonicalDrawOrchestrator canonicalDrawOrchestrator;
     private readonly ProvablyFairRuntimeService provablyFairRuntime;
     private readonly ExternalOfficialResultRuntimeService externalOfficialResultRuntime;
@@ -31,6 +32,7 @@ public sealed class InfrastructureReadinessChecks
         MathEvaluationBatchService mathEvaluationBatchService,
         SettlementInputAdapter settlementInputAdapter,
         CanonicalOutcomeProviderAuthority canonicalOutcomeProviderAuthority,
+        InternalCsprngOutcomeProvider internalCsprngProvider,
         CanonicalDrawOrchestrator canonicalDrawOrchestrator,
         ProvablyFairRuntimeService provablyFairRuntime,
         ExternalOfficialResultRuntimeService externalOfficialResultRuntime,
@@ -45,6 +47,7 @@ public sealed class InfrastructureReadinessChecks
         this.mathEvaluationBatchService = mathEvaluationBatchService;
         this.settlementInputAdapter = settlementInputAdapter;
         this.canonicalOutcomeProviderAuthority = canonicalOutcomeProviderAuthority;
+        this.internalCsprngProvider = internalCsprngProvider;
         this.canonicalDrawOrchestrator = canonicalDrawOrchestrator;
         this.provablyFairRuntime = provablyFairRuntime;
         this.externalOfficialResultRuntime = externalOfficialResultRuntime;
@@ -252,6 +255,28 @@ public sealed class InfrastructureReadinessChecks
             ? new DependencyHealthResult("canonical-outcome-provider-authority", true)
             : new DependencyHealthResult(
                 "canonical-outcome-provider-authority",
+                false,
+                string.Join("; ", readiness.Blockers));
+    }
+
+    public async Task<DependencyHealthResult> CheckInternalCsprngProviderAsync(
+        CancellationToken cancellationToken)
+    {
+        var readiness = await internalCsprngProvider.CheckReadinessAsync(cancellationToken);
+        var ready = readiness.ProviderImplementationReady &&
+            readiness.OperatingSystemEntropyReady &&
+            readiness.StartupSelfTestPassed &&
+            readiness.KnownAnswerTestsPassed &&
+            readiness.ContinuousTestReady &&
+            readiness.GameDefinitionDrivenGenerationReady &&
+            readiness.CanonicalEvidencePersistenceReady &&
+            readiness.ProductionReady &&
+            !readiness.ProductionActive;
+
+        return ready
+            ? new DependencyHealthResult("internal-csprng-provider", true)
+            : new DependencyHealthResult(
+                "internal-csprng-provider",
                 false,
                 string.Join("; ", readiness.Blockers));
     }

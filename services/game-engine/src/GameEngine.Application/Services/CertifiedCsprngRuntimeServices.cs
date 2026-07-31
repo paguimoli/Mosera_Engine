@@ -269,6 +269,7 @@ public sealed class HmacDrbgSession : IDisposable
         Value = value;
         SecurityStrengthBits = securityStrengthBits;
         ReseedCounter = 1;
+        GeneratedOutputHash = new byte[SHA256.HashSizeInBytes];
     }
 
     public CertifiedCsprngHashAlgorithm HashAlgorithm { get; }
@@ -279,11 +280,43 @@ public sealed class HmacDrbgSession : IDisposable
 
     public bool Destroyed { get; private set; }
 
+    public long GeneratedByteCount { get; private set; }
+
     internal byte[] Key { get; set; }
 
     internal byte[] Value { get; set; }
 
     internal byte[]? PreviousGeneratedBlock { get; set; }
+
+    internal byte[] GeneratedOutputHash { get; private set; }
+
+    internal void RecordGeneratedOutput(ReadOnlySpan<byte> output)
+    {
+        var material = new byte[GeneratedOutputHash.Length + output.Length];
+        try
+        {
+            GeneratedOutputHash.CopyTo(material, 0);
+            output.CopyTo(material.AsSpan(GeneratedOutputHash.Length));
+            var previous = GeneratedOutputHash;
+            GeneratedOutputHash = SHA256.HashData(material);
+            CryptographicOperations.ZeroMemory(previous);
+            GeneratedByteCount = checked(GeneratedByteCount + output.Length);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(material);
+        }
+    }
+
+    public string GetGeneratedBytesHash()
+    {
+        if (Destroyed)
+        {
+            throw new ObjectDisposedException(nameof(HmacDrbgSession));
+        }
+
+        return $"sha256:{Convert.ToHexString(GeneratedOutputHash).ToLowerInvariant()}";
+    }
 
     internal void MarkDestroyed()
     {
@@ -299,6 +332,7 @@ public sealed class HmacDrbgSession : IDisposable
             CryptographicOperations.ZeroMemory(PreviousGeneratedBlock);
         }
 
+        CryptographicOperations.ZeroMemory(GeneratedOutputHash);
         Destroyed = true;
     }
 
@@ -394,6 +428,7 @@ public sealed class HmacDrbgRuntime : IHmacDrbgRuntime
             session.Key = key;
             session.Value = value;
             session.ReseedCounter++;
+            session.RecordGeneratedOutput(output);
             return output;
         }
         catch
@@ -587,6 +622,14 @@ public interface ICertifiedCsprngSampler
 
     IReadOnlyList<int> UniqueNumbers(HmacDrbgSession session, int minInclusive, int maxInclusive, int count);
 
+    IReadOnlyList<int> SelectNumbers(
+        HmacDrbgSession session,
+        IReadOnlyList<int> universe,
+        int count,
+        bool unique,
+        bool withReplacement,
+        OutcomeNumberOrdering ordering);
+
     string WeightedSelection(HmacDrbgSession session, IReadOnlyDictionary<string, long> weights);
 }
 
@@ -638,6 +681,67 @@ public sealed class CertifiedCsprngSampler(IHmacDrbgRuntime drbgRuntime) : ICert
         }
 
         return values.Take(count).ToArray();
+    }
+
+    public IReadOnlyList<int> SelectNumbers(
+        HmacDrbgSession session,
+        IReadOnlyList<int> universe,
+        int count,
+        bool unique,
+        bool withReplacement,
+        OutcomeNumberOrdering ordering)
+    {
+        ArgumentNullException.ThrowIfNull(universe);
+        if (universe.Count == 0 || universe.Distinct().Count() != universe.Count)
+        {
+            throw new ArgumentException("Number universe must contain distinct values.");
+        }
+
+        if (count <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count), "Count must be positive.");
+        }
+
+        if (unique && withReplacement)
+        {
+            throw new ArgumentException("Unique generation cannot use replacement.");
+        }
+
+        if (!withReplacement && count > universe.Count)
+        {
+            throw new ArgumentException("Count cannot exceed the universe without replacement.");
+        }
+
+        int[] selected;
+        if (withReplacement)
+        {
+            selected = Enumerable.Range(0, count)
+                .Select(_ => universe[NextInt32(session, 0, universe.Count - 1)])
+                .ToArray();
+        }
+        else
+        {
+            var shuffled = universe.ToArray();
+            for (var i = 0; i < count; i++)
+            {
+                var j = NextInt32(session, i, shuffled.Length - 1);
+                (shuffled[i], shuffled[j]) = (shuffled[j], shuffled[i]);
+            }
+
+            selected = shuffled.Take(count).ToArray();
+        }
+
+        if (unique && selected.Distinct().Count() != selected.Length)
+        {
+            throw new CryptographicException("Unique number generation produced a duplicate.");
+        }
+
+        return ordering switch
+        {
+            OutcomeNumberOrdering.DrawOrder => selected,
+            OutcomeNumberOrdering.Ascending => selected.Order().ToArray(),
+            _ => throw new ArgumentOutOfRangeException(nameof(ordering), ordering, null)
+        };
     }
 
     public string WeightedSelection(HmacDrbgSession session, IReadOnlyDictionary<string, long> weights)
@@ -704,37 +808,5 @@ public sealed class CertifiedCsprngSampler(IHmacDrbgRuntime drbgRuntime) : ICert
                 CryptographicOperations.ZeroMemory(buffer);
             }
         }
-    }
-}
-
-public interface ICertifiedCsprngEvidenceRepository
-{
-    Task AppendAsync(DrbgSessionEvidence evidence, CancellationToken cancellationToken);
-
-    Task<bool> CheckReadinessAsync(CancellationToken cancellationToken);
-}
-
-public sealed class InMemoryCertifiedCsprngEvidenceRepository : ICertifiedCsprngEvidenceRepository
-{
-    private readonly List<DrbgSessionEvidence> evidence = [];
-
-    public IReadOnlyCollection<DrbgSessionEvidence> Evidence => evidence;
-
-    public Task AppendAsync(DrbgSessionEvidence item, CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        if (evidence.Any(existing => existing.CanonicalEvidenceHash == item.CanonicalEvidenceHash))
-        {
-            return Task.CompletedTask;
-        }
-
-        evidence.Add(item);
-        return Task.CompletedTask;
-    }
-
-    public Task<bool> CheckReadinessAsync(CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(false);
     }
 }

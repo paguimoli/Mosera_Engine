@@ -148,53 +148,11 @@ on conflict do nothing;
         CancellationToken cancellationToken)
     {
         await using var connection = await OpenConnectionAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-insert into game_engine.outcome_provider_execution_attempts (
-  attempt_id,
-  execution_id,
-  attempt_number,
-  status,
-  failure_classification,
-  failure_code,
-  failure_reason,
-  request_hash,
-  attempt_hash,
-  started_at,
-  completed_at)
-values (
-  @attempt_id,
-  @execution_id,
-  @attempt_number,
-  @status,
-  @failure_classification,
-  @failure_code,
-  @failure_reason,
-  @request_hash,
-  @attempt_hash,
-  @started_at,
-  @completed_at);
-""";
-        command.Parameters.AddWithValue("attempt_id", attempt.AttemptId);
-        command.Parameters.AddWithValue("execution_id", attempt.ExecutionId);
-        command.Parameters.AddWithValue("attempt_number", attempt.AttemptNumber);
-        command.Parameters.AddWithValue("status", ToDatabaseStatus(attempt.Status));
-        command.Parameters.AddWithValue(
-            "failure_classification",
-            ToDatabaseFailureClassification(attempt.FailureClassification));
-        command.Parameters.AddWithValue(
-            "failure_code",
-            attempt.FailureCode is null ? DBNull.Value : attempt.FailureCode);
-        command.Parameters.AddWithValue(
-            "failure_reason",
-            attempt.FailureReason is null ? DBNull.Value : attempt.FailureReason);
-        command.Parameters.AddWithValue("request_hash", attempt.RequestHash);
-        command.Parameters.AddWithValue("attempt_hash", attempt.AttemptHash);
-        command.Parameters.AddWithValue("started_at", attempt.StartedAt);
-        command.Parameters.AddWithValue(
-            "completed_at",
-            attempt.CompletedAt is null ? DBNull.Value : attempt.CompletedAt);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await InsertAttemptAsync(
+            connection,
+            transaction: null,
+            attempt,
+            cancellationToken);
     }
 
     public async Task AppendEvidenceAsync(
@@ -202,70 +160,23 @@ values (
         CancellationToken cancellationToken)
     {
         await using var connection = await OpenConnectionAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-insert into game_engine.outcome_provider_execution_evidence (
-  evidence_id,
-  execution_id,
-  execution_manifest_id,
-  draw_id,
-  provider_id,
-  provider_version,
-  configuration_version,
-  request_hash,
-  result_hash,
-  evidence_hash,
-  outcome_certificate_id,
-  outcome_certificate_hash,
-  execution_attempt,
-  idempotency_key,
-  status,
-  started_at,
-  completed_at)
-values (
-  @evidence_id,
-  @execution_id,
-  @execution_manifest_id,
-  @draw_id,
-  @provider_id,
-  @provider_version,
-  @configuration_version,
-  @request_hash,
-  @result_hash,
-  @evidence_hash,
-  @outcome_certificate_id,
-  @outcome_certificate_hash,
-  @execution_attempt,
-  @idempotency_key,
-  'AUTHORITATIVE',
-  @started_at,
-  @completed_at);
-""";
-        command.Parameters.AddWithValue("evidence_id", evidence.EvidenceId);
-        command.Parameters.AddWithValue("execution_id", evidence.ExecutionId);
-        command.Parameters.AddWithValue(
-            "execution_manifest_id",
-            evidence.ExecutionManifestId);
-        command.Parameters.AddWithValue("draw_id", evidence.DrawId);
-        command.Parameters.AddWithValue("provider_id", evidence.ProviderId);
-        command.Parameters.AddWithValue("provider_version", evidence.ProviderVersion);
-        command.Parameters.AddWithValue(
-            "configuration_version",
-            evidence.ConfigurationVersion);
-        command.Parameters.AddWithValue("request_hash", evidence.RequestHash);
-        command.Parameters.AddWithValue("result_hash", evidence.ResultHash);
-        command.Parameters.AddWithValue("evidence_hash", evidence.EvidenceHash);
-        command.Parameters.AddWithValue(
-            "outcome_certificate_id",
-            evidence.OutcomeCertificateId);
-        command.Parameters.AddWithValue(
-            "outcome_certificate_hash",
-            evidence.OutcomeCertificateHash);
-        command.Parameters.AddWithValue("execution_attempt", evidence.ExecutionAttempt);
-        command.Parameters.AddWithValue("idempotency_key", evidence.IdempotencyKey);
-        command.Parameters.AddWithValue("started_at", evidence.StartedAt);
-        command.Parameters.AddWithValue("completed_at", evidence.CompletedAt);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await InsertEvidenceAsync(
+            connection,
+            transaction: null,
+            evidence,
+            cancellationToken);
+    }
+
+    public async Task CompleteExecutionAsync(
+        OutcomeProviderExecutionAttempt attempt,
+        OutcomeProviderExecutionEvidence evidence,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await InsertAttemptAsync(connection, transaction, attempt, cancellationToken);
+        await InsertEvidenceAsync(connection, transaction, evidence, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task<OutcomeProviderExecutionEvidence?> FindAuthoritativeEvidenceAsync(
@@ -274,7 +185,29 @@ values (
     {
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = $"{EvidenceSelect} where evidence.execution_manifest_id = @execution_manifest_id limit 1;";
+        command.CommandText = $"""
+{EvidenceSelect}
+where evidence.execution_manifest_id = @execution_manifest_id
+  and evidence.status = 'AUTHORITATIVE'
+limit 1;
+""";
+        command.Parameters.AddWithValue("execution_manifest_id", executionManifestId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? MapEvidence(reader) : null;
+    }
+
+    public async Task<OutcomeProviderExecutionEvidence?> FindGeneratedEvidenceAsync(
+        Guid executionManifestId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+{EvidenceSelect}
+where evidence.execution_manifest_id = @execution_manifest_id
+  and evidence.status = 'GENERATED'
+limit 1;
+""";
         command.Parameters.AddWithValue("execution_manifest_id", executionManifestId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? MapEvidence(reader) : null;
@@ -299,6 +232,7 @@ select
 from game_engine.outcome_provider_executions execution
 left join game_engine.outcome_provider_execution_evidence evidence
   on evidence.execution_id = execution.execution_id
+ and evidence.status = 'GENERATED'
 where evidence.execution_id is null
 order by execution.claimed_at, execution.execution_id
 limit @limit;
@@ -403,10 +337,10 @@ select
                 {
                     blockers.Add("Outcome Provider evidence persistence is unavailable.");
                 }
-                if (providerEnabled || providerProductionReady)
+                if (providerEnabled)
                 {
                     blockers.Add(
-                        "BF-4.3 built-in Outcome Providers must remain disabled and not production-ready.");
+                        "Built-in Outcome Providers must remain disabled until explicitly activated.");
                 }
             }
             else
@@ -428,8 +362,147 @@ select
             ProviderEnabled: providerEnabled,
             ProviderProductionReady: providerProductionReady,
             ProviderEvidencePersistenceReady: evidencePersistenceReady,
-            ProductionActivationDisabled: !providerEnabled && !providerProductionReady,
+            ProductionActivationDisabled: !providerEnabled,
             Blockers: blockers);
+    }
+
+    private static async Task InsertAttemptAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        OutcomeProviderExecutionAttempt attempt,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+insert into game_engine.outcome_provider_execution_attempts (
+  attempt_id,
+  execution_id,
+  attempt_number,
+  status,
+  failure_classification,
+  failure_code,
+  failure_reason,
+  request_hash,
+  attempt_hash,
+  started_at,
+  completed_at)
+values (
+  @attempt_id,
+  @execution_id,
+  @attempt_number,
+  @status,
+  @failure_classification,
+  @failure_code,
+  @failure_reason,
+  @request_hash,
+  @attempt_hash,
+  @started_at,
+  @completed_at);
+""";
+        command.Parameters.AddWithValue("attempt_id", attempt.AttemptId);
+        command.Parameters.AddWithValue("execution_id", attempt.ExecutionId);
+        command.Parameters.AddWithValue("attempt_number", attempt.AttemptNumber);
+        command.Parameters.AddWithValue("status", ToDatabaseStatus(attempt.Status));
+        command.Parameters.AddWithValue(
+            "failure_classification",
+            ToDatabaseFailureClassification(attempt.FailureClassification));
+        command.Parameters.AddWithValue(
+            "failure_code",
+            attempt.FailureCode is null ? DBNull.Value : attempt.FailureCode);
+        command.Parameters.AddWithValue(
+            "failure_reason",
+            attempt.FailureReason is null ? DBNull.Value : attempt.FailureReason);
+        command.Parameters.AddWithValue("request_hash", attempt.RequestHash);
+        command.Parameters.AddWithValue("attempt_hash", attempt.AttemptHash);
+        command.Parameters.AddWithValue("started_at", attempt.StartedAt);
+        command.Parameters.AddWithValue(
+            "completed_at",
+            attempt.CompletedAt is null ? DBNull.Value : attempt.CompletedAt);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task InsertEvidenceAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        OutcomeProviderExecutionEvidence evidence,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+insert into game_engine.outcome_provider_execution_evidence (
+  evidence_id,
+  execution_id,
+  execution_manifest_id,
+  draw_id,
+  provider_id,
+  provider_version,
+  configuration_version,
+  request_hash,
+  result_hash,
+  evidence_hash,
+  outcome_certificate_id,
+  outcome_certificate_hash,
+  execution_attempt,
+  idempotency_key,
+  status,
+  provider_evidence_payload,
+  started_at,
+  completed_at)
+values (
+  @evidence_id,
+  @execution_id,
+  @execution_manifest_id,
+  @draw_id,
+  @provider_id,
+  @provider_version,
+  @configuration_version,
+  @request_hash,
+  @result_hash,
+  @evidence_hash,
+  @outcome_certificate_id,
+  @outcome_certificate_hash,
+  @execution_attempt,
+  @idempotency_key,
+  @status,
+  @provider_evidence_payload::jsonb,
+  @started_at,
+  @completed_at);
+""";
+        command.Parameters.AddWithValue("evidence_id", evidence.EvidenceId);
+        command.Parameters.AddWithValue("execution_id", evidence.ExecutionId);
+        command.Parameters.AddWithValue(
+            "execution_manifest_id",
+            evidence.ExecutionManifestId);
+        command.Parameters.AddWithValue("draw_id", evidence.DrawId);
+        command.Parameters.AddWithValue("provider_id", evidence.ProviderId);
+        command.Parameters.AddWithValue("provider_version", evidence.ProviderVersion);
+        command.Parameters.AddWithValue(
+            "configuration_version",
+            evidence.ConfigurationVersion);
+        command.Parameters.AddWithValue("request_hash", evidence.RequestHash);
+        command.Parameters.AddWithValue("result_hash", evidence.ResultHash);
+        command.Parameters.AddWithValue("evidence_hash", evidence.EvidenceHash);
+        command.Parameters.AddWithValue(
+            "outcome_certificate_id",
+            evidence.OutcomeCertificateId is null
+                ? DBNull.Value
+                : evidence.OutcomeCertificateId.Value);
+        command.Parameters.AddWithValue(
+            "outcome_certificate_hash",
+            evidence.OutcomeCertificateHash is null
+                ? DBNull.Value
+                : evidence.OutcomeCertificateHash);
+        command.Parameters.AddWithValue("execution_attempt", evidence.ExecutionAttempt);
+        command.Parameters.AddWithValue("idempotency_key", evidence.IdempotencyKey);
+        command.Parameters.AddWithValue("status", ToDatabaseEvidenceStage(evidence.Stage));
+        command.Parameters.AddWithValue(
+            "provider_evidence_payload",
+            evidence.ProviderEvidenceJson);
+        command.Parameters.AddWithValue("started_at", evidence.StartedAt);
+        command.Parameters.AddWithValue("completed_at", evidence.CompletedAt);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private async Task<NpgsqlConnection> OpenConnectionAsync(CancellationToken cancellationToken)
@@ -513,12 +586,14 @@ limit 1;
             reader.GetString(7),
             reader.GetString(8),
             reader.GetString(9),
-            reader.GetGuid(10),
-            reader.GetString(11),
+            reader.IsDBNull(10) ? null : reader.GetGuid(10),
+            reader.IsDBNull(11) ? null : reader.GetString(11),
             reader.GetInt32(12),
             reader.GetString(13),
-            reader.GetFieldValue<DateTimeOffset>(14),
-            reader.GetFieldValue<DateTimeOffset>(15));
+            ParseEvidenceStage(reader.GetString(14)),
+            reader.GetString(15),
+            reader.GetFieldValue<DateTimeOffset>(16),
+            reader.GetFieldValue<DateTimeOffset>(17));
 
     private static CanonicalOutcomeProviderCategory ParseCategory(string value) =>
         value switch
@@ -570,6 +645,23 @@ limit 1;
                 null)
         };
 
+    private static string ToDatabaseEvidenceStage(OutcomeProviderEvidenceStage stage) =>
+        stage switch
+        {
+            OutcomeProviderEvidenceStage.Generated => "GENERATED",
+            OutcomeProviderEvidenceStage.Authoritative => "AUTHORITATIVE",
+            _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, null)
+        };
+
+    private static OutcomeProviderEvidenceStage ParseEvidenceStage(string value) =>
+        value switch
+        {
+            "GENERATED" => OutcomeProviderEvidenceStage.Generated,
+            "AUTHORITATIVE" => OutcomeProviderEvidenceStage.Authoritative,
+            _ => throw new InvalidOperationException(
+                $"Unsupported Outcome Provider evidence stage {value}.")
+        };
+
     private const string EvidenceSelect = """
 select
   evidence.evidence_id,
@@ -586,6 +678,8 @@ select
   evidence.outcome_certificate_hash,
   evidence.execution_attempt,
   evidence.idempotency_key,
+  evidence.status,
+  evidence.provider_evidence_payload::text,
   evidence.started_at,
   evidence.completed_at
 from game_engine.outcome_provider_execution_evidence evidence

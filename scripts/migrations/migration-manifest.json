@@ -897,6 +897,15 @@
       "reason": "Consolidates immutable provider registration, configuration, activation, execution claims, and result evidence behind one canonical Outcome Provider Authority."
     },
     {
+      "id": "095_add_internal_csprng_provider",
+      "path": "scripts/migrations/local/095_add_internal_csprng_provider.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds the production-ready but disabled Internal CSPRNG provider, immutable game-definition generation rules, and staged replay-safe canonical provider evidence."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

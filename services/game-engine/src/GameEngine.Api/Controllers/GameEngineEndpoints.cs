@@ -1080,6 +1080,8 @@ public static class GameEngineEndpoints
         var settlementInputHandoffReady = await readinessChecks.CheckSettlementInputHandoffAsync(context.RequestAborted);
         var canonicalOutcomeProviderAuthorityReady =
             await readinessChecks.CheckCanonicalOutcomeProviderAuthorityAsync(context.RequestAborted);
+        var internalCsprngProviderReady =
+            await readinessChecks.CheckInternalCsprngProviderAsync(context.RequestAborted);
         var canonicalOutcomePipelineReady = await readinessChecks.CheckCanonicalOutcomePipelineAsync(context.RequestAborted);
         var provablyFairRuntimeReady = await readinessChecks.CheckProvablyFairRuntimeAsync(context.RequestAborted);
         var externalOfficialResultRuntimeReady = await readinessChecks.CheckExternalOfficialResultRuntimeAsync(context.RequestAborted);
@@ -1096,6 +1098,7 @@ public static class GameEngineEndpoints
             mathEvaluationBatchPersistenceReady,
             settlementInputHandoffReady,
             canonicalOutcomeProviderAuthorityReady,
+            internalCsprngProviderReady,
             canonicalOutcomePipelineReady,
             provablyFairRuntimeReady,
             externalOfficialResultRuntimeReady,

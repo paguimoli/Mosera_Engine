@@ -1,6 +1,8 @@
 using GameEngine.Application.Interfaces;
 using GameEngine.Domain.Model;
 using Npgsql;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace GameEngine.Infrastructure.Persistence;
 
@@ -273,6 +275,11 @@ order by code, id;
 
 public sealed class PostgresGameDefinitionVersionRepository(string connectionString) : IGameDefinitionVersionRepository
 {
+    private static readonly JsonSerializerOptions GenerationJsonOptions = new()
+    {
+        Converters = { new JsonStringEnumConverter() }
+    };
+
     public async Task<IReadOnlyCollection<GameDefinitionVersion>> ListAsync(Guid gameDefinitionId, CancellationToken cancellationToken)
     {
         return await QueryManyAsync("where game_definition_id = @game_definition_id", command => command.Parameters.AddWithValue("game_definition_id", gameDefinitionId), cancellationToken);
@@ -298,7 +305,8 @@ insert into game_engine.game_definition_versions (
   evaluator_version,
   draw_generator_version,
   effective_from,
-  effective_to
+  effective_to,
+  outcome_generation_definition
 ) values (
   @id,
   @game_definition_id,
@@ -308,7 +316,8 @@ insert into game_engine.game_definition_versions (
   @evaluator_version,
   @draw_generator_version,
   @effective_from,
-  @effective_to
+  @effective_to,
+  @outcome_generation_definition::jsonb
 )
 on conflict (game_definition_id, version_number) do update set
   definition_hash = excluded.definition_hash,
@@ -316,7 +325,8 @@ on conflict (game_definition_id, version_number) do update set
   evaluator_version = excluded.evaluator_version,
   draw_generator_version = excluded.draw_generator_version,
   effective_from = excluded.effective_from,
-  effective_to = excluded.effective_to;
+  effective_to = excluded.effective_to,
+  outcome_generation_definition = excluded.outcome_generation_definition;
 """;
         command.Parameters.AddWithValue("id", version.Id);
         command.Parameters.AddWithValue("game_definition_id", version.GameDefinitionId);
@@ -327,6 +337,13 @@ on conflict (game_definition_id, version_number) do update set
         command.Parameters.AddWithValue("draw_generator_version", version.DrawGeneratorVersion);
         command.Parameters.AddWithValue("effective_from", version.EffectiveFrom);
         command.Parameters.AddWithValue("effective_to", version.EffectiveTo is null ? DBNull.Value : version.EffectiveTo.Value);
+        command.Parameters.AddWithValue(
+            "outcome_generation_definition",
+            version.OutcomeGenerationDefinition is null
+                ? DBNull.Value
+                : JsonSerializer.Serialize(
+                    version.OutcomeGenerationDefinition,
+                    GenerationJsonOptions));
         await command.ExecuteNonQueryAsync(cancellationToken);
         return await GetAsync(version.Id, cancellationToken) ?? version;
     }
@@ -339,7 +356,9 @@ on conflict (game_definition_id, version_number) do update set
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = $"""
-select id, game_definition_id, version_number, definition_hash, paytable_version, evaluator_version, draw_generator_version, effective_from, effective_to
+select id, game_definition_id, version_number, definition_hash, paytable_version,
+       evaluator_version, draw_generator_version, effective_from, effective_to,
+       outcome_generation_definition::text
 from game_engine.game_definition_versions
 {whereClause}
 order by game_definition_id, version_number, id;
@@ -359,7 +378,12 @@ order by game_definition_id, version_number, id;
                 reader.GetString(5),
                 reader.GetString(6),
                 reader.GetFieldValue<DateTimeOffset>(7),
-                reader.IsDBNull(8) ? null : reader.GetFieldValue<DateTimeOffset>(8)));
+                reader.IsDBNull(8) ? null : reader.GetFieldValue<DateTimeOffset>(8),
+                reader.IsDBNull(9)
+                    ? null
+                    : JsonSerializer.Deserialize<NumberOutcomeGenerationDefinition>(
+                        reader.GetString(9),
+                        GenerationJsonOptions)));
         }
 
         return versions;

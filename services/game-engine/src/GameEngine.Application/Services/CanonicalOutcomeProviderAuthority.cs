@@ -20,6 +20,15 @@ public interface ICanonicalOutcomeProviderRepository
         OutcomeProviderExecutionEvidence evidence,
         CancellationToken cancellationToken);
 
+    Task CompleteExecutionAsync(
+        OutcomeProviderExecutionAttempt attempt,
+        OutcomeProviderExecutionEvidence evidence,
+        CancellationToken cancellationToken);
+
+    Task<OutcomeProviderExecutionEvidence?> FindGeneratedEvidenceAsync(
+        Guid executionManifestId,
+        CancellationToken cancellationToken);
+
     Task<OutcomeProviderExecutionEvidence?> FindAuthoritativeEvidenceAsync(
         Guid executionManifestId,
         CancellationToken cancellationToken);
@@ -113,9 +122,76 @@ public sealed class CanonicalOutcomeProviderAuthority(ICanonicalOutcomeProviderR
         RequireHash(evidence.RequestHash, "Provider request hash");
         RequireHash(evidence.ResultHash, "Provider result hash");
         RequireHash(evidence.EvidenceHash, "Provider evidence hash");
+        if (evidence.Stage != OutcomeProviderEvidenceStage.Authoritative ||
+            evidence.OutcomeCertificateId is null)
+        {
+            throw new ArgumentException(
+                "Authoritative provider evidence requires an Outcome Certificate.");
+        }
+
         RequireHash(evidence.OutcomeCertificateHash, "Outcome Certificate hash");
         await repository.AppendEvidenceAsync(evidence, cancellationToken);
     }
+
+    public async Task AppendGeneratedEvidenceAsync(
+        OutcomeProviderExecutionEvidence evidence,
+        CancellationToken cancellationToken)
+    {
+        RequireHash(evidence.RequestHash, "Provider request hash");
+        RequireHash(evidence.ResultHash, "Provider result hash");
+        RequireHash(evidence.EvidenceHash, "Provider evidence hash");
+        if (evidence.Stage != OutcomeProviderEvidenceStage.Generated ||
+            evidence.OutcomeCertificateId is not null ||
+            evidence.OutcomeCertificateHash is not null)
+        {
+            throw new ArgumentException(
+                "Generated provider evidence cannot contain an Outcome Certificate.");
+        }
+
+        if (string.IsNullOrWhiteSpace(evidence.ProviderEvidenceJson))
+        {
+            throw new ArgumentException("Provider evidence payload is required.");
+        }
+
+        await repository.AppendEvidenceAsync(evidence, cancellationToken);
+    }
+
+    public async Task CompleteGeneratedExecutionAsync(
+        OutcomeProviderExecutionAttempt attempt,
+        OutcomeProviderExecutionEvidence evidence,
+        CancellationToken cancellationToken)
+    {
+        if (attempt.Status != OutcomeProviderExecutionStatus.Completed ||
+            attempt.FailureClassification != OutcomeProviderFailureClassification.None)
+        {
+            throw new ArgumentException(
+                "Generated provider evidence requires a successful completed attempt.");
+        }
+
+        RequireHash(attempt.RequestHash, "Provider execution request hash");
+        RequireHash(attempt.AttemptHash, "Provider execution attempt hash");
+        RequireHash(evidence.RequestHash, "Provider request hash");
+        RequireHash(evidence.ResultHash, "Provider result hash");
+        RequireHash(evidence.EvidenceHash, "Provider evidence hash");
+        if (evidence.Stage != OutcomeProviderEvidenceStage.Generated ||
+            evidence.ExecutionId != attempt.ExecutionId ||
+            evidence.ExecutionAttempt != attempt.AttemptNumber ||
+            !string.Equals(
+                evidence.RequestHash,
+                attempt.RequestHash,
+                StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "Completed attempt and generated provider evidence do not match.");
+        }
+
+        await repository.CompleteExecutionAsync(attempt, evidence, cancellationToken);
+    }
+
+    public Task<OutcomeProviderExecutionEvidence?> FindGeneratedEvidenceAsync(
+        Guid executionManifestId,
+        CancellationToken cancellationToken) =>
+        repository.FindGeneratedEvidenceAsync(executionManifestId, cancellationToken);
 
     public async Task<OutcomeProviderExecutionEvidence> AuthorizePublicationAsync(
         DrawExecutionManifest manifest,
@@ -212,6 +288,17 @@ public sealed class DisabledCanonicalOutcomeProviderRepository : ICanonicalOutco
         OutcomeProviderExecutionEvidence evidence,
         CancellationToken cancellationToken) =>
         Task.FromException(new InvalidOperationException(Message));
+
+    public Task CompleteExecutionAsync(
+        OutcomeProviderExecutionAttempt attempt,
+        OutcomeProviderExecutionEvidence evidence,
+        CancellationToken cancellationToken) =>
+        Task.FromException(new InvalidOperationException(Message));
+
+    public Task<OutcomeProviderExecutionEvidence?> FindGeneratedEvidenceAsync(
+        Guid executionManifestId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<OutcomeProviderExecutionEvidence?>(null);
 
     public Task<OutcomeProviderExecutionEvidence?> FindAuthoritativeEvidenceAsync(
         Guid executionManifestId,

@@ -135,7 +135,21 @@ public sealed record GameDefinitionVersion(
     string EvaluatorVersion,
     string DrawGeneratorVersion,
     DateTimeOffset EffectiveFrom,
-    DateTimeOffset? EffectiveTo);
+    DateTimeOffset? EffectiveTo,
+    NumberOutcomeGenerationDefinition? OutcomeGenerationDefinition = null);
+
+public enum OutcomeNumberOrdering
+{
+    DrawOrder,
+    Ascending
+}
+
+public sealed record NumberOutcomeGenerationDefinition(
+    IReadOnlyList<int> NumberUniverse,
+    int NumbersRequired,
+    bool Unique,
+    bool WithReplacement,
+    OutcomeNumberOrdering Ordering);
 
 public sealed record GameModule(
     Guid Id,
