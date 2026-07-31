@@ -58,6 +58,7 @@ public sealed record DrawExecutionManifest(
     string EngineVersion,
     string OutcomeProviderId,
     string OutcomeProviderVersion,
+    string ProviderConfigurationVersion,
     string EvaluatorVersion,
     string PaytableVersion,
     DateTimeOffset ScheduledExecutionAt,

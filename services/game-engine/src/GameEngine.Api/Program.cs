@@ -35,18 +35,12 @@ builder.Services.AddSingleton<DrawGenerationFramework>();
 builder.Services.AddSingleton<DrawSchedulerService>();
 builder.Services.AddSingleton<EvaluationOrchestrator>();
 builder.Services.AddSingleton<EvaluationRabbitMqDiagnostics>();
-builder.Services.AddSingleton<IOutcomeProviderResolver, OutcomeProviderResolver>();
-builder.Services.AddSingleton<IOutcomeProviderRuntime, CertifiedCsprngOutcomeProviderRuntime>();
-builder.Services.AddSingleton<IOutcomeProviderRuntime, ProvablyFairOutcomeProviderRuntime>();
-builder.Services.AddSingleton<IOutcomeProviderRuntime, ExternalOfficialResultOutcomeProviderRuntime>();
-builder.Services.AddSingleton<IOutcomeProviderRuntime, PhysicalDrawResultOutcomeProviderRuntime>();
-builder.Services.AddSingleton<IOutcomeProviderRuntime, SimulationTestOutcomeProviderRuntime>();
 builder.Services.AddSingleton<ProvablyFairRuntimeService>();
 builder.Services.AddSingleton<ExternalOfficialResultRuntimeService>();
 builder.Services.AddSingleton<PhysicalDrawResultRuntimeService>();
 builder.Services.AddSingleton<IOutcomeRuntimeCrashInjector, EnvironmentOutcomeRuntimeCrashInjector>();
 builder.Services.AddSingleton<OutcomeRuntimeRecoveryService>();
-builder.Services.AddSingleton<OutcomeProviderOrchestrationService>();
+builder.Services.AddSingleton<CanonicalOutcomeProviderAuthority>();
 builder.Services.AddSingleton<IMathEvaluator, KenoMathEvaluator>();
 builder.Services.AddSingleton<MathEvaluatorRegistry>();
 builder.Services.AddSingleton<MathCertificateEvaluationService>();
@@ -82,6 +76,7 @@ if (string.IsNullOrWhiteSpace(databaseUrl))
     builder.Services.AddSingleton<IMathEvaluationDurableRepository, InMemoryMathEvaluationDurableRepository>();
     builder.Services.AddSingleton<IMathEvaluationBatchRepository, InMemoryMathEvaluationBatchRepository>();
     builder.Services.AddSingleton<ISettlementInputRepository, InMemorySettlementInputRepository>();
+    builder.Services.AddSingleton<ICanonicalOutcomeProviderRepository, DisabledCanonicalOutcomeProviderRepository>();
     builder.Services.AddSingleton<ICanonicalOutcomePipelineRepository, DisabledCanonicalOutcomePipelineRepository>();
 }
 else
@@ -112,6 +107,8 @@ else
     builder.Services.AddSingleton<IMathEvaluationDurableRepository>(_ => new PostgresMathEvaluationDurableRepository(databaseUrl));
     builder.Services.AddSingleton<IMathEvaluationBatchRepository>(_ => new PostgresMathEvaluationBatchRepository(databaseUrl));
     builder.Services.AddSingleton<ISettlementInputRepository>(_ => new PostgresSettlementInputRepository(databaseUrl));
+    builder.Services.AddSingleton<ICanonicalOutcomeProviderRepository>(
+        _ => new PostgresCanonicalOutcomeProviderRepository(databaseUrl));
     builder.Services.AddSingleton<ICanonicalOutcomePipelineRepository>(
         _ => new PostgresCanonicalOutcomePipelineRepository(
             databaseUrl,

@@ -94,13 +94,13 @@ insert into game_engine.draw_execution_manifests (
   execution_manifest_id, draw_id, schedule_version_id,
   game_definition_version_id, draw_authority_version_id,
   engine_name, engine_version, outcome_provider_id, outcome_provider_version,
-  evaluator_version, paytable_version, scheduled_execution_at,
+  provider_configuration_version, evaluator_version, paytable_version, scheduled_execution_at,
   schedule_hash, draw_identity_hash, canonical_manifest_hash, created_at)
 select
   @execution_manifest_id, draw.id, draw.schedule_version_id,
   definition_version.id, assignment.draw_authority_version_id,
   module.code, module_version.version, authority.code, authority_version.provider_version,
-  definition_version.evaluator_version, definition_version.paytable_version,
+  '1', definition_version.evaluator_version, definition_version.paytable_version,
   draw.scheduled_execution_at, draw.schedule_hash, draw.draw_identity_hash,
   @execution_manifest_hash, @published_at
 from game_engine.draw_schedules draw
@@ -131,7 +131,7 @@ on conflict (draw_id) do nothing;
         command.Parameters.AddWithValue("execution_manifest_id", StableGuid($"execution-manifest:{schedule.Id:N}"));
         command.Parameters.AddWithValue(
             "execution_manifest_hash",
-            Hash($"execution-manifest:v1|{schedule.Id:N}|{scheduleVersionId:N}|{drawIdentityHash}"));
+            Hash($"execution-manifest:v1|{schedule.Id:N}|{scheduleVersionId:N}|1|{drawIdentityHash}"));
         await command.ExecuteNonQueryAsync(cancellationToken);
 
         await using var verify = connection.CreateCommand();
@@ -275,6 +275,68 @@ insert into game_engine.draw_authority_assignments (
   @created_at
 )
 on conflict (id) do nothing;
+
+insert into game_engine.outcome_provider_definitions (
+  id,
+  provider_id,
+  provider_version,
+  provider_type,
+  lifecycle_state,
+  production_eligible,
+  supported_outcome_primitive_types,
+  evidence_requirements,
+  health_readiness_capabilities,
+  idempotency_model,
+  custody_support,
+  signing_requirements,
+  replayability_support,
+  failure_mode,
+  capability_markers,
+  content_hash,
+  canonical_provider_category)
+values (
+  @outcome_provider_definition_id,
+  @draw_authority_code,
+  'scheduler',
+  'EXTERNAL_OFFICIAL_RESULT',
+  'Draft',
+  false,
+  '["UniqueNumberSet","OrderedNumberSequence","UniqueSymbolSet","OrderedSymbolSequence","CompositeOutcomeGraph","ConstraintValidation"]'::jsonb,
+  '{"providerResultHash":true,"operatorCertificationEvidence":true}'::jsonb,
+  '["immutable-configuration","durable-evidence"]'::jsonb,
+  'PerExternalResult',
+  '["Requested","Ingested","Sealed","Certified","Disputed"]'::jsonb,
+  '{"signatureRequired":true,"dualApprovalRequired":true}'::jsonb,
+  true,
+  'FailClosed',
+  '{"generatesOutcomes":false,"ingestsExternalOutcomes":true,"supportsPlayerVerificationReceipt":false,"supportsDeterministicReplay":true,"supportsProviderHealthEvidence":true,"supportsDisputeHandling":true,"supportsExternalSourceEvidence":true,"supportsPhysicalDrawEvidence":false}'::jsonb,
+  @outcome_provider_content_hash,
+  'MANUAL_CERTIFIED')
+on conflict (provider_id, provider_version) do nothing;
+
+insert into game_engine.outcome_provider_configuration_versions (
+  provider_id,
+  provider_version,
+  configuration_version,
+  canonical_provider_category,
+  configuration_hash,
+  supported_capabilities,
+  evidence_requirements,
+  readiness_capabilities,
+  production_ready,
+  failure_mode)
+values (
+  @draw_authority_code,
+  'scheduler',
+  '1',
+  'MANUAL_CERTIFIED',
+  @outcome_provider_configuration_hash,
+  '["UniqueNumberSet","OrderedNumberSequence","UniqueSymbolSet","OrderedSymbolSequence","CompositeOutcomeGraph","ConstraintValidation"]'::jsonb,
+  '{"providerResultHash":true,"operatorCertificationEvidence":true}'::jsonb,
+  '["immutable-configuration","durable-evidence"]'::jsonb,
+  false,
+  'FAIL_CLOSED')
+on conflict (provider_id, provider_version, configuration_version) do nothing;
 """;
         command.Parameters.AddWithValue("module_id", moduleId);
         command.Parameters.AddWithValue("module_code", $"scheduler-module-{moduleId:N}");
@@ -289,6 +351,15 @@ on conflict (id) do nothing;
         command.Parameters.AddWithValue("draw_authority_version_id", drawAuthorityVersionId);
         command.Parameters.AddWithValue("draw_authority_version_hash", drawAuthorityVersionId.ToString("N"));
         command.Parameters.AddWithValue("draw_authority_assignment_id", schedule.DrawAuthorityAssignmentId);
+        command.Parameters.AddWithValue(
+            "outcome_provider_definition_id",
+            StableGuid($"canonical-outcome-provider:{drawAuthorityId:N}"));
+        command.Parameters.AddWithValue(
+            "outcome_provider_content_hash",
+            Hash($"canonical-outcome-provider:v1:{drawAuthorityId:N}"));
+        command.Parameters.AddWithValue(
+            "outcome_provider_configuration_hash",
+            Hash($"canonical-outcome-provider-configuration:v1:{drawAuthorityId:N}:1"));
         command.Parameters.AddWithValue("created_at", schedule.SalesOpenAt);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

@@ -15,6 +15,7 @@ public sealed class InfrastructureReadinessChecks
     private readonly DurableMathEvaluationService mathEvaluationService;
     private readonly MathEvaluationBatchService mathEvaluationBatchService;
     private readonly SettlementInputAdapter settlementInputAdapter;
+    private readonly CanonicalOutcomeProviderAuthority canonicalOutcomeProviderAuthority;
     private readonly CanonicalDrawOrchestrator canonicalDrawOrchestrator;
     private readonly ProvablyFairRuntimeService provablyFairRuntime;
     private readonly ExternalOfficialResultRuntimeService externalOfficialResultRuntime;
@@ -29,6 +30,7 @@ public sealed class InfrastructureReadinessChecks
         DurableMathEvaluationService mathEvaluationService,
         MathEvaluationBatchService mathEvaluationBatchService,
         SettlementInputAdapter settlementInputAdapter,
+        CanonicalOutcomeProviderAuthority canonicalOutcomeProviderAuthority,
         CanonicalDrawOrchestrator canonicalDrawOrchestrator,
         ProvablyFairRuntimeService provablyFairRuntime,
         ExternalOfficialResultRuntimeService externalOfficialResultRuntime,
@@ -42,6 +44,7 @@ public sealed class InfrastructureReadinessChecks
         this.mathEvaluationService = mathEvaluationService;
         this.mathEvaluationBatchService = mathEvaluationBatchService;
         this.settlementInputAdapter = settlementInputAdapter;
+        this.canonicalOutcomeProviderAuthority = canonicalOutcomeProviderAuthority;
         this.canonicalDrawOrchestrator = canonicalDrawOrchestrator;
         this.provablyFairRuntime = provablyFairRuntime;
         this.externalOfficialResultRuntime = externalOfficialResultRuntime;
@@ -230,6 +233,25 @@ public sealed class InfrastructureReadinessChecks
             ? new DependencyHealthResult("canonical-outcome-pipeline", true)
             : new DependencyHealthResult(
                 "canonical-outcome-pipeline",
+                false,
+                string.Join("; ", readiness.Blockers));
+    }
+
+    public async Task<DependencyHealthResult> CheckCanonicalOutcomeProviderAuthorityAsync(
+        CancellationToken cancellationToken)
+    {
+        var readiness = await canonicalOutcomeProviderAuthority.CheckReadinessAsync(cancellationToken);
+        var ready = readiness.ProviderRegistryReady &&
+            readiness.ProviderRegistered &&
+            readiness.ProviderVersionResolved &&
+            readiness.ConfigurationVersionResolved &&
+            readiness.ProviderEvidencePersistenceReady &&
+            readiness.ProductionActivationDisabled;
+
+        return ready
+            ? new DependencyHealthResult("canonical-outcome-provider-authority", true)
+            : new DependencyHealthResult(
+                "canonical-outcome-provider-authority",
                 false,
                 string.Join("; ", readiness.Blockers));
     }

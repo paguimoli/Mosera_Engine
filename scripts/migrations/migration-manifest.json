@@ -888,6 +888,15 @@
       "reason": "Adds immutable published schedule versions, canonical Draw Instance lineage, and one authoritative execution manifest per draw."
     },
     {
+      "id": "094_add_canonical_outcome_provider_authority",
+      "path": "scripts/migrations/local/094_add_canonical_outcome_provider_authority.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Consolidates immutable provider registration, configuration, activation, execution claims, and result evidence behind one canonical Outcome Provider Authority."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

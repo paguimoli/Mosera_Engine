@@ -46,13 +46,17 @@ public static class GameEngineEndpoints
         group.MapGet("/outcome-publication-status", async (
             HttpContext context,
             ServiceConfiguration configuration,
+            CanonicalOutcomeProviderAuthority providerAuthority,
             CanonicalDrawOrchestrator orchestrator) =>
         {
             var readiness = await orchestrator.CheckReadinessAsync(context.RequestAborted);
+            var providerReadiness =
+                await providerAuthority.CheckReadinessAsync(context.RequestAborted);
             return Results.Ok(new
             {
                 success = true,
                 readiness,
+                providerReadiness,
                 authorityBoundary = "outcome_only",
                 settlementTransport = "shared_outbox",
                 directSettlementCallsEnabled = false,
@@ -1074,6 +1078,8 @@ public static class GameEngineEndpoints
         var mathEvaluationPersistenceReady = await readinessChecks.CheckMathEvaluationPersistenceAsync(context.RequestAborted);
         var mathEvaluationBatchPersistenceReady = await readinessChecks.CheckMathEvaluationBatchPersistenceAsync(context.RequestAborted);
         var settlementInputHandoffReady = await readinessChecks.CheckSettlementInputHandoffAsync(context.RequestAborted);
+        var canonicalOutcomeProviderAuthorityReady =
+            await readinessChecks.CheckCanonicalOutcomeProviderAuthorityAsync(context.RequestAborted);
         var canonicalOutcomePipelineReady = await readinessChecks.CheckCanonicalOutcomePipelineAsync(context.RequestAborted);
         var provablyFairRuntimeReady = await readinessChecks.CheckProvablyFairRuntimeAsync(context.RequestAborted);
         var externalOfficialResultRuntimeReady = await readinessChecks.CheckExternalOfficialResultRuntimeAsync(context.RequestAborted);
@@ -1089,6 +1095,7 @@ public static class GameEngineEndpoints
             mathEvaluationPersistenceReady,
             mathEvaluationBatchPersistenceReady,
             settlementInputHandoffReady,
+            canonicalOutcomeProviderAuthorityReady,
             canonicalOutcomePipelineReady,
             provablyFairRuntimeReady,
             externalOfficialResultRuntimeReady,

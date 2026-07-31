@@ -63,6 +63,53 @@ limit 1;
   const scheduleHash = hash(`bf-4.2-schedule:${suffix}`);
   const identityHash = hash(`bf-4.2-draw:${drawId}`);
   const manifestHash = hash(`bf-4.2-manifest:${drawId}`);
+  const outcomeProviderId = `qa-bf-4-1-provider:${suffix}`;
+  const outcomeProviderVersion = "1.0.0";
+  const providerConfigurationVersion = "1";
+
+  await pool.query(
+    `
+insert into game_engine.outcome_provider_definitions (
+  id, provider_id, provider_version, provider_type, lifecycle_state,
+  production_eligible, supported_outcome_primitive_types,
+  evidence_requirements, health_readiness_capabilities, idempotency_model,
+  custody_support, signing_requirements, replayability_support, failure_mode,
+  capability_markers, content_hash, canonical_provider_category)
+values ($1, $2, $3, 'CERTIFIED_CSPRNG', 'Active', true,
+  '["UniqueNumberSet"]'::jsonb, '{"providerEvidenceHash":true}'::jsonb,
+  '["qa-ready"]'::jsonb, 'PerDraw', '["Generated","Certified"]'::jsonb,
+  '{"signatureRequired":true}'::jsonb, true, 'FailClosed',
+  '{"generatesOutcomes":true,"ingestsExternalOutcomes":false,"supportsPlayerVerificationReceipt":false,"supportsDeterministicReplay":true,"supportsProviderHealthEvidence":true,"supportsDisputeHandling":true,"supportsExternalSourceEvidence":false,"supportsPhysicalDrawEvidence":false}'::jsonb,
+  $4, 'INTERNAL_CSPRNG');
+`,
+    [randomUUID(), outcomeProviderId, outcomeProviderVersion, hash(`provider:${suffix}`)],
+  );
+  await pool.query(
+    `
+insert into game_engine.outcome_provider_configuration_versions (
+  provider_id, provider_version, configuration_version,
+  canonical_provider_category, configuration_hash, supported_capabilities,
+  evidence_requirements, readiness_capabilities, production_ready, failure_mode)
+values ($1, $2, $3, 'INTERNAL_CSPRNG', $4, '["UniqueNumberSet"]'::jsonb,
+  '{"providerEvidenceHash":true}'::jsonb, '["qa-ready"]'::jsonb, true, 'FAIL_CLOSED');
+`,
+    [outcomeProviderId, outcomeProviderVersion, providerConfigurationVersion, hash(`provider-config:${suffix}`)],
+  );
+  await pool.query(
+    `
+insert into game_engine.outcome_provider_activation_events (
+  activation_event_id, provider_id, provider_version, configuration_version,
+  activation_state, reason, evidence_hash, effective_at)
+values ($1, $2, $3, $4, 'ENABLED', 'Synthetic BF-4.1 regression fixture only.', $5, now());
+`,
+    [
+      randomUUID(),
+      outcomeProviderId,
+      outcomeProviderVersion,
+      providerConfigurationVersion,
+      hash(`provider-activation:${suffix}`),
+    ],
+  );
 
   await pool.query(
     `
@@ -92,11 +139,11 @@ insert into game_engine.draw_execution_manifests (
   execution_manifest_id, draw_id, schedule_version_id,
   game_definition_version_id, draw_authority_version_id,
   engine_name, engine_version, outcome_provider_id, outcome_provider_version,
-  evaluator_version, paytable_version, scheduled_execution_at,
+  provider_configuration_version, evaluator_version, paytable_version, scheduled_execution_at,
   schedule_hash, draw_identity_hash, canonical_manifest_hash, created_at)
-select $1, $2, $3, $4, $5, $6, $7, $8, $9,
+select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
        definition.evaluator_version, definition.paytable_version,
-       $10, $11, $12, $13, now()
+       $11, $12, $13, $14, now()
 from game_engine.game_definition_versions definition
 where definition.id = $4;
 `,
@@ -108,15 +155,22 @@ where definition.id = $4;
       row.draw_authority_version_id,
       row.engine_name,
       row.engine_version,
-      row.provider_id,
-      row.provider_version,
+      outcomeProviderId,
+      outcomeProviderVersion,
+      providerConfigurationVersion,
       scheduledAt,
       scheduleHash,
       identityHash,
       manifestHash,
     ],
   );
-  return { manifestId, manifestHash };
+  return {
+    manifestId,
+    manifestHash,
+    outcomeProviderId,
+    outcomeProviderVersion,
+    providerConfigurationVersion,
+  };
 }
 
 async function seedCanonicalRequest() {

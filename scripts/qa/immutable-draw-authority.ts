@@ -142,10 +142,10 @@ values ($1, $2, $3, $4::timestamptz - interval '1 hour',
   execution_manifest_id, draw_id, schedule_version_id,
   game_definition_version_id, draw_authority_version_id,
   engine_name, engine_version, outcome_provider_id, outcome_provider_version,
-  evaluator_version, paytable_version, scheduled_execution_at,
+  provider_configuration_version, evaluator_version, paytable_version, scheduled_execution_at,
   schedule_hash, draw_identity_hash, canonical_manifest_hash, created_at)
 values ($1, $2, $3, $4, $5, 'bf-4-2-engine', '4.2.0',
-        'bf-4-2-provider', 'provider-4.2', 'evaluator-4.2', 'paytable-4.2',
+        'mosera-internal-csprng', '1.0.0', '1', 'evaluator-4.2', 'paytable-4.2',
         $6, $7, $8, $9, now());
 `,
       [

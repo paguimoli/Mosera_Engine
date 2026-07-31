@@ -28,7 +28,9 @@ public interface ICanonicalOutcomePipelineRepository
     Task<CanonicalOutcomeRecoveryResult> RecoverAsync(int limit, CancellationToken cancellationToken);
 }
 
-public sealed class CanonicalDrawOrchestrator(ICanonicalOutcomePipelineRepository repository)
+public sealed class CanonicalDrawOrchestrator(
+    ICanonicalOutcomePipelineRepository repository,
+    CanonicalOutcomeProviderAuthority providerAuthority)
 {
     public async Task<CanonicalOutcomeVersion> PublishAsync(
         CanonicalOutcomePublicationCommand command,
@@ -42,9 +44,13 @@ public sealed class CanonicalDrawOrchestrator(ICanonicalOutcomePipelineRepositor
             EngineName = manifest.EngineName,
             EngineVersion = manifest.EngineVersion
         };
+        var providerEvidence = await providerAuthority.AuthorizePublicationAsync(
+            manifest,
+            authoritativeCommand,
+            cancellationToken);
         return await repository.PublishAsync(
             authoritativeCommand,
-            HashPublication(authoritativeCommand, manifest),
+            HashPublication(authoritativeCommand, manifest, providerEvidence),
             cancellationToken);
     }
 
@@ -85,7 +91,8 @@ public sealed class CanonicalDrawOrchestrator(ICanonicalOutcomePipelineRepositor
 
     private static string HashPublication(
         CanonicalOutcomePublicationCommand command,
-        DrawExecutionManifest manifest)
+        DrawExecutionManifest manifest,
+        OutcomeProviderExecutionEvidence providerEvidence)
     {
         var payload = new SortedDictionary<string, object?>(StringComparer.Ordinal)
         {
@@ -98,6 +105,9 @@ public sealed class CanonicalDrawOrchestrator(ICanonicalOutcomePipelineRepositor
             ["engineVersion"] = command.EngineVersion,
             ["executionManifestHash"] = manifest.CanonicalManifestHash,
             ["executionManifestId"] = manifest.ExecutionManifestId,
+            ["outcomeProviderConfigurationVersion"] = manifest.ProviderConfigurationVersion,
+            ["providerEvidenceHash"] = providerEvidence.EvidenceHash,
+            ["providerResultHash"] = providerEvidence.ResultHash,
             ["outcomeCertificateHash"] = command.OutcomeCertificateHash,
             ["outcomeCertificateId"] = command.OutcomeCertificateId,
             ["previousOutcomeVersionId"] = command.PreviousOutcomeVersionId,

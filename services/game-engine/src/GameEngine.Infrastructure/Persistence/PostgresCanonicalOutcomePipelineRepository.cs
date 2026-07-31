@@ -1031,6 +1031,7 @@ select
   engine_version,
   outcome_provider_id,
   outcome_provider_version,
+  provider_configuration_version,
   evaluator_version,
   paytable_version,
   scheduled_execution_at,
@@ -1057,11 +1058,12 @@ limit 1;
                 reader.GetString(8),
                 reader.GetString(9),
                 reader.GetString(10),
-                reader.GetFieldValue<DateTimeOffset>(11),
-                reader.GetString(12),
+                reader.GetString(11),
+                reader.GetFieldValue<DateTimeOffset>(12),
                 reader.GetString(13),
                 reader.GetString(14),
-                reader.GetFieldValue<DateTimeOffset>(15))
+                reader.GetString(15),
+                reader.GetFieldValue<DateTimeOffset>(16))
             : null;
     }
 
