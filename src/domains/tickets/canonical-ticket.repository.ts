@@ -115,9 +115,15 @@ function translateError(error: unknown): never {
   );
 }
 
-export async function acceptCanonicalTicket(input: AcceptCanonicalTicketInput) {
+export async function acceptCanonicalTicket(input: AcceptCanonicalTicketInput): Promise<{
+  accepted: boolean;
+  duplicate: boolean;
+  [key: string]: unknown;
+}> {
   try {
-    const result = await database().query<{ result: Record<string, unknown> }>(
+    const result = await database().query<{
+      result: { accepted: boolean; duplicate: boolean; [key: string]: unknown };
+    }>(
       `select ticket_authority.accept_ticket(
         $1::uuid, $2::uuid, $3, $4::uuid, $5::uuid, $6::uuid,
         $7::uuid, $8::uuid, $9, $10, $11, $12::jsonb,

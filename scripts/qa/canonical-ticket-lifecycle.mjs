@@ -41,8 +41,14 @@ try {
     where market.status = 'Active' and brand.status = 'Active'
       and tenant.status = 'Active' and organization.status = 'Active'
       and platform.status = 'Active'
-    order by market.id
-    limit 2
+    order by exists (
+      select 1 from platform.game_availability existing
+      where existing.tenant_id = tenant.id
+        and existing.brand_id = brand.id
+        and existing.market_id = market.id
+        and existing.status in ('Suspended', 'Retired')
+    ), market.id
+    limit 20
   `);
   const scope = scopeResult.rows[0];
   const otherScope = scopeResult.rows.find(
@@ -58,6 +64,7 @@ try {
   const productResult = await client.query(`
     select definition.id product_id, definition.code game_code,
       definition.active_version_id product_version_id,
+      version.paytable_version,
       assignment.id assignment_id
     from game_engine.game_definitions definition
     join game_engine.game_definition_versions version
@@ -159,11 +166,16 @@ try {
       prize_matrix_rows, bonus_side_bet_rows, caps, lifecycle_state,
       content_hash, signature_metadata, certification_binding_state
     ) values (
-      $1,$2,'1.0.0','ticket-math','1.0.0',
+      $1,$2,$4,'ticket-math','1.0.0',
       '[{"tier":"WIN","multiplier":2}]','[]','{}',
       'ProductionActive',$3,'{}','None'
     )`,
-    [ids.paytable, `ticket-paytable-${suffix}`, paytableHash]
+    [
+      ids.paytable,
+      `ticket-paytable-${suffix}`,
+      paytableHash,
+      product.paytable_version,
+    ]
   );
   await client.query(
     `insert into game_engine.game_manifests (
@@ -187,7 +199,10 @@ try {
       `Ticket Manifest ${suffix}`,
       JSON.stringify([{ wagerType: "STRAIGHT", version: "1.0.0" }]),
       JSON.stringify([
-        { paytableId: `ticket-paytable-${suffix}`, version: "1.0.0" },
+        {
+          paytableId: `ticket-paytable-${suffix}`,
+          version: product.paytable_version,
+        },
       ]),
       manifestVersion,
       manifestHash,
@@ -271,6 +286,77 @@ try {
       `sha256:ticket-closed-draw:${runId}`,
     ]
   );
+
+  const liabilityVersions = new Map();
+  async function setLiabilityLimit(
+    scopeType,
+    scopeReference,
+    {
+      maximumWagerMinor = 100_000_000,
+      maximumTheoreticalPayoutMinor = 100_000_000,
+      maximumExposureMinor = 100_000_000,
+    } = {}
+  ) {
+    const key = `${scopeType}:${scopeReference}`;
+    let previous = liabilityVersions.get(key);
+    if (!previous) {
+      const existing = await client.query(
+        `select configuration_id, version
+           from ticket_authority.liability_limit_configurations
+          where tenant_id=$1 and brand_id=$2 and scope_type=$3
+            and scope_reference=$4
+          order by version desc limit 1`,
+        [scope.tenant_id, scope.brand_id, scopeType, String(scopeReference).toLowerCase()]
+      );
+      if (existing.rows[0]) {
+        previous = {
+          configurationId: existing.rows[0].configuration_id,
+          version: Number(existing.rows[0].version),
+        };
+      }
+    }
+    const configurationId = randomUUID();
+    const version = (previous?.version ?? 0) + 1;
+    await client.query(
+      `insert into ticket_authority.liability_limit_configurations (
+        configuration_id, tenant_id, brand_id, scope_type, scope_reference,
+        maximum_wager_minor, maximum_theoretical_payout_minor,
+        maximum_exposure_minor, status, effective_from, version,
+        supersedes_configuration_id, content_hash, audit_metadata
+      ) values ($1,$2,$3,$4,$5,$6,$7,$8,'Active',
+        clock_timestamp() - interval '1 millisecond',$9,$10,$11,$12::jsonb)`,
+      [
+        configurationId,
+        scope.tenant_id,
+        scope.brand_id,
+        scopeType,
+        String(scopeReference).toLowerCase(),
+        maximumWagerMinor,
+        maximumTheoreticalPayoutMinor,
+        maximumExposureMinor,
+        version,
+        previous?.configurationId ?? null,
+        `sha256:liability-${runId}:${scopeType.toLowerCase()}:${version}`,
+        JSON.stringify({ actor: "qa-operator", reason: "BF-5.2" }),
+      ]
+    );
+    liabilityVersions.set(key, { configurationId, version });
+    return configurationId;
+  }
+
+  const liabilityScopes = [
+    ["TENANT", scope.tenant_id],
+    ["MASTER_AGENT", ids.master],
+    ["AGENT", ids.agent],
+    ["PLAYER", ids.player],
+    ["DRAW", ids.draw],
+    ["PRODUCT", product.product_id],
+    ["GAME", product.game_code],
+    ["WAGER_TYPE", "straight"],
+  ];
+  for (const [scopeType, scopeReference] of liabilityScopes) {
+    await setLiabilityLimit(scopeType, scopeReference);
+  }
 
   const items = [
     {
@@ -382,6 +468,33 @@ try {
       Number(atomic.rows[0].reservations) === 1 &&
       Number(atomic.rows[0].outbox) === 1,
     atomic.rows[0]
+  );
+  const liabilityEvidence = await client.query(
+    `select decision.outcome, decision.reason_code,
+            decision.total_wager_minor::text,
+            decision.theoretical_payout_minor::text,
+            decision.game_definition_version_id,
+            decision.game_definition_hash,
+            decision.paytable_definition_id,
+            decision.paytable_hash,
+            jsonb_array_length(decision.configuration_references) configuration_count
+       from ticket_authority.liability_decisions decision
+      where decision.ticket_id=$1`,
+    [ticketId]
+  );
+  check(
+    "Ticket Liability Authority derives and snapshots immutable theoretical liability",
+    liabilityEvidence.rows.length === 1 &&
+      liabilityEvidence.rows[0].outcome === "ALLOWED" &&
+      liabilityEvidence.rows[0].reason_code === "LIABILITY_ALLOWED" &&
+      Number(liabilityEvidence.rows[0].total_wager_minor) === 300 &&
+      Number(liabilityEvidence.rows[0].theoretical_payout_minor) === 600 &&
+      liabilityEvidence.rows[0].paytable_definition_id === ids.paytable &&
+      Boolean(liabilityEvidence.rows[0].game_definition_version_id) &&
+      String(liabilityEvidence.rows[0].game_definition_hash).length > 0 &&
+      liabilityEvidence.rows[0].paytable_hash === paytableHash &&
+      Number(liabilityEvidence.rows[0].configuration_count) === 8,
+    liabilityEvidence.rows[0]
   );
   const creditSnapshot = await client.query(
     `select ticket.funding_instrument, ticket.wallet_id,
@@ -529,8 +642,145 @@ try {
         `bad-paytable:${runId}`,
         ...baseArgs.slice(14),
       ]),
-    /paytable|foreign key/
+    /paytable|foreign key|exact immutable/i
   );
+
+  await setLiabilityLimit("WAGER_TYPE", "straight", {
+    maximumTheoreticalPayoutMinor: 599,
+  });
+  const payoutLimitKey = `liability-payout:${runId}`;
+  const payoutLimitArgs = [
+    ...baseArgs.slice(0, 10),
+    `liability-payout-${suffix}`,
+    ...baseArgs.slice(11, 13),
+    payoutLimitKey,
+    ...baseArgs.slice(14),
+  ];
+  const payoutRejected = (await client.query(acceptSql, payoutLimitArgs)).rows[0]
+    .result;
+  const payoutDuplicate = (await client.query(acceptSql, payoutLimitArgs)).rows[0]
+    .result;
+  const payoutPartials = await client.query(
+    `select
+      (select count(*) from ticket_authority.tickets where idempotency_key=$1) tickets,
+      (select count(*) from public.credit_reservations
+        where idempotency_key='ticket-reservation:' || $1) reservations,
+      (select count(*) from ticket_authority.liability_decisions
+        where idempotency_key=$1 and outcome='REJECTED') decisions`,
+    [payoutLimitKey]
+  );
+  check(
+    "maximum theoretical payout rejects before reservation and retries deterministically",
+    payoutRejected.accepted === false &&
+      payoutRejected.duplicate === false &&
+      payoutRejected.reasonCode ===
+        "MAXIMUM_THEORETICAL_PAYOUT_EXCEEDED:WAGER_TYPE" &&
+      payoutDuplicate.accepted === false &&
+      payoutDuplicate.duplicate === true &&
+      payoutDuplicate.liabilityDecisionId === payoutRejected.liabilityDecisionId &&
+      Number(payoutPartials.rows[0].tickets) === 0 &&
+      Number(payoutPartials.rows[0].reservations) === 0 &&
+      Number(payoutPartials.rows[0].decisions) === 1,
+    { payoutRejected, payoutDuplicate, partials: payoutPartials.rows[0] }
+  );
+  await setLiabilityLimit("WAGER_TYPE", "straight");
+
+  await setLiabilityLimit("PLAYER", ids.player, { maximumWagerMinor: 299 });
+  const wagerRejected = (
+    await client.query(acceptSql, [
+      ...baseArgs.slice(0, 10),
+      `liability-wager-${suffix}`,
+      ...baseArgs.slice(11, 13),
+      `liability-wager:${runId}`,
+      ...baseArgs.slice(14),
+    ])
+  ).rows[0].result;
+  check(
+    "maximum wager is enforced from the canonical player scope",
+    wagerRejected.accepted === false &&
+      wagerRejected.reasonCode === "MAXIMUM_WAGER_EXCEEDED:PLAYER",
+    wagerRejected
+  );
+  await setLiabilityLimit("PLAYER", ids.player);
+
+  const exposureScopes = [
+    ["TENANT", scope.tenant_id],
+    ["MASTER_AGENT", ids.master],
+    ["AGENT", ids.agent],
+    ["PLAYER", ids.player],
+    ["DRAW", ids.draw],
+    ["PRODUCT", product.product_id],
+    ["GAME", product.game_code],
+    ["WAGER_TYPE", "straight"],
+  ];
+  for (const [scopeType, scopeReference] of exposureScopes) {
+    await setLiabilityLimit(scopeType, scopeReference, {
+      maximumExposureMinor: 1,
+    });
+    const exposureResult = (
+      await client.query(acceptSql, [
+        ...baseArgs.slice(0, 10),
+        `exposure-${scopeType.toLowerCase()}-${suffix}`,
+        ...baseArgs.slice(11, 13),
+        `liability-exposure:${scopeType}:${runId}`,
+        ...baseArgs.slice(14),
+      ])
+    ).rows[0].result;
+    check(
+      `${scopeType} exposure ceiling fails closed`,
+      exposureResult.accepted === false &&
+        exposureResult.reasonCode === `MAXIMUM_EXPOSURE_EXCEEDED:${scopeType}`,
+      exposureResult
+    );
+    await setLiabilityLimit(scopeType, scopeReference);
+  }
+
+  const tenantExposure = await client.query(
+    `select coalesce(sum(decision.theoretical_payout_minor), 0)::bigint exposure
+       from ticket_authority.liability_decisions decision
+       join ticket_authority.tickets ticket on ticket.ticket_id=decision.ticket_id
+      where decision.outcome='ALLOWED'
+        and ticket.status in ('ACCEPTED','AWAITING_DRAW','CLOSED','SETTLEMENT_PENDING')
+        and ticket.tenant_id=$1`,
+    [scope.tenant_id]
+  );
+  await setLiabilityLimit("TENANT", scope.tenant_id, {
+    maximumExposureMinor: Number(tenantExposure.rows[0].exposure) + 600,
+  });
+  const liabilityConcurrentA = new Client({ connectionString: databaseUrl });
+  const liabilityConcurrentB = new Client({ connectionString: databaseUrl });
+  await Promise.all([liabilityConcurrentA.connect(), liabilityConcurrentB.connect()]);
+  const concurrentLiabilityResults = await Promise.all([
+    liabilityConcurrentA.query(acceptSql, [
+      ...baseArgs.slice(0, 10),
+      `liability-concurrent-a-${suffix}`,
+      ...baseArgs.slice(11, 13),
+      `liability-concurrent-a:${runId}`,
+      ...baseArgs.slice(14),
+    ]),
+    liabilityConcurrentB.query(acceptSql, [
+      ...baseArgs.slice(0, 10),
+      `liability-concurrent-b-${suffix}`,
+      ...baseArgs.slice(11, 13),
+      `liability-concurrent-b:${runId}`,
+      ...baseArgs.slice(14),
+    ]),
+  ]);
+  await Promise.all([liabilityConcurrentA.end(), liabilityConcurrentB.end()]);
+  const concurrentLiability = concurrentLiabilityResults.map(
+    (result) => result.rows[0].result
+  );
+  check(
+    "concurrent acceptance cannot exceed the authoritative tenant exposure ceiling",
+    concurrentLiability.filter((result) => result.accepted === true).length === 1 &&
+      concurrentLiability.filter(
+        (result) =>
+          result.accepted === false &&
+          result.reasonCode === "MAXIMUM_EXPOSURE_EXCEEDED:TENANT"
+      ).length === 1,
+    { concurrentLiability }
+  );
+  await setLiabilityLimit("TENANT", scope.tenant_id);
 
   const beforeInsufficient = await client.query(
     "select count(*) count from ticket_authority.tickets"
@@ -784,17 +1034,20 @@ try {
       `sha256:ticket-brand-limit:${runId}`,
     ]
   );
-  await rejected(
+  const effectiveLimitResult = (
+    await client.query(acceptSql, [
+      ...baseArgs.slice(0, 10),
+      `limit-${suffix}`,
+      ...baseArgs.slice(11, 13),
+      `limit:${runId}`,
+      ...baseArgs.slice(14),
+    ])
+  ).rows[0].result;
+  check(
     "effective wager limit intersects applicable parent and child scopes",
-    () =>
-      client.query(acceptSql, [
-        ...baseArgs.slice(0, 10),
-        `limit-${suffix}`,
-        ...baseArgs.slice(11, 13),
-        `limit:${runId}`,
-        ...baseArgs.slice(14),
-      ]),
-    /effective maximum wager/
+    effectiveLimitResult.accepted === false &&
+      effectiveLimitResult.reasonCode === "ABOVE_EFFECTIVE_MAXIMUM_WAGER",
+    effectiveLimitResult
   );
 
   const closeClient = new Client({ connectionString: databaseUrl });
@@ -931,6 +1184,51 @@ try {
       acceptanceAuthority.rows[0].persistence_publicly_executable === false &&
       acceptanceAuthority.rows[0].persistence_repeats_draw_fence === false,
     acceptanceAuthority.rows[0]
+  );
+  const liabilityAuthority = await client.query(`
+    select
+      (select count(*)::int
+         from pg_proc procedure
+         join pg_namespace namespace on namespace.oid=procedure.pronamespace
+        where namespace.nspname='ticket_authority'
+          and procedure.proname='evaluate_liability') liability_authorities,
+      position(
+        'evaluate_liability'
+        in pg_get_functiondef(
+          'ticket_authority.accept_ticket(uuid,uuid,text,uuid,uuid,uuid,uuid,uuid,text,text,text,jsonb,text,text,text,text,text)'::regprocedure
+        )
+      ) > 0 acceptance_uses_liability,
+      position(
+        'evaluate_liability'
+        in pg_get_functiondef(
+          'ticket_authority.persist_authorized_ticket(uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,text,jsonb,text,text,text,text,text)'::regprocedure
+        )
+      ) > 0 persistence_duplicates_liability
+  `);
+  check(
+    "one Ticket Liability Authority executes before Funding and Reservation",
+    liabilityAuthority.rows[0].liability_authorities === 1 &&
+      liabilityAuthority.rows[0].acceptance_uses_liability === true &&
+      liabilityAuthority.rows[0].persistence_duplicates_liability === false,
+    liabilityAuthority.rows[0]
+  );
+  await rejected(
+    "liability decisions are append-only",
+    () =>
+      client.query(
+        "update ticket_authority.liability_decisions set reason_code='TAMPERED' where ticket_id=$1",
+        [ticketId]
+      ),
+    /append-only/
+  );
+  await rejected(
+    "liability configurations are append-only",
+    () =>
+      client.query(
+        "delete from ticket_authority.liability_limit_configurations where tenant_id=$1",
+        [scope.tenant_id]
+      ),
+    /append-only/
   );
   check(
     "one canonical production Ticket mutation path is enforced",

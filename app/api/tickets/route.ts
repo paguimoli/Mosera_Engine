@@ -203,6 +203,9 @@ export async function POST(request: Request) {
     };
 
     const result = await acceptCanonicalTicket(input);
+    if (result.accepted === false) {
+      return NextResponse.json(result, { status: 422 });
+    }
     return NextResponse.json(result, { status: result.duplicate ? 200 : 201 });
   } catch (error) {
     return errorResponse(error);
