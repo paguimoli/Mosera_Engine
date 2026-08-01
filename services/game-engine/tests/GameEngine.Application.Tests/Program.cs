@@ -183,6 +183,38 @@ static OfficialResultIngestionRequest OfficialRequest(
         supersedesEvidenceId,
         correctionReason);
 
+static ManualCertifiedSubmissionRequest ManualCertifiedRequest(
+    DrawExecutionManifest manifest,
+    IReadOnlyList<int> certifiedNumbers,
+    IReadOnlyList<int> bonusNumbers,
+    string idempotencyKey,
+    Guid? supersedesEvidenceId = null,
+    string? correctionReason = null) =>
+    new(
+        Guid.NewGuid(),
+        idempotencyKey,
+        $"correlation:{idempotencyKey}",
+        $"official-draw:{manifest.DrawId:N}",
+        "LOTTO-OFFICIAL",
+        manifest.DrawId,
+        manifest.ScheduleVersionId,
+        manifest.ExecutionManifestId,
+        manifest.ScheduledExecutionAt,
+        certifiedNumbers,
+        bonusNumbers,
+        new Dictionary<string, object?>
+        {
+            ["entryChannel"] = "REGULATOR_CONSOLE",
+            ["submissionSchemaVersion"] = "1.0.0"
+        },
+        $"certification:{manifest.DrawId:N}",
+        "operator:qa-certified-entry",
+        supersedesEvidenceId is null ? "REGULATOR_AUTHORIZED_ENTRY" : "CERTIFIED_CORRECTION",
+        $"sha256:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"submission:{idempotencyKey}"))).ToLowerInvariant()}",
+        DateTimeOffset.UtcNow,
+        supersedesEvidenceId,
+        correctionReason);
+
 var runtimeResolver = new OutcomeProviderResolver();
 var runtimeProvider = RuntimeProvider(
     "outcome-provider:runtime:certified-csprng",
@@ -861,6 +893,256 @@ if (args.Contains("official-results-provider", StringComparer.Ordinal))
     return;
 }
 
+var manualProviderRepository = new CanonicalCsprngTestRepository(
+    CanonicalOutcomeProviderCategory.ManualCertified);
+var manualCertifiedProvider = new ManualCertifiedProvider(
+    new CanonicalOutcomeProviderAuthority(manualProviderRepository),
+    officialDefinitions,
+    officialDefinitionVersions);
+var manualScheduledAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+var manualManifest = new DrawExecutionManifest(
+    Guid.NewGuid(),
+    Guid.NewGuid(),
+    Guid.NewGuid(),
+    officialDefinitionVersionId,
+    Guid.NewGuid(),
+    "lotto-official",
+    "1.0.0",
+    "mosera-manual-certified",
+    "2.0.0",
+    "1",
+    "evaluator:official:1",
+    "paytable:official:1",
+    manualScheduledAt,
+    "sha256:manual-schedule",
+    "sha256:manual-draw",
+    "sha256:manual-manifest",
+    manualScheduledAt.AddMinutes(-1));
+var manualRequest = ManualCertifiedRequest(
+    manualManifest,
+    [40, 3, 21, 8, 12],
+    [7],
+    $"manual-certified:{Guid.NewGuid():N}");
+var manualSubmission = await manualCertifiedProvider.SubmitAsync(
+    manualManifest,
+    manualRequest,
+    CancellationToken.None);
+if (!manualSubmission.NormalizedResult.CertifiedNumbers.SequenceEqual([3, 8, 12, 21, 40]) ||
+    !manualSubmission.NormalizedResult.BonusNumbers.SequenceEqual([7]) ||
+    manualSubmission.Evidence.OperatorIdentityReference != "operator:qa-certified-entry" ||
+    string.IsNullOrWhiteSpace(manualSubmission.Evidence.CertificationReference) ||
+    string.IsNullOrWhiteSpace(manualSubmission.Evidence.ReplayIdentifier) ||
+    manualSubmission.CanonicalEvidenceId == Guid.Empty)
+{
+    throw new InvalidOperationException(
+        "Manual certified submission must persist normalized result, operator, certification, and replay evidence.");
+}
+
+var duplicateManual = await manualCertifiedProvider.SubmitAsync(
+    manualManifest,
+    manualRequest,
+    CancellationToken.None);
+if (!duplicateManual.Duplicate ||
+    duplicateManual.ExecutionId != manualSubmission.ExecutionId ||
+    duplicateManual.CanonicalEvidenceId != manualSubmission.CanonicalEvidenceId)
+{
+    throw new InvalidOperationException(
+        "Duplicate manual certified submission must return existing immutable evidence.");
+}
+
+AssertThrows(
+    () => manualCertifiedProvider.SubmitAsync(
+        manualManifest,
+        ManualCertifiedRequest(
+            manualManifest,
+            [1, 2, 3, 4, 5],
+            [6],
+            $"manual-conflict:{Guid.NewGuid():N}"),
+        CancellationToken.None).GetAwaiter().GetResult(),
+    "Conflicting manual submission without explicit supersession must fail closed.");
+
+var correctionManualRequest = ManualCertifiedRequest(
+    manualManifest,
+    [1, 2, 3, 4, 5],
+    [6],
+    $"manual-correction:{Guid.NewGuid():N}",
+    manualSubmission.CanonicalEvidenceId,
+    "Regulator-issued certified correction");
+var correctedManual = await manualCertifiedProvider.SubmitAsync(
+    manualManifest,
+    correctionManualRequest,
+    CancellationToken.None);
+if (!correctedManual.Superseding ||
+    correctedManual.Evidence.ExecutionVersion != 2 ||
+    correctedManual.Evidence.SupersedesExecutionId != manualSubmission.ExecutionId ||
+    correctedManual.Evidence.SupersedesEvidenceId != manualSubmission.CanonicalEvidenceId)
+{
+    throw new InvalidOperationException(
+        "Manual certified correction must create immutable superseding evidence.");
+}
+
+var manualReplay = await manualCertifiedProvider.VerifyReplayAsync(
+    manualManifest,
+    CancellationToken.None);
+if (!manualReplay.Valid)
+{
+    throw new InvalidOperationException(
+        "Manual certified replay must validate evidence without republishing.");
+}
+
+AssertThrows(
+    () => manualCertifiedProvider.BindOutcomeCertificateAsync(
+        manualManifest,
+        Guid.NewGuid(),
+        "sha256:wrong-manual-outcome",
+        CancellationToken.None).GetAwaiter().GetResult(),
+    "Manual provider must reject an Outcome Certificate hash mismatch.");
+var manualCertificate = await manualCertifiedProvider.BindOutcomeCertificateAsync(
+    manualManifest,
+    Guid.NewGuid(),
+    correctedManual.NormalizedResult.CanonicalPayloadHash,
+    CancellationToken.None);
+if (manualCertificate.Stage != OutcomeProviderEvidenceStage.Authoritative ||
+    manualCertificate.ExecutionId != correctedManual.ExecutionId ||
+    manualProviderRepository.AuthoritativeEvidence.Count != 1)
+{
+    throw new InvalidOperationException(
+        "Manual evidence must publish only through canonical Outcome Certificate binding.");
+}
+
+var invalidManualManifest = manualManifest with
+{
+    ExecutionManifestId = Guid.NewGuid(),
+    DrawId = Guid.NewGuid(),
+    CanonicalManifestHash = "sha256:invalid-manual-manifest"
+};
+AssertThrows(
+    () => manualCertifiedProvider.SubmitAsync(
+        invalidManualManifest,
+        ManualCertifiedRequest(
+            invalidManualManifest,
+            [1, 1, 2, 3, 41],
+            [1],
+            $"manual-invalid:{Guid.NewGuid():N}"),
+        CancellationToken.None).GetAwaiter().GetResult(),
+    "Manual result violating universe, uniqueness, or bonus rules must fail closed.");
+AssertThrows(
+    () => manualCertifiedProvider.SubmitAsync(
+        invalidManualManifest,
+        ManualCertifiedRequest(
+            invalidManualManifest,
+            [1, 2, 3, 4, 5],
+            [6],
+            $"manual-identity:{Guid.NewGuid():N}") with { DrawId = Guid.NewGuid() },
+        CancellationToken.None).GetAwaiter().GetResult(),
+    "Manual result with mismatched draw identity must fail closed.");
+var missingCertificationManifest = invalidManualManifest with
+{
+    ExecutionManifestId = Guid.NewGuid(),
+    DrawId = Guid.NewGuid(),
+    CanonicalManifestHash = "sha256:missing-certification-manifest"
+};
+AssertThrows(
+    () => manualCertifiedProvider.SubmitAsync(
+        missingCertificationManifest,
+        ManualCertifiedRequest(
+            missingCertificationManifest,
+            [1, 2, 3, 4, 5],
+            [6],
+            $"manual-missing-certification:{Guid.NewGuid():N}") with
+        {
+            CertificationReference = string.Empty
+        },
+        CancellationToken.None).GetAwaiter().GetResult(),
+    "Manual result without certification evidence must fail closed.");
+
+var recoveryManualRepository = new CanonicalCsprngTestRepository(
+    CanonicalOutcomeProviderCategory.ManualCertified);
+var recoveryManualDefinitions = new InMemoryGameDefinitionRepository();
+var recoveryManualDefinitionVersions = new InMemoryGameDefinitionVersionRepository();
+var recoveryManualProvider = new ManualCertifiedProvider(
+    new CanonicalOutcomeProviderAuthority(recoveryManualRepository),
+    recoveryManualDefinitions,
+    recoveryManualDefinitionVersions);
+var recoveryManualManifest = invalidManualManifest with
+{
+    ExecutionManifestId = Guid.NewGuid(),
+    DrawId = Guid.NewGuid(),
+    CanonicalManifestHash = "sha256:manual-recovery-manifest"
+};
+var recoveryManualRequest = ManualCertifiedRequest(
+    recoveryManualManifest,
+    [1, 2, 3, 4, 5],
+    [6],
+    $"manual-recovery:{Guid.NewGuid():N}");
+AssertThrows(
+    () => recoveryManualProvider.SubmitAsync(
+        recoveryManualManifest,
+        recoveryManualRequest,
+        CancellationToken.None).GetAwaiter().GetResult(),
+    "Interrupted manual submission must retain failed attempt evidence.");
+await recoveryManualDefinitions.UpsertAsync(
+    new GameDefinition(
+        officialDefinitionId,
+        "LOTTO-OFFICIAL",
+        "Manual Recovery QA",
+        officialDefinitionVersionId,
+        Guid.NewGuid(),
+        DateTimeOffset.UnixEpoch),
+    CancellationToken.None);
+await recoveryManualDefinitionVersions.UpsertAsync(
+    new GameDefinitionVersion(
+        officialDefinitionVersionId,
+        officialDefinitionId,
+        1,
+        "sha256:manual-recovery-definition",
+        "paytable:official:1",
+        "evaluator:official:1",
+        "manual-certified:2.0.0",
+        DateTimeOffset.UnixEpoch,
+        null,
+        new NumberOutcomeGenerationDefinition(
+            Enumerable.Range(1, 40).ToArray(),
+            5,
+            Unique: true,
+            WithReplacement: false,
+            OutcomeNumberOrdering.Ascending,
+            new BonusNumberOutcomeDefinition(
+                Enumerable.Range(1, 10).ToArray(),
+                1,
+                Unique: true,
+                WithReplacement: false,
+                MayOverlapPrimary: false,
+                OutcomeNumberOrdering.Ascending))),
+    CancellationToken.None);
+var recoveredManual = await recoveryManualProvider.SubmitAsync(
+    recoveryManualManifest,
+    recoveryManualRequest,
+    CancellationToken.None);
+if (recoveredManual.Duplicate ||
+    recoveryManualRepository.Attempts.Count(attempt =>
+        attempt.ExecutionId == recoveredManual.ExecutionId) != 2)
+{
+    throw new InvalidOperationException(
+        "Manual certified recovery must resume the durable claim as a new attempt.");
+}
+
+var manualReadiness = await manualCertifiedProvider.CheckReadinessAsync(
+    CancellationToken.None);
+if (!manualReadiness.ProductionReady ||
+    manualReadiness.ProductionActive)
+{
+    throw new InvalidOperationException(
+        "Manual Certified provider must be production-ready but inactive.");
+}
+
+if (args.Contains("manual-certified-provider", StringComparer.Ordinal))
+{
+    Console.WriteLine(
+        "Manual Certified provider tests passed; submissions=1; corrections=1; recoveryAttempts=2.");
+    return;
+}
+
 if (args.Contains("internal-csprng-provider", StringComparer.Ordinal))
 {
     Console.WriteLine(
@@ -1184,7 +1466,7 @@ if (invalidBinding.Versions.Single().Status != GameBindingStatus.Rejected)
 }
 
 var drawAuthorityStatus = drawAuthorityRegistry.GetRegistryStatus();
-if (drawAuthorityStatus.RegisteredAuthorityCount < 5)
+if (drawAuthorityStatus.RegisteredAuthorityCount < 4)
 {
     throw new InvalidOperationException("Expected placeholder Draw Authorities to be registered.");
 }
@@ -1194,8 +1476,8 @@ var inMemoryAuthorityVersionRepository = new InMemoryDrawAuthorityVersionReposit
 var inMemoryAuthorityAssignmentRepository = new InMemoryDrawAuthorityAssignmentRepository();
 var persistedAuthorityRegistry = new DrawAuthorityRegistry(inMemoryAuthorityRepository, inMemoryAuthorityVersionRepository);
 var persistedAuthorities = await inMemoryAuthorityRepository.ListAsync(CancellationToken.None);
-if (persistedAuthorityRegistry.GetRegisteredAuthorities().Count < 5 ||
-    persistedAuthorities.Count < 5)
+if (persistedAuthorityRegistry.GetRegisteredAuthorities().Count < 4 ||
+    persistedAuthorities.Count < 4)
 {
     throw new InvalidOperationException("In-memory draw authority repositories should mirror registered authorities.");
 }
@@ -1232,77 +1514,12 @@ if (testProductionAssignment.Status != DrawAuthorityAssignmentStatus.Rejected)
     throw new InvalidOperationException("Internal Test PRNG must reject production assignment.");
 }
 
-var manual = drawAuthorityRegistry.GetRegisteredAuthorities().Single(entry => entry.Authority.Code == "manual-certified-entry");
-var manualTestingAssignment = drawAuthorityRegistry.ValidateAssignment(
-    manual.Authority.Id,
-    Guid.NewGuid(),
-    productionBinding: false,
-    [DrawAuthorityCapability.CanAcceptManualResults]);
-if (manualTestingAssignment.Status == DrawAuthorityAssignmentStatus.Rejected)
+if (drawAuthorityRegistry.GetRegisteredAuthorities().Any(entry =>
+    entry.Authority.Code == "manual-certified-entry") ||
+    drawAuthorityRegistry.GetResultSubmissions().Count != 0)
 {
-    throw new InvalidOperationException("Manual certified result authority should allow testing assignment.");
-}
-
-var submissions = drawAuthorityRegistry.GetResultSubmissions();
-if (submissions.Count < 2)
-{
-    throw new InvalidOperationException("Multiple result submissions must be supported.");
-}
-
-var certificationService = new DrawCertificationService(drawAuthorityRegistry.GetRegisteredAuthorities(), submissions);
-var firstSubmission = submissions.First();
-var rejectedMissingMetadata = false;
-try
-{
-    certificationService.CertifyResult(new DrawCertificationDecision(
-        firstSubmission.DrawScheduleId,
-        firstSubmission.Id,
-        firstSubmission.DrawAuthorityId,
-        "operator-placeholder",
-        OperatorCertificationMetadataPresent: false,
-        DateTimeOffset.UtcNow));
-}
-catch (InvalidOperationException)
-{
-    rejectedMissingMetadata = true;
-}
-
-if (!rejectedMissingMetadata)
-{
-    throw new InvalidOperationException("Manual certification without metadata should be rejected.");
-}
-
-var official = certificationService.CertifyResult(new DrawCertificationDecision(
-    firstSubmission.DrawScheduleId,
-    firstSubmission.Id,
-    firstSubmission.DrawAuthorityId,
-    "operator-placeholder",
-    OperatorCertificationMetadataPresent: true,
-    DateTimeOffset.UtcNow));
-if (official.Status != DrawCertificationStatus.Approved)
-{
-    throw new InvalidOperationException("Official certified result should be approved when metadata exists.");
-}
-
-var rejectedOverwrite = false;
-try
-{
-    certificationService.CertifyResult(new DrawCertificationDecision(
-        firstSubmission.DrawScheduleId,
-        submissions.Last().Id,
-        firstSubmission.DrawAuthorityId,
-        "operator-placeholder",
-        OperatorCertificationMetadataPresent: true,
-        DateTimeOffset.UtcNow));
-}
-catch (InvalidOperationException)
-{
-    rejectedOverwrite = true;
-}
-
-if (!rejectedOverwrite)
-{
-    throw new InvalidOperationException("Second official result for same draw should be rejected.");
+    throw new InvalidOperationException(
+        "Legacy manual result authority and seeded submissions must be retired.");
 }
 
 var randomnessRegistry = new RandomnessRegistry();
@@ -1394,13 +1611,12 @@ if (validationCommand.Status != ValidationCheckStatus.Placeholder)
 
 var scheduler = new DrawSchedulerService(registry, drawAuthorityRegistry);
 var schedules = scheduler.GetSchedules();
-if (schedules.Count < 2)
+if (schedules.Count != 1)
 {
-    throw new InvalidOperationException("Expected fixed interval and daily draw schedules.");
+    throw new InvalidOperationException("Expected one non-authoritative fixed interval sample schedule.");
 }
 
 var intervalSchedule = schedules.Single(schedule => schedule.ScheduleKind == DrawScheduleKind.FixedInterval);
-var dailySchedule = schedules.Single(schedule => schedule.ScheduleKind == DrawScheduleKind.FixedDailyTime);
 var intervalPreview = scheduler.PreviewSchedule(intervalSchedule.Id, count: 3);
 if (intervalPreview.UpcomingDraws.Count != 3)
 {
@@ -1411,18 +1627,6 @@ var intervalDraws = intervalPreview.UpcomingDraws.OrderBy(draw => draw.DrawAt).T
 if ((intervalDraws[1].DrawAt - intervalDraws[0].DrawAt) != TimeSpan.FromMinutes(intervalSchedule.IntervalMinutes ?? 0))
 {
     throw new InvalidOperationException("Fixed interval schedule generation used the wrong interval.");
-}
-
-var dailyPreview = scheduler.PreviewSchedule(dailySchedule.Id, count: 3);
-if (dailyPreview.UpcomingDraws.Count != 3 || dailySchedule.TimeZoneId != "UTC")
-{
-    throw new InvalidOperationException("Daily draw schedule preview or time-zone metadata is invalid.");
-}
-
-var firstDaily = dailyPreview.UpcomingDraws.OrderBy(draw => draw.DrawAt).First();
-if (firstDaily.SalesCutoffAt != firstDaily.DrawAt.Subtract(dailySchedule.SalesCutoffBeforeDraw))
-{
-    throw new InvalidOperationException("Sales cutoff calculation is invalid.");
 }
 
 var lifecycle = scheduler.GetLifecycle();
@@ -1442,17 +1646,11 @@ if (internalBeforeClose.InternalGenerationEligible)
     throw new InvalidOperationException("Internal draws must not be eligible before sales close.");
 }
 
-var manualPrevious = scheduler.GetLifecycle()
-    .Where(draw => draw.ResultSource == DrawResultSource.ManualCertified)
+var previousDraw = scheduler.GetLifecycle()
+    .Where(draw => draw.DrawAt < DateTimeOffset.UtcNow)
     .OrderBy(draw => draw.DrawAt)
     .First();
-if (manualPrevious.DrawAt < DateTimeOffset.UtcNow &&
-    manualPrevious.Status is not DrawLifecycleStatus.AwaitingResult and not DrawLifecycleStatus.ManualReviewRequired)
-{
-    throw new InvalidOperationException("Official/manual result games should await result after close.");
-}
-
-var marked = scheduler.MarkMissed(manualPrevious.DrawId);
+var marked = scheduler.MarkMissed(previousDraw.DrawId);
 if (marked.Status != DrawLifecycleStatus.ManualReviewRequired || !marked.ManualRecoveryMarked)
 {
     throw new InvalidOperationException("Missed draw recovery marker was not applied.");
@@ -1465,7 +1663,7 @@ if (invalidTransition.Accepted)
 }
 
 var schedulerStatus = scheduler.GetSchedulerStatus();
-if (schedulerStatus.ScheduleCount < 2 || schedulerStatus.ProductionActivationEnabled || schedulerStatus.SettlementIntegrationEnabled)
+if (schedulerStatus.ScheduleCount != 1 || schedulerStatus.ProductionActivationEnabled || schedulerStatus.SettlementIntegrationEnabled)
 {
     throw new InvalidOperationException("Scheduler health reporting is invalid.");
 }
@@ -1481,7 +1679,7 @@ if (persistedSchedules.Count == 0 ||
 }
 
 var persistentMissedDraw = persistentLifecycle
-    .Where(draw => draw.ResultSource == DrawResultSource.ManualCertified)
+    .Where(draw => draw.DrawAt < DateTimeOffset.UtcNow)
     .OrderBy(draw => draw.DrawAt)
     .First();
 var persistentMarked = persistentScheduler.MarkMissed(persistentMissedDraw.DrawId);
@@ -1518,7 +1716,7 @@ if (seededCheckpoints.Count != seededBatches.Length)
 var bindingForEvaluation = registry.GetGameBindings().First();
 var moduleForEvaluation = registry.GetRegisteredModules().First();
 var drawForEvaluation = scheduler.GetLifecycle()
-    .First(draw => draw.Status is DrawLifecycleStatus.AwaitingResult or DrawLifecycleStatus.ManualReviewRequired);
+    .First(draw => draw.DrawId == marked.DrawId);
 var defaultBatchRun = evaluationOrchestrator.PlanRun(new EvaluationPlanRequest(
     drawForEvaluation.DrawId,
     bindingForEvaluation.Id,
@@ -1979,7 +2177,7 @@ if (!string.IsNullOrWhiteSpace(databaseUrl))
     var postgresScheduler = new DrawSchedulerService(registry, drawAuthorityRegistry, postgresDrawScheduleRepository);
     var postgresLifecycle = postgresScheduler.GetLifecycle();
     var postgresLifecycleDraw = postgresLifecycle
-        .Where(draw => draw.ResultSource == DrawResultSource.ManualCertified)
+        .Where(draw => draw.DrawAt < DateTimeOffset.UtcNow)
         .OrderBy(draw => draw.DrawAt)
         .First();
     if (await postgresDrawScheduleRepository.GetAsync(postgresLifecycleDraw.DrawId, CancellationToken.None) is null)

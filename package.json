@@ -269,6 +269,7 @@
     "qa:canonical-outcome-provider-authority": "node scripts/run-ts-script.mjs scripts/qa/canonical-outcome-provider-authority.ts",
     "qa:internal-csprng-provider": "node scripts/run-ts-script.mjs scripts/qa/internal-csprng-provider.ts",
     "qa:official-results-provider": "node scripts/run-ts-script.mjs scripts/qa/official-results-provider.ts",
+    "qa:manual-certified-provider": "node scripts/run-ts-script.mjs scripts/qa/manual-certified-provider.ts",
     "qa:internal-csprng-statistical": "node scripts/qa/internal-csprng-statistical.mjs",
     "qa:backend-launch-api-consolidation": "node scripts/qa/backend-launch-api-consolidation.mjs",
     "qa:backend-authority-consolidation": "node scripts/run-ts-script.mjs scripts/qa/backend-authority-consolidation.ts",

@@ -974,18 +974,6 @@ public static class GameEngineEndpoints
             });
         });
 
-        group.MapPost("/manual-results", (HttpContext context) =>
-        {
-            return Results.Accepted(value: new
-            {
-                success = true,
-                action = "manual_result_submission_placeholder",
-                officialCertifiedResultCreated = false,
-                authBoundary = "admin_placeholder",
-                correlationId = context.GetCorrelationId()
-            });
-        });
-
         group.MapPost("/certification/build", (HttpContext context, CertificationSuite suite) =>
         {
             return Results.Accepted(value: new
@@ -1085,6 +1073,7 @@ public static class GameEngineEndpoints
         var canonicalOutcomePipelineReady = await readinessChecks.CheckCanonicalOutcomePipelineAsync(context.RequestAborted);
         var provablyFairRuntimeReady = await readinessChecks.CheckProvablyFairRuntimeAsync(context.RequestAborted);
         var officialResultsProviderReady = await readinessChecks.CheckOfficialResultsProviderAsync(context.RequestAborted);
+        var manualCertifiedProviderReady = await readinessChecks.CheckManualCertifiedProviderAsync(context.RequestAborted);
         var physicalDrawRuntimeReady = await readinessChecks.CheckPhysicalDrawRuntimeAsync(context.RequestAborted);
         var dependencies = new[]
         {
@@ -1102,6 +1091,7 @@ public static class GameEngineEndpoints
             canonicalOutcomePipelineReady,
             provablyFairRuntimeReady,
             officialResultsProviderReady,
+            manualCertifiedProviderReady,
             physicalDrawRuntimeReady
         };
         var ready = dependencies.All(dependency => dependency.Ready);

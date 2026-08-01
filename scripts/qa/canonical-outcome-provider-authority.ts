@@ -71,7 +71,7 @@ async function main() {
          'mosera-manual-certified')`,
     );
     assert(
-      builtIns.rowCount === 5 &&
+      builtIns.rowCount === 6 &&
         builtIns.rows.every(
           (row) => {
             const internalProductionReady =
@@ -80,16 +80,19 @@ async function main() {
             const officialProductionReady =
               row.provider_id === "mosera-official-results" &&
               row.provider_version === "2.0.0";
+            const manualProductionReady =
+              row.provider_id === "mosera-manual-certified" &&
+              row.provider_version === "2.0.0";
             return (
               row.production_eligible ===
-                (internalProductionReady || officialProductionReady) &&
+                (internalProductionReady || officialProductionReady || manualProductionReady) &&
               row.production_ready ===
-                (internalProductionReady || officialProductionReady) &&
+                (internalProductionReady || officialProductionReady || manualProductionReady) &&
               row.activation_state === "DISABLED"
             );
           },
         ),
-      "Internal CSPRNG and Official Results are production-ready while every built-in provider remains disabled",
+      "Internal CSPRNG, Official Results, and Manual Certified are production-ready while every built-in provider remains disabled",
     );
 
     await expectFailure("provider versions are immutable", () =>

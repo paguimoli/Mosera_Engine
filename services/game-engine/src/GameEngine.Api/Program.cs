@@ -42,6 +42,7 @@ builder.Services.AddSingleton<OutcomeRuntimeRecoveryService>();
 builder.Services.AddSingleton<CanonicalOutcomeProviderAuthority>();
 builder.Services.AddSingleton<InternalCsprngOutcomeProvider>();
 builder.Services.AddSingleton<OfficialResultsProvider>();
+builder.Services.AddSingleton<ManualCertifiedProvider>();
 builder.Services.AddSingleton<IMathEvaluator, KenoMathEvaluator>();
 builder.Services.AddSingleton<MathEvaluatorRegistry>();
 builder.Services.AddSingleton<MathCertificateEvaluationService>();

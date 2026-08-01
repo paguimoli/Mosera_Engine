@@ -53,31 +53,6 @@ public abstract class DrawProviderPlaceholderBase : IDrawProvider, IDrawResultPr
     }
 }
 
-public sealed class ManualCertifiedResultProvider : DrawProviderPlaceholderBase, IManualCertifiedResultProvider
-{
-    public override DrawProviderMetadata GetProviderMetadata()
-    {
-        return new DrawProviderMetadata(
-            "manual-certified-result",
-            "Manual Certified Result Provider",
-            DrawProviderType.ManualCertifiedEntry,
-            "0.0.0-placeholder",
-            ProductionRngImplemented: false,
-            "manual_certification_placeholder");
-    }
-
-    public override IReadOnlyCollection<DrawAuthorityCapability> GetCapabilities()
-    {
-        return
-        [
-            DrawAuthorityCapability.CanAcceptManualResults,
-            DrawAuthorityCapability.CanSubmitEvidenceOnly,
-            DrawAuthorityCapability.CanCertifyOfficialResult,
-            DrawAuthorityCapability.RequiresOperatorCertification
-        ];
-    }
-}
-
 public sealed class OfficialFeedProvider : DrawProviderPlaceholderBase, IOfficialFeedProvider
 {
     public override DrawProviderMetadata GetProviderMetadata()

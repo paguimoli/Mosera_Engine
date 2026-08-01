@@ -88,7 +88,7 @@ assert(registryStatus.response.status === 200 && registryStatus.body?.success ==
   status: registryStatus.response.status,
   body: registryStatus.body,
 });
-assert(registryStatus.body.registryStatus.registeredAuthorityCount >= 5, "Draw Authority registry must expose placeholder authorities.", {
+assert(registryStatus.body.registryStatus.registeredAuthorityCount >= 4, "Draw Authority registry must expose remaining placeholder authorities.", {
   registryStatus: registryStatus.body.registryStatus,
 });
 assert(registryStatus.body.registryStatus.productionReadyAuthorityCount === 0, "No Draw Authority should be production-ready in Phase 22.6D.", {
@@ -102,13 +102,12 @@ assert(authoritiesResult.response.status === 200 && authoritiesResult.body?.succ
 });
 const authorities = authoritiesResult.body.drawAuthorities;
 const providers = authoritiesResult.body.providers;
-assert(Array.isArray(authorities) && authorities.length >= 5, "Draw Authority placeholders must be visible.", { authorities });
-assert(Array.isArray(providers) && providers.length >= 5, "Draw provider placeholders must be visible.", { providers });
+assert(Array.isArray(authorities) && authorities.length >= 4, "Remaining Draw Authority placeholders must be visible.", { authorities });
+assert(Array.isArray(providers) && providers.length >= 4, "Remaining draw provider placeholders must be visible.", { providers });
 assert(providers.every((provider) => provider.productionRngImplemented === false), "No production RNG implementation may be exposed.", { providers });
 
 const byCode = new Map(authorities.map((entry) => [entry.authority?.code, entry]));
 for (const code of [
-  "manual-certified-entry",
   "official-feed-placeholder",
   "internal-production-prng",
   "internal-test-prng",
@@ -120,31 +119,14 @@ for (const code of [
 const testPrng = byCode.get("internal-test-prng");
 assert(testPrng.productionReady === false, "Internal Test PRNG must not be production-ready.", { testPrng });
 
-const manual = byCode.get("manual-certified-entry");
-assert(
-  manual.authority.capabilities.includes("RequiresOperatorCertification"),
-  "Manual Certified Result provider must require operator certification metadata.",
-  { manual }
-);
-
-const manualHealth = await requestJson(`${gameEngineUrl}/api/game-engine/draw-authorities/${manual.authority.id}/health`);
-assert(manualHealth.response.status === 200 && manualHealth.body?.success === true, "Draw Authority health endpoint failed.", {
-  status: manualHealth.response.status,
-  body: manualHealth.body,
-});
-
-const versions = await requestJson(`${gameEngineUrl}/api/game-engine/draw-authorities/${manual.authority.id}/versions`);
-assert(versions.response.status === 200 && versions.body?.versions?.length >= 1, "Draw Authority versions endpoint failed.", {
-  status: versions.response.status,
-  body: versions.body,
-});
+assert(!byCode.has("manual-certified-entry"), "Legacy Manual Certified placeholder authority must be retired.", { authorities });
 
 const submissionsResult = await requestJson(`${gameEngineUrl}/api/game-engine/draw-result-submissions`);
 assert(submissionsResult.response.status === 200 && submissionsResult.body?.success === true, "Draw result submissions endpoint failed.", {
   status: submissionsResult.response.status,
   body: submissionsResult.body,
 });
-assert(submissionsResult.body.drawResultSubmissions.length >= 2, "Multiple result submissions must be visible.", {
+assert(submissionsResult.body.drawResultSubmissions.length === 0, "Legacy seeded manual submissions must be retired.", {
   submissions: submissionsResult.body.drawResultSubmissions,
 });
 assert(submissionsResult.body.immutable === true, "Draw result submissions must be reported immutable.", {
@@ -160,18 +142,10 @@ assert(officialResults.body.settlementIntegrationEnabled === false, "Settlement 
   body: officialResults.body,
 });
 
-const approve = await requestJson(`${gameEngineUrl}/api/game-engine/draw-authorities/${manual.authority.id}/approve`, {
-  method: "POST",
-});
-assert(approve.response.status === 202 && approve.body?.productionUseEnabled === false, "Approval endpoint must remain placeholder-only.", {
-  status: approve.response.status,
-  body: approve.body,
-});
-
 const manualResult = await requestJson(`${gameEngineUrl}/api/game-engine/manual-results`, {
   method: "POST",
 });
-assert(manualResult.response.status === 202 && manualResult.body?.officialCertifiedResultCreated === false, "Manual result endpoint must remain placeholder-only.", {
+assert(manualResult.response.status === 404, "Legacy manual result submission endpoint must be retired.", {
   status: manualResult.response.status,
   body: manualResult.body,
 });

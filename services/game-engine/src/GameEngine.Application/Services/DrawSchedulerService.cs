@@ -361,10 +361,8 @@ public sealed class DrawSchedulerService
     {
         var bindings = gameModuleRegistry.GetGameBindings().ToArray();
         var testBinding = bindings.FirstOrDefault(binding => binding.GameType == GameType.Test) ?? bindings.First();
-        var hotSpotBinding = bindings.FirstOrDefault(binding => binding.GameType == GameType.HotSpot) ?? bindings.First();
         var authorities = drawAuthorityRegistry.GetRegisteredAuthorities();
         var internalAuthority = authorities.Single(authority => authority.Authority.Code == "internal-test-prng");
-        var manualAuthority = authorities.Single(authority => authority.Authority.Code == "manual-certified-entry");
 
         schedules.Add(new DrawScheduleDefinition(
             StableGuid("schedule:test-fixed-interval"),
@@ -385,24 +383,6 @@ public sealed class DrawSchedulerService
             ProductionActivationEnabled: false,
             DateTimeOffset.UnixEpoch));
 
-        schedules.Add(new DrawScheduleDefinition(
-            StableGuid("schedule:manual-daily"),
-            "manual-daily",
-            "Manual Certified Daily Draw Schedule",
-            hotSpotBinding.Id,
-            DrawScheduleKind.FixedDailyTime,
-            DrawResultSource.ManualCertified,
-            DrawProviderType.ManualCertifiedEntry,
-            manualAuthority.Authority.Id,
-            "UTC",
-            IntervalMinutes: null,
-            DailyDrawTimes: [new TimeOnly(12, 0), new TimeOnly(18, 0)],
-            SalesOpenBeforeDraw: TimeSpan.FromHours(12),
-            SalesCutoffBeforeDraw: TimeSpan.FromMinutes(15),
-            ResultExpectedAfterDraw: TimeSpan.FromMinutes(30),
-            DrawRecoveryPolicy.AwaitOfficialResult,
-            ProductionActivationEnabled: false,
-            DateTimeOffset.UnixEpoch));
     }
 
     private void PersistLifecycleSnapshot()

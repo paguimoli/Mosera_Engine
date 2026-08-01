@@ -137,8 +137,8 @@ assert(lifecycle.every((draw) => !(draw.salesAllowed && Date.now() >= Date.parse
   lifecycle,
 });
 assert(
-  lifecycle.some((draw) => draw.resultSource === "ManualCertified" && ["AwaitingResult", "ManualReviewRequired", "Scheduled", "SalesOpen", "SalesClosed"].includes(draw.status)),
-  "Official/manual draw lifecycle state must be represented.",
+  lifecycle.every((draw) => draw.resultSource !== "ManualCertified"),
+  "Legacy manual placeholder schedule must be retired.",
   { lifecycle }
 );
 

@@ -77,10 +77,6 @@ public interface IDrawAuthorityAssignmentValidator
     DrawAuthorityAssignmentDefinition ValidateAssignment(DrawAuthorityAssignmentValidationRequest request, Guid gameBindingId);
 }
 
-public interface IManualCertifiedResultProvider : IDrawProvider, IDrawResultProvider, IDrawResultVerifier
-{
-}
-
 public interface IOfficialFeedProvider : IDrawProvider, IDrawResultProvider, IDrawResultVerifier
 {
 }

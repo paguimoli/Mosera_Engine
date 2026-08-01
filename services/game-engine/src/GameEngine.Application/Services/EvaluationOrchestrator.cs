@@ -316,12 +316,30 @@ public sealed class EvaluationOrchestrator
 
     private void SeedRun()
     {
-        var binding = gameModuleRegistry.GetGameBindings().First();
-        var module = gameModuleRegistry.GetRegisteredModules().First();
         var draw = drawSchedulerService.GetLifecycle()
             .Where(lifecycle => lifecycle.Status is DrawLifecycleStatus.AwaitingResult or DrawLifecycleStatus.ManualReviewRequired)
             .OrderBy(lifecycle => lifecycle.DrawAt)
-            .First();
+            .FirstOrDefault();
+        if (draw is null)
+        {
+            var diagnosticCandidate = drawSchedulerService.GetLifecycle()
+                .Where(lifecycle => lifecycle.DrawAt < DateTimeOffset.UtcNow)
+                .OrderBy(lifecycle => lifecycle.DrawAt)
+                .FirstOrDefault();
+            if (diagnosticCandidate is null)
+            {
+                return;
+            }
+
+            draw = drawSchedulerService.MarkMissed(diagnosticCandidate.DrawId);
+        }
+
+        var binding = gameModuleRegistry.GetGameBinding(draw.GameBindingId)
+            ?? throw new InvalidOperationException("Draw game binding not found.");
+        var bindingVersion = binding.Versions.Single(version => version.Id == binding.ActiveVersionId);
+        var module = gameModuleRegistry.GetModule(bindingVersion.ModuleId)
+            ?? throw new InvalidOperationException("Draw game module not found.");
+
         var run = PlanRun(new EvaluationPlanRequest(
             draw.DrawId,
             binding.Id,

@@ -20,6 +20,7 @@ public sealed class InfrastructureReadinessChecks
     private readonly CanonicalDrawOrchestrator canonicalDrawOrchestrator;
     private readonly ProvablyFairRuntimeService provablyFairRuntime;
     private readonly OfficialResultsProvider officialResultsProvider;
+    private readonly ManualCertifiedProvider manualCertifiedProvider;
     private readonly PhysicalDrawResultRuntimeService physicalDrawRuntime;
     private readonly ILogger<InfrastructureReadinessChecks> logger;
 
@@ -36,6 +37,7 @@ public sealed class InfrastructureReadinessChecks
         CanonicalDrawOrchestrator canonicalDrawOrchestrator,
         ProvablyFairRuntimeService provablyFairRuntime,
         OfficialResultsProvider officialResultsProvider,
+        ManualCertifiedProvider manualCertifiedProvider,
         PhysicalDrawResultRuntimeService physicalDrawRuntime,
         ILogger<InfrastructureReadinessChecks> logger)
     {
@@ -51,6 +53,7 @@ public sealed class InfrastructureReadinessChecks
         this.canonicalDrawOrchestrator = canonicalDrawOrchestrator;
         this.provablyFairRuntime = provablyFairRuntime;
         this.officialResultsProvider = officialResultsProvider;
+        this.manualCertifiedProvider = manualCertifiedProvider;
         this.physicalDrawRuntime = physicalDrawRuntime;
         this.logger = logger;
     }
@@ -307,6 +310,18 @@ public sealed class InfrastructureReadinessChecks
             ? new DependencyHealthResult("official-results-provider", true)
             : new DependencyHealthResult(
                 "official-results-provider",
+                false,
+                string.Join("; ", readiness.Blockers));
+    }
+
+    public async Task<DependencyHealthResult> CheckManualCertifiedProviderAsync(CancellationToken cancellationToken)
+    {
+        var readiness = await manualCertifiedProvider.CheckReadinessAsync(cancellationToken);
+
+        return readiness.IsReady
+            ? new DependencyHealthResult("manual-certified-provider", true)
+            : new DependencyHealthResult(
+                "manual-certified-provider",
                 false,
                 string.Join("; ", readiness.Blockers));
     }

@@ -23,7 +23,6 @@ public sealed class DrawAuthorityRegistry : IDrawAuthorityRegistry
         this.drawAuthorityVersionRepository = drawAuthorityVersionRepository;
         providers =
         [
-            new ManualCertifiedResultProvider(),
             new OfficialFeedProvider(),
             new InternalProductionPrngProvider(),
             new InternalTestPrngProvider(),
@@ -32,7 +31,6 @@ public sealed class DrawAuthorityRegistry : IDrawAuthorityRegistry
 
         RegisterSeedAuthorities();
         PersistAuthoritySnapshot();
-        SeedResultSubmissions();
     }
 
     public IReadOnlyCollection<DrawProviderMetadata> GetProviders()
@@ -141,15 +139,6 @@ public sealed class DrawAuthorityRegistry : IDrawAuthorityRegistry
     private void RegisterSeedAuthorities()
     {
         RegisterAuthority(
-            "manual-certified-entry",
-            "Manual Certified Entry",
-            DrawAuthorityType.ManualCertifiedEntry,
-            DrawProviderType.ManualCertifiedEntry,
-            DrawAuthorityStatus.Testing,
-            DrawAuthorityApprovalStatus.InternallyApproved,
-            providers.OfType<ManualCertifiedResultProvider>().Single());
-
-        RegisterAuthority(
             "official-feed-placeholder",
             "Official Feed Placeholder",
             DrawAuthorityType.OfficialFeed,
@@ -250,43 +239,6 @@ public sealed class DrawAuthorityRegistry : IDrawAuthorityRegistry
         {
             invalidAuthorities.Add(entry);
         }
-    }
-
-    private void SeedResultSubmissions()
-    {
-        var manual = registeredAuthorities.Single(entry => entry.Authority.Code == "manual-certified-entry");
-        var drawScheduleId = StableGuid("manual-certified-entry:sample-draw");
-        submissions.Add(new DrawResultSubmissionDefinition(
-            StableGuid("manual-certified-entry:sample-draw:submission-1"),
-            drawScheduleId,
-            manual.Authority.Id,
-            manual.Version.Id,
-            "manual-result-hash-1",
-            new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3 } },
-            new DrawResultEvidence(
-                "manual-placeholder",
-                "manual-evidence-hash-1",
-                "operator-placeholder",
-                DateTimeOffset.UnixEpoch,
-                new Dictionary<string, object?> { ["operatorCertificationRequired"] = true }),
-            DrawResultSubmissionStatus.Submitted,
-            DateTimeOffset.UnixEpoch));
-
-        submissions.Add(new DrawResultSubmissionDefinition(
-            StableGuid("manual-certified-entry:sample-draw:submission-2"),
-            drawScheduleId,
-            manual.Authority.Id,
-            manual.Version.Id,
-            "manual-result-hash-2",
-            new Dictionary<string, object?> { ["numbers"] = new[] { 4, 5, 6 } },
-            new DrawResultEvidence(
-                "manual-placeholder",
-                "manual-evidence-hash-2",
-                "operator-placeholder",
-                DateTimeOffset.UnixEpoch,
-                new Dictionary<string, object?> { ["operatorCertificationRequired"] = true }),
-            DrawResultSubmissionStatus.Submitted,
-            DateTimeOffset.UnixEpoch));
     }
 
     private void PersistAuthoritySnapshot()
