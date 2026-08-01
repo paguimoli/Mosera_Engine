@@ -51,6 +51,7 @@ builder.Services.AddSingleton<DurableMathEvaluationService>();
 builder.Services.AddSingleton<MathEvaluationBatchService>();
 builder.Services.AddSingleton<SettlementInputAdapter>();
 builder.Services.AddSingleton<CanonicalOutcomeAuthority>();
+builder.Services.AddSingleton<CanonicalOutcomeLifecycleAuthority>();
 if (string.IsNullOrWhiteSpace(databaseUrl))
 {
     builder.Services.AddSingleton<IDrawScheduleRepository, InMemoryDrawScheduleRepository>();

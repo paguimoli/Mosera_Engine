@@ -43,6 +43,7 @@ public static class GameEngineEndpoints
         group.MapGet("/outcome-publications/current/{drawId:guid}", GetCurrentCanonicalOutcomeAsync);
         group.MapPost("/outcome-settlement-requests", EmitOutcomeSettlementRequestAsync);
         group.MapPost("/outcome-publications/recover", RecoverCanonicalOutcomeRequestsAsync);
+        group.MapPost("/outcome-publications/{outcomeVersionId:guid}/replay", ReplayCanonicalOutcomeAsync);
         group.MapGet("/outcome-publication-status", async (
             HttpContext context,
             ServiceConfiguration configuration,
@@ -1122,7 +1123,8 @@ public static class GameEngineEndpoints
         CanonicalOutcomePublicationCommand command,
         HttpContext context,
         ServiceConfiguration configuration,
-        CanonicalOutcomeAuthority orchestrator)
+        CanonicalOutcomeAuthority outcomeAuthority,
+        CanonicalOutcomeLifecycleAuthority lifecycleAuthority)
     {
         if (!configuration.CanonicalOutcomePipelineEnabled)
         {
@@ -1136,7 +1138,16 @@ public static class GameEngineEndpoints
 
         try
         {
-            var result = await orchestrator.PublishAsync(command, context.RequestAborted);
+            var result = command.VersionKind switch
+            {
+                CanonicalOutcomeVersionKind.Published =>
+                    await outcomeAuthority.PublishAsync(command, context.RequestAborted),
+                CanonicalOutcomeVersionKind.Corrected =>
+                    await lifecycleAuthority.CorrectAsync(command, context.RequestAborted),
+                CanonicalOutcomeVersionKind.Cancelled =>
+                    await lifecycleAuthority.CancelAsync(command, context.RequestAborted),
+                _ => throw new ArgumentOutOfRangeException(nameof(command.VersionKind))
+            };
             return Results.Ok(new
             {
                 success = true,
@@ -1191,7 +1202,7 @@ public static class GameEngineEndpoints
         OutcomeSettlementRequestCommand command,
         HttpContext context,
         ServiceConfiguration configuration,
-        CanonicalOutcomeAuthority orchestrator)
+        CanonicalOutcomeLifecycleAuthority lifecycleAuthority)
     {
         if (!configuration.CanonicalOutcomePipelineEnabled)
         {
@@ -1205,7 +1216,7 @@ public static class GameEngineEndpoints
 
         try
         {
-            var result = await orchestrator.EmitSettlementRequestAsync(command, context.RequestAborted);
+            var result = await lifecycleAuthority.EmitSettlementImpactAsync(command, context.RequestAborted);
             return Results.Ok(new
             {
                 success = true,
@@ -1238,7 +1249,7 @@ public static class GameEngineEndpoints
     private static async Task<IResult> RecoverCanonicalOutcomeRequestsAsync(
         HttpContext context,
         ServiceConfiguration configuration,
-        CanonicalOutcomeAuthority orchestrator)
+        CanonicalOutcomeLifecycleAuthority lifecycleAuthority)
     {
         if (!configuration.CanonicalOutcomePipelineEnabled ||
             !configuration.CanonicalOutcomeRecoveryEnabled)
@@ -1251,7 +1262,14 @@ public static class GameEngineEndpoints
             }, statusCode: 503);
         }
 
-        var result = await orchestrator.RecoverAsync(25, context.RequestAborted);
+        var result = await lifecycleAuthority.RecoverAsync(
+            new CanonicalOutcomeRecoveryCommand(
+                25,
+                "system:game-engine-api",
+                "REQUESTED_INCOMPLETE_OPERATION_RECOVERY",
+                context.GetCorrelationId(),
+                "api:outcome-publications:recover"),
+            context.RequestAborted);
         return Results.Ok(new
         {
             success = true,
@@ -1260,6 +1278,66 @@ public static class GameEngineEndpoints
             productionOutcomeAuthorityEnabled = false,
             correlationId = context.GetCorrelationId()
         });
+    }
+
+    private static async Task<IResult> ReplayCanonicalOutcomeAsync(
+        Guid outcomeVersionId,
+        CanonicalOutcomeReplayCommand command,
+        HttpContext context,
+        ServiceConfiguration configuration,
+        CanonicalOutcomeLifecycleAuthority lifecycleAuthority)
+    {
+        if (!configuration.CanonicalOutcomePipelineEnabled)
+        {
+            return Results.Json(new
+            {
+                success = false,
+                message = "Canonical Outcome replay is disabled by configuration.",
+                correlationId = context.GetCorrelationId()
+            }, statusCode: 503);
+        }
+
+        if (command.OutcomeVersionId != outcomeVersionId)
+        {
+            return Results.BadRequest(new
+            {
+                success = false,
+                message = "Replay route and payload outcome version ids must match.",
+                correlationId = context.GetCorrelationId()
+            });
+        }
+
+        try
+        {
+            var result = await lifecycleAuthority.ReplayAsync(command, context.RequestAborted);
+            return Results.Ok(new
+            {
+                success = true,
+                data = result,
+                authoritativeStateChanged = false,
+                publicationTriggered = false,
+                settlementTriggered = false,
+                correlationId = context.GetCorrelationId()
+            });
+        }
+        catch (ArgumentException error)
+        {
+            return Results.BadRequest(new
+            {
+                success = false,
+                message = error.Message,
+                correlationId = context.GetCorrelationId()
+            });
+        }
+        catch (InvalidOperationException error)
+        {
+            return Results.Conflict(new
+            {
+                success = false,
+                message = error.Message,
+                correlationId = context.GetCorrelationId()
+            });
+        }
     }
 
     private static object ToModuleDiagnostic(GameEngine.Domain.Model.GameModuleRegistryEntry entry)

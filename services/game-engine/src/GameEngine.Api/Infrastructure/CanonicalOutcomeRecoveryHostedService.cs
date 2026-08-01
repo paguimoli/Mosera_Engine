@@ -1,11 +1,12 @@
 using GameEngine.Api.Configuration;
 using GameEngine.Application.Services;
+using GameEngine.Domain.Model;
 
 namespace GameEngine.Api.Infrastructure;
 
 public sealed class CanonicalOutcomeRecoveryHostedService(
     ServiceConfiguration configuration,
-    CanonicalOutcomeAuthority orchestrator,
+    CanonicalOutcomeLifecycleAuthority lifecycleAuthority,
     ILogger<CanonicalOutcomeRecoveryHostedService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -23,7 +24,14 @@ public sealed class CanonicalOutcomeRecoveryHostedService(
         {
             try
             {
-                var result = await orchestrator.RecoverAsync(25, stoppingToken);
+                var result = await lifecycleAuthority.RecoverAsync(
+                    new CanonicalOutcomeRecoveryCommand(
+                        25,
+                        "system:canonical-outcome-recovery",
+                        "AUTOMATED_INCOMPLETE_OPERATION_RECOVERY",
+                        "canonical-outcome-recovery",
+                        "hosted-service:canonical-outcome-recovery"),
+                    stoppingToken);
                 if (result.RequestsCreated > 0 || result.EventsRequeued > 0 || result.BlockedCount > 0)
                 {
                     logger.LogInformation(

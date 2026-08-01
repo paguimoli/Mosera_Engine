@@ -160,6 +160,56 @@ try {
         [concurrentFixture.drawId])) === 1,
   { statuses: concurrent.map((entry) => entry.status) });
 
+  const lifecycleRaceFixture = await createCanonicalOutcomeFixture(pool);
+  const lifecycleRaceInitial = await appendCertifiedProviderResult(pool, lifecycleRaceFixture);
+  const lifecycleRacePublished = await post(
+    "/api/game-engine/outcome-publications",
+    publicationCommand(lifecycleRaceFixture, lifecycleRaceInitial),
+  );
+  const lifecycleRacePreviousId = lifecycleRacePublished.payload?.data?.outcomeVersionId;
+  const raceReplacement = lifecycleRaceFixture.primaryUniverse.find((value) =>
+    !lifecycleRaceFixture.primary.includes(value) && !lifecycleRaceFixture.bonus.includes(value));
+  if (raceReplacement === undefined) throw new Error("Lifecycle race fixture lacks an alternate valid number.");
+  const racePrimary = [...lifecycleRaceFixture.primary];
+  racePrimary[0] = raceReplacement;
+  if (lifecycleRaceFixture.primaryOrdering === "Ascending") racePrimary.sort((left, right) => left - right);
+  const lifecycleRaceCorrection = await appendCertifiedProviderResult(pool, lifecycleRaceFixture, {
+    primary: racePrimary,
+    outcomePayload: { numbers: racePrimary, bonusNumbers: lifecycleRaceFixture.bonus },
+    previousCertificateId: lifecycleRaceInitial.certificateId,
+    previousCertificateHash: lifecycleRaceInitial.outcomeHash,
+  });
+  const lifecycleRace = await Promise.all([
+    post("/api/game-engine/outcome-publications", publicationCommand(
+      lifecycleRaceFixture,
+      lifecycleRaceCorrection,
+      {
+        idempotencyKey: `publish:${lifecycleRaceFixture.suffix}:race-correct`,
+        versionKind: "Corrected",
+        previousOutcomeVersionId: lifecycleRacePreviousId,
+        reasonCode: "CONCURRENT_CERTIFIED_CORRECTION",
+      },
+    )),
+    post("/api/game-engine/outcome-publications", publicationCommand(
+      lifecycleRaceFixture,
+      lifecycleRaceInitial,
+      {
+        idempotencyKey: `publish:${lifecycleRaceFixture.suffix}:race-cancel`,
+        versionKind: "Cancelled",
+        previousOutcomeVersionId: lifecycleRacePreviousId,
+        reasonCode: "CONCURRENT_GOVERNED_CANCELLATION",
+      },
+    )),
+  ]);
+  check("concurrent correction and cancellation append exactly one lifecycle version",
+    lifecycleRace.filter((entry) => entry.status === 200).length === 1 &&
+      lifecycleRace.filter((entry) => entry.status === 409).length === 1 &&
+      Number(await scalar(
+        "select count(*) from game_engine.canonical_outcome_versions where draw_id = $1",
+        [lifecycleRaceFixture.drawId],
+      )) === 2,
+  { statuses: lifecycleRace.map((entry) => entry.status) });
+
   const { fixture, result: initial, response: firstResponse } = published[0];
   const firstVersionId = firstResponse.payload?.data?.outcomeVersionId;
   const initialCommand = publicationCommand(fixture, initial);
@@ -233,6 +283,9 @@ try {
     previousOutcomeVersionId: cancelledVersionId,
   });
   check("cancelled outcome is terminal", afterCancellation.status === 409, afterCancellation);
+  check("correction and cancellation retain immutable lifecycle audit evidence",
+    Number(await scalar(`select count(*) from game_engine.canonical_outcome_lifecycle_events
+      where draw_id = $1 and operation in ('CORRECTION', 'CANCELLATION')`, [fixture.drawId])) === 2);
 
   const immutable = await pool.query(
     "update game_engine.canonical_outcome_versions set reason_code = 'tampered' where outcome_version_id = $1",
@@ -256,6 +309,24 @@ try {
     derived.rows[0].derived_outcome_data.primaryResultHash === canonicalHash(JSON.stringify(derived.rows[0].validated_primary_result)) &&
       derived.rows[0].derived_outcome_data.bonusResultHash === canonicalHash(JSON.stringify(derived.rows[0].validated_bonus_result)));
 
+  const recoveryFixture = await createCanonicalOutcomeFixture(pool);
+  const recoveryResult = await appendCertifiedProviderResult(pool, recoveryFixture);
+  const recoveryPublication = await post(
+    "/api/game-engine/outcome-publications",
+    publicationCommand(recoveryFixture, recoveryResult),
+  );
+  const recoveryVersionId = recoveryPublication.payload?.data?.outcomeVersionId;
+  const recoveryInputId = await seedSettlementInput(
+    recoveryFixture,
+    recoveryResult,
+    `${recoveryFixture.suffix}:recovery`,
+  );
+  check("interrupted Settlement handoff fixture begins without a request",
+    Number(await scalar(
+      "select count(*) from game_engine.outcome_settlement_requests where outcome_version_id = $1",
+      [recoveryVersionId],
+    )) === 0);
+
   const beforeRecovery = Number(await scalar(
     "select count(*) from game_engine.canonical_outcome_versions where draw_id = $1", [fixture.drawId]));
   const recovery = await post("/api/game-engine/outcome-publications/recover", {});
@@ -263,12 +334,48 @@ try {
     recovery.status === 200 && Number(await scalar(
       "select count(*) from game_engine.canonical_outcome_versions where draw_id = $1", [fixture.drawId])) === beforeRecovery,
   recovery);
+  check("interrupted Settlement handoff recovers from immutable evidence",
+    Number(await scalar(`select count(*) from game_engine.outcome_settlement_requests
+      where outcome_version_id = $1 and settlement_input_id = $2`, [recoveryVersionId, recoveryInputId])) === 1 &&
+      Number(await scalar(`select count(*) from game_engine.canonical_outcome_lifecycle_events
+        where outcome_version_id = $1 and operation = 'RECOVERY' and settlement_input_id = $2`,
+      [recoveryVersionId, recoveryInputId])) === 1,
+  recovery);
 
   await stopService();
   await startService();
-  const replay = await post("/api/game-engine/outcome-publications", cancellationCommand);
-  check("restart replay validates and returns existing evidence only",
-    replay.status === 200 && replay.payload?.data?.outcomeVersionId === cancelledVersionId, replay);
+  const replayCommand = {
+    outcomeVersionId: cancelledVersionId,
+    idempotencyKey: `replay:${fixture.suffix}:cancelled`,
+    actorReference: "operator:bf-4.8-replay-qa",
+    reasonCode: "POST_RESTART_EVIDENCE_VERIFICATION",
+    correlationId: `replay-correlation:${fixture.suffix}`,
+    causationId: `replay-causation:${cancelledVersionId}`,
+  };
+  const replayPath = `/api/game-engine/outcome-publications/${cancelledVersionId}/replay`;
+  const replay = await post(replayPath, replayCommand);
+  const duplicateReplay = await post(replayPath, replayCommand);
+  const conflictingReplay = await post(replayPath, {
+    ...replayCommand,
+    reasonCode: "CONFLICTING_REPLAY_REASON",
+  });
+  check("restart replay verifies hashes, certificates, provider evidence, and Settlement references",
+    replay.status === 200 && replay.payload?.data?.operation === "ReplayVerified", replay);
+  check("replay is idempotent and never republishes authoritative state",
+    duplicateReplay.status === 200 &&
+      duplicateReplay.payload?.data?.lifecycleEventId === replay.payload?.data?.lifecycleEventId &&
+      Number(await scalar(
+        "select count(*) from game_engine.canonical_outcome_versions where draw_id = $1",
+        [fixture.drawId],
+      )) === beforeRecovery,
+  { replay, duplicateReplay });
+  check("conflicting replay idempotency fails closed", conflictingReplay.status === 409, conflictingReplay);
+
+  const lifecycleImmutable = await pool.query(
+    "update game_engine.canonical_outcome_lifecycle_events set reason_code = 'tampered' where lifecycle_event_id = $1",
+    [replay.payload?.data?.lifecycleEventId],
+  ).then(() => false).catch(() => true);
+  check("lifecycle audit evidence is append-only", lifecycleImmutable);
 } catch (error) {
   check("Canonical Outcome Authority QA completes", false, { error: error instanceof Error ? error.message : String(error) });
 } finally {

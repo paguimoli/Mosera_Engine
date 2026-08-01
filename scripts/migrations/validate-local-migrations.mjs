@@ -1138,6 +1138,13 @@ addCheck("canonical_outcome_game_definition_column", columnExists("game_engine",
 addCheck("canonical_outcome_certificate_signature_column", columnExists("game_engine", "canonical_outcome_versions", "certificate_signature_id"));
 addCheck("canonical_outcome_validated_payload_column", columnExists("game_engine", "canonical_outcome_versions", "validated_outcome_payload"));
 addCheck("canonical_outcome_lifecycle_evidence_column", columnExists("game_engine", "canonical_outcome_versions", "lifecycle_evidence_hash"));
+addCheck("canonical_outcome_lifecycle_events_table", existsRegclass("game_engine.canonical_outcome_lifecycle_events"));
+addCheck("canonical_outcome_lifecycle_draw_index", indexExists("game_engine", "canonical_outcome_lifecycle_events", "idx_canonical_outcome_lifecycle_draw"));
+addCheck("canonical_outcome_lifecycle_version_index", indexExists("game_engine", "canonical_outcome_lifecycle_events", "idx_canonical_outcome_lifecycle_version"));
+addCheck("canonical_outcome_lifecycle_update_guard", triggerExists("game_engine", "canonical_outcome_lifecycle_events", "trg_prevent_canonical_outcome_lifecycle_event_update"));
+addCheck("canonical_outcome_lifecycle_delete_guard", triggerExists("game_engine", "canonical_outcome_lifecycle_events", "trg_prevent_canonical_outcome_lifecycle_event_delete"));
+addCheck("canonical_outcome_lifecycle_validation", triggerExists("game_engine", "canonical_outcome_lifecycle_events", "trg_validate_canonical_outcome_lifecycle_event"));
+addCheck("canonical_outcome_terminal_cancellation_validation", triggerExists("game_engine", "canonical_outcome_versions", "trg_validate_canonical_outcome_lifecycle_version"));
 addCheck("canonical_outcome_provider_evidence_fk", constraintExists("game_engine", "canonical_outcome_versions", "fk_canonical_outcome_provider_evidence"));
 addCheck("canonical_outcome_provider_execution_fk", constraintExists("game_engine", "canonical_outcome_versions", "fk_canonical_outcome_provider_execution"));
 addCheck("canonical_outcome_game_definition_fk", constraintExists("game_engine", "canonical_outcome_versions", "fk_canonical_outcome_game_definition_version"));

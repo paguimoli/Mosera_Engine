@@ -162,3 +162,59 @@ public sealed record CanonicalOutcomeRecoveryResult(
     bool RecoveryLockAcquired,
     IReadOnlyCollection<string> Blockers,
     DateTimeOffset ScannedAt);
+
+public enum CanonicalOutcomeLifecycleOperation
+{
+    Recovery,
+    Correction,
+    Cancellation,
+    ReplayVerified,
+    ReplayRejected
+}
+
+public sealed record CanonicalOutcomeRecoveryCommand(
+    int Limit,
+    string ActorReference,
+    string ReasonCode,
+    string CorrelationId,
+    string CausationId);
+
+public sealed record CanonicalOutcomeReplayCommand(
+    Guid OutcomeVersionId,
+    string IdempotencyKey,
+    string ActorReference,
+    string ReasonCode,
+    string CorrelationId,
+    string CausationId);
+
+public sealed record CanonicalOutcomeReplayEvidence(
+    CanonicalOutcomeVersion Outcome,
+    DrawExecutionManifest Manifest,
+    string ProviderResultJson,
+    string ProviderResultHash,
+    string ProviderSourceResultHash,
+    string ProviderEvidenceHash,
+    CanonicalOutcomeCertificateVerificationEvidence CertificateEvidence,
+    Guid? SettlementRequestId,
+    Guid? SettlementInputId,
+    string? SettlementInputHash,
+    bool SettlementReferencesValid);
+
+public sealed record CanonicalOutcomeLifecycleEvent(
+    Guid LifecycleEventId,
+    CanonicalOutcomeLifecycleOperation Operation,
+    Guid OutcomeVersionId,
+    Guid DrawId,
+    Guid OutcomeCertificateId,
+    Guid ProviderEvidenceId,
+    Guid? PreviousOutcomeVersionId,
+    Guid? SettlementRequestId,
+    Guid? SettlementInputId,
+    string ActorReference,
+    string ReasonCode,
+    string CorrelationId,
+    string CausationId,
+    string CanonicalRequestHash,
+    string EvidenceHash,
+    string IdempotencyKey,
+    DateTimeOffset CreatedAt);

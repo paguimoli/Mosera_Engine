@@ -251,6 +251,34 @@ values (
                 await insert.ExecuteNonQueryAsync(cancellationToken);
             }
 
+            if (command.VersionKind != CanonicalOutcomeVersionKind.Published)
+            {
+                await InsertLifecycleEventAsync(
+                    connection,
+                    transaction,
+                    new CanonicalOutcomeLifecycleEvent(
+                        Guid.NewGuid(),
+                        command.VersionKind == CanonicalOutcomeVersionKind.Corrected
+                            ? CanonicalOutcomeLifecycleOperation.Correction
+                            : CanonicalOutcomeLifecycleOperation.Cancellation,
+                        outcomeVersionId,
+                        command.DrawId,
+                        command.OutcomeCertificateId,
+                        authorityContext.Provider.Evidence.EvidenceId,
+                        command.PreviousOutcomeVersionId,
+                        null,
+                        null,
+                        command.ActorReference,
+                        command.ReasonCode,
+                        command.CorrelationId,
+                        command.CausationId,
+                        canonicalRequestHash,
+                        command.LifecycleEvidenceHash,
+                        $"lifecycle:{command.IdempotencyKey}",
+                        publishedAt),
+                    cancellationToken);
+            }
+
             var result = await FindByIdempotencyAsync(
                 connection,
                 transaction,
@@ -434,6 +462,116 @@ values (
         return await FindCurrentAsync(connection, null, drawId, cancellationToken);
     }
 
+    public async Task<CanonicalOutcomeReplayEvidence?> LoadReplayEvidenceAsync(
+        Guid outcomeVersionId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(
+            IsolationLevel.RepeatableRead,
+            cancellationToken);
+        var outcome = await FindByIdAsync(connection, transaction, outcomeVersionId, cancellationToken);
+        if (outcome is null)
+        {
+            return null;
+        }
+
+        var manifest = await FindExecutionManifestAsync(connection, transaction, outcome.DrawId, cancellationToken)
+            ?? throw new InvalidOperationException("Replay could not load the exact Execution Manifest.");
+        var certificate = await FindCertificateEvidenceAsync(
+            outcome.OutcomeCertificateId,
+            outcome.OutcomeCertificateHash,
+            cancellationToken)
+            ?? throw new InvalidOperationException("Replay could not load verified certificate evidence.");
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+select
+  evidence.canonical_result_payload::text,
+  evidence.canonical_result_hash,
+  evidence.result_hash,
+  evidence.evidence_hash,
+  request.settlement_request_id,
+  request.settlement_input_id,
+  input.canonical_payload_hash,
+  case
+    when request.settlement_request_id is null then true
+    when version.version_kind = 'Cancelled' then request.settlement_input_id is null
+    else input.settlement_input_id is not null
+      and input.outcome_certificate_id = version.outcome_certificate_id
+      and input.outcome_certificate_hash = version.outcome_certificate_hash
+      and input.evaluator_version = version.evaluator_version
+  end as settlement_references_valid
+from game_engine.canonical_outcome_versions version
+join game_engine.outcome_provider_execution_evidence evidence
+  on evidence.evidence_id = version.provider_evidence_id
+left join game_engine.outcome_settlement_requests request
+  on request.outcome_version_id = version.outcome_version_id
+left join game_engine.settlement_input_records input
+  on input.settlement_input_id = request.settlement_input_id
+where version.outcome_version_id = @outcome_version_id;
+""";
+        command.Parameters.AddWithValue("outcome_version_id", outcomeVersionId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            throw new InvalidOperationException("Replay could not load exact provider evidence.");
+        }
+
+        var result = new CanonicalOutcomeReplayEvidence(
+            outcome,
+            manifest,
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetString(3),
+            certificate,
+            reader.IsDBNull(4) ? null : reader.GetGuid(4),
+            reader.IsDBNull(5) ? null : reader.GetGuid(5),
+            reader.IsDBNull(6) ? null : reader.GetString(6),
+            reader.GetBoolean(7));
+        await reader.DisposeAsync();
+        await transaction.CommitAsync(cancellationToken);
+        return result;
+    }
+
+    public async Task<CanonicalOutcomeLifecycleEvent> AppendLifecycleEventAsync(
+        CanonicalOutcomeLifecycleEvent lifecycleEvent,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await AcquireLockAsync(
+            connection,
+            transaction,
+            $"canonical-lifecycle:{lifecycleEvent.IdempotencyKey}",
+            cancellationToken);
+        var existing = await FindLifecycleEventByIdempotencyAsync(
+            connection,
+            transaction,
+            lifecycleEvent.IdempotencyKey,
+            cancellationToken);
+        if (existing is not null)
+        {
+            EnsureSameHash(existing.CanonicalRequestHash, lifecycleEvent.CanonicalRequestHash, "lifecycle event");
+            await transaction.CommitAsync(cancellationToken);
+            return existing;
+        }
+
+        await InsertLifecycleEventAsync(connection, transaction, lifecycleEvent, cancellationToken);
+        var persisted = await FindLifecycleEventByIdempotencyAsync(
+            connection,
+            transaction,
+            lifecycleEvent.IdempotencyKey,
+            cancellationToken)
+            ?? throw new InvalidOperationException("Canonical lifecycle evidence was not persisted.");
+        await transaction.CommitAsync(cancellationToken);
+        return persisted;
+    }
+
     public async Task<DrawExecutionManifest?> FindExecutionManifestAsync(
         Guid drawId,
         CancellationToken cancellationToken)
@@ -581,10 +719,11 @@ select
   to_regclass('game_engine.outcome_settlement_acknowledgements') is not null,
   to_regclass('game_engine.published_draw_schedule_versions') is not null,
   to_regclass('game_engine.draw_execution_manifests') is not null,
+  to_regclass('game_engine.canonical_outcome_lifecycle_events') is not null,
   exists (
     select 1
     from platform_migrations.migration_history
-    where migration_id = '093_add_immutable_draw_authority'
+    where migration_id = '099_add_outcome_lifecycle_authority'
       and status = 'APPLIED'
   ),
   exists (
@@ -607,9 +746,9 @@ select
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (await reader.ReadAsync(cancellationToken))
             {
-                schemaReady = Enumerable.Range(0, 13).All(reader.GetBoolean);
-                outboxDispatcherReady = reader.GetBoolean(13);
-                settlementWorkerReady = reader.GetBoolean(14);
+                schemaReady = Enumerable.Range(0, 14).All(reader.GetBoolean);
+                outboxDispatcherReady = reader.GetBoolean(14);
+                settlementWorkerReady = reader.GetBoolean(15);
             }
 
             if (!schemaReady)
@@ -653,7 +792,7 @@ select
     }
 
     public async Task<CanonicalOutcomeRecoveryResult> RecoverAsync(
-        int limit,
+        CanonicalOutcomeRecoveryCommand command,
         CancellationToken cancellationToken)
     {
         var blockers = new List<string>();
@@ -671,7 +810,7 @@ select
 
         try
         {
-            var missing = await FindMissingRequestsAsync(lockConnection, limit, cancellationToken);
+            var missing = await FindMissingRequestsAsync(lockConnection, command.Limit, cancellationToken);
             foreach (var candidate in missing)
             {
                 Guid? settlementInputId = null;
@@ -693,6 +832,15 @@ select
                             lockConnection,
                             candidate.OutcomeVersionId,
                             reason,
+                            cancellationToken);
+                        await AppendRecoveryLifecycleEventAsync(
+                            lockConnection,
+                        command,
+                        candidate,
+                        null,
+                        null,
+                        reason,
+                            "blocked",
                             cancellationToken);
                         continue;
                     }
@@ -717,12 +865,21 @@ select
                     "REQUEST_CREATED",
                     "Missing canonical Settlement request created.",
                     cancellationToken);
+                await AppendRecoveryLifecycleEventAsync(
+                    lockConnection,
+                    command,
+                    candidate,
+                    request.SettlementRequestId,
+                    request.SettlementInputId,
+                    "Missing canonical Settlement request created from immutable evidence.",
+                    "request-created",
+                    cancellationToken);
                 requestsCreated += 1;
             }
 
             var replayCandidates = await FindUnconfirmedPublishedRequestsAsync(
                 lockConnection,
-                limit,
+                command.Limit,
                 cancellationToken);
             foreach (var candidate in replayCandidates)
             {
@@ -751,6 +908,24 @@ where id = @outbox_event_id
                         "Unconfirmed canonical Settlement request requeued with the same event id.",
                         cancellationToken,
                         transaction);
+                    var outcome = await FindByIdAsync(
+                        lockConnection,
+                        transaction,
+                        candidate.OutcomeVersionId,
+                        cancellationToken)
+                        ?? throw new InvalidOperationException("Recovery outcome disappeared during replay.");
+                    await InsertLifecycleEventAsync(
+                        lockConnection,
+                        transaction,
+                        CreateRecoveryLifecycleEvent(
+                            command,
+                            outcome,
+                            candidate.SettlementRequestId,
+                            candidate.SettlementInputId,
+                            "Unconfirmed Settlement request requeued with its original outbox event.",
+                            $"event-requeued:{candidate.OutboxEventId:N}"),
+                        cancellationToken,
+                        ignoreDuplicate: true);
                     eventsRequeued += 1;
                 }
                 await transaction.CommitAsync(cancellationToken);
@@ -815,7 +990,18 @@ where not exists (
     from game_engine.outcome_settlement_requests request
     where request.outcome_version_id = version.outcome_version_id
   )
-order by version.published_at, version.outcome_version_id
+order by
+  case
+    when version.version_kind = 'Cancelled' or exists (
+      select 1
+      from game_engine.settlement_input_records input
+      where input.outcome_certificate_id = version.outcome_certificate_id
+        and input.outcome_certificate_hash = version.outcome_certificate_hash
+    ) then 0
+    else 1
+  end,
+  version.published_at,
+  version.outcome_version_id
 limit @limit;
 """;
         command.Parameters.AddWithValue("limit", limit);
@@ -870,7 +1056,8 @@ limit 2;
 select
   request.settlement_request_id,
   request.outcome_version_id,
-  request.outbox_event_id
+  request.outbox_event_id,
+  request.settlement_input_id
 from game_engine.outcome_settlement_requests request
 join game_engine.canonical_outcome_versions version
   on version.outcome_version_id = request.outcome_version_id
@@ -905,7 +1092,8 @@ limit @limit;
             candidates.Add(new UnconfirmedRequest(
                 reader.GetGuid(0),
                 reader.GetGuid(1),
-                reader.GetGuid(2)));
+                reader.GetGuid(2),
+                reader.IsDBNull(3) ? null : reader.GetGuid(3)));
         }
         return candidates;
     }
@@ -985,6 +1173,158 @@ where outcome_version_id = @outcome_version_id
         command.Parameters.AddWithValue("reason", reason);
         command.Parameters.AddWithValue("canonical_evidence_hash", evidenceHash);
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task AppendRecoveryLifecycleEventAsync(
+        NpgsqlConnection connection,
+        CanonicalOutcomeRecoveryCommand command,
+        RecoveryCandidate candidate,
+        Guid? settlementRequestId,
+        Guid? settlementInputId,
+        string reason,
+        string action,
+        CancellationToken cancellationToken)
+    {
+        var outcome = await FindByIdAsync(
+            connection,
+            null,
+            candidate.OutcomeVersionId,
+            cancellationToken)
+            ?? throw new InvalidOperationException("Recovery outcome evidence was not found.");
+        await InsertLifecycleEventAsync(
+            connection,
+            null,
+            CreateRecoveryLifecycleEvent(
+                command,
+                outcome,
+                settlementRequestId,
+                settlementInputId,
+                reason,
+                action),
+            cancellationToken,
+            ignoreDuplicate: true);
+    }
+
+    private static CanonicalOutcomeLifecycleEvent CreateRecoveryLifecycleEvent(
+        CanonicalOutcomeRecoveryCommand command,
+        CanonicalOutcomeVersion outcome,
+        Guid? settlementRequestId,
+        Guid? settlementInputId,
+        string reason,
+        string action)
+    {
+        var idempotencyKey = $"recovery:{outcome.OutcomeVersionId:N}:{action}";
+        var requestHash = HashCanonical(string.Join("|",
+            outcome.OutcomeVersionId.ToString("N"),
+            action,
+            settlementRequestId?.ToString("N") ?? "none",
+            command.ActorReference,
+            command.ReasonCode,
+            command.CorrelationId,
+            command.CausationId));
+        return new CanonicalOutcomeLifecycleEvent(
+            Guid.NewGuid(),
+            CanonicalOutcomeLifecycleOperation.Recovery,
+            outcome.OutcomeVersionId,
+            outcome.DrawId,
+            outcome.OutcomeCertificateId,
+            outcome.ProviderEvidenceId,
+            outcome.PreviousOutcomeVersionId,
+            settlementRequestId,
+            settlementInputId,
+            command.ActorReference,
+            $"{command.ReasonCode}:{reason}",
+            command.CorrelationId,
+            command.CausationId,
+            requestHash,
+            HashCanonical($"{idempotencyKey}|{requestHash}"),
+            idempotencyKey,
+            DateTimeOffset.UtcNow);
+    }
+
+    private static async Task InsertLifecycleEventAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        CanonicalOutcomeLifecycleEvent lifecycleEvent,
+        CancellationToken cancellationToken,
+        bool ignoreDuplicate = false)
+    {
+        await using var insert = connection.CreateCommand();
+        insert.Transaction = transaction;
+        insert.CommandText = $"""
+insert into game_engine.canonical_outcome_lifecycle_events (
+  lifecycle_event_id, operation, outcome_version_id, draw_id,
+  outcome_certificate_id, provider_evidence_id, previous_outcome_version_id,
+  settlement_request_id, settlement_input_id, actor_reference, reason_code,
+  correlation_id, causation_id, canonical_request_hash, evidence_hash,
+  idempotency_key, created_at)
+values (
+  @lifecycle_event_id, @operation, @outcome_version_id, @draw_id,
+  @outcome_certificate_id, @provider_evidence_id, @previous_outcome_version_id,
+  @settlement_request_id, @settlement_input_id, @actor_reference, @reason_code,
+  @correlation_id, @causation_id, @canonical_request_hash, @evidence_hash,
+  @idempotency_key, @created_at)
+{(ignoreDuplicate ? "on conflict (idempotency_key) do nothing" : string.Empty)};
+""";
+        insert.Parameters.AddWithValue("lifecycle_event_id", lifecycleEvent.LifecycleEventId);
+        insert.Parameters.AddWithValue("operation", ToDatabaseOperation(lifecycleEvent.Operation));
+        insert.Parameters.AddWithValue("outcome_version_id", lifecycleEvent.OutcomeVersionId);
+        insert.Parameters.AddWithValue("draw_id", lifecycleEvent.DrawId);
+        insert.Parameters.AddWithValue("outcome_certificate_id", lifecycleEvent.OutcomeCertificateId);
+        insert.Parameters.AddWithValue("provider_evidence_id", lifecycleEvent.ProviderEvidenceId);
+        insert.Parameters.AddWithValue("previous_outcome_version_id", lifecycleEvent.PreviousOutcomeVersionId is null ? DBNull.Value : lifecycleEvent.PreviousOutcomeVersionId.Value);
+        insert.Parameters.AddWithValue("settlement_request_id", lifecycleEvent.SettlementRequestId is null ? DBNull.Value : lifecycleEvent.SettlementRequestId.Value);
+        insert.Parameters.AddWithValue("settlement_input_id", lifecycleEvent.SettlementInputId is null ? DBNull.Value : lifecycleEvent.SettlementInputId.Value);
+        insert.Parameters.AddWithValue("actor_reference", lifecycleEvent.ActorReference);
+        insert.Parameters.AddWithValue("reason_code", lifecycleEvent.ReasonCode);
+        insert.Parameters.AddWithValue("correlation_id", lifecycleEvent.CorrelationId);
+        insert.Parameters.AddWithValue("causation_id", lifecycleEvent.CausationId);
+        insert.Parameters.AddWithValue("canonical_request_hash", lifecycleEvent.CanonicalRequestHash);
+        insert.Parameters.AddWithValue("evidence_hash", lifecycleEvent.EvidenceHash);
+        insert.Parameters.AddWithValue("idempotency_key", lifecycleEvent.IdempotencyKey);
+        insert.Parameters.AddWithValue("created_at", lifecycleEvent.CreatedAt);
+        await insert.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<CanonicalOutcomeLifecycleEvent?> FindLifecycleEventByIdempotencyAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        await using var query = connection.CreateCommand();
+        query.Transaction = transaction;
+        query.CommandText = """
+select lifecycle_event_id, operation, outcome_version_id, draw_id,
+  outcome_certificate_id, provider_evidence_id, previous_outcome_version_id,
+  settlement_request_id, settlement_input_id, actor_reference, reason_code,
+  correlation_id, causation_id, canonical_request_hash, evidence_hash,
+  idempotency_key, created_at
+from game_engine.canonical_outcome_lifecycle_events
+where idempotency_key = @idempotency_key;
+""";
+        query.Parameters.AddWithValue("idempotency_key", idempotencyKey);
+        await using var reader = await query.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new CanonicalOutcomeLifecycleEvent(
+                reader.GetGuid(0),
+                ParseLifecycleOperation(reader.GetString(1)),
+                reader.GetGuid(2),
+                reader.GetGuid(3),
+                reader.GetGuid(4),
+                reader.GetGuid(5),
+                reader.IsDBNull(6) ? null : reader.GetGuid(6),
+                reader.IsDBNull(7) ? null : reader.GetGuid(7),
+                reader.IsDBNull(8) ? null : reader.GetGuid(8),
+                reader.GetString(9),
+                reader.GetString(10),
+                reader.GetString(11),
+                reader.GetString(12),
+                reader.GetString(13),
+                reader.GetString(14),
+                reader.GetString(15),
+                reader.GetFieldValue<DateTimeOffset>(16))
+            : null;
     }
 
     private static string HashSettlementRequest(OutcomeSettlementRequestCommand command)
@@ -1239,7 +1579,7 @@ values (
 
     private static async Task<CanonicalOutcomeVersion?> FindByIdAsync(
         NpgsqlConnection connection,
-        NpgsqlTransaction transaction,
+        NpgsqlTransaction? transaction,
         Guid id,
         CancellationToken cancellationToken)
     {
@@ -1389,6 +1729,26 @@ limit 1;
         CanonicalOutcomeProviderCategory.OfficialResults => "OFFICIAL_RESULTS",
         CanonicalOutcomeProviderCategory.ManualCertified => "MANUAL_CERTIFIED",
         _ => throw new ArgumentOutOfRangeException(nameof(value), value, null)
+    };
+
+    private static string ToDatabaseOperation(CanonicalOutcomeLifecycleOperation value) => value switch
+    {
+        CanonicalOutcomeLifecycleOperation.Recovery => "RECOVERY",
+        CanonicalOutcomeLifecycleOperation.Correction => "CORRECTION",
+        CanonicalOutcomeLifecycleOperation.Cancellation => "CANCELLATION",
+        CanonicalOutcomeLifecycleOperation.ReplayVerified => "REPLAY_VERIFIED",
+        CanonicalOutcomeLifecycleOperation.ReplayRejected => "REPLAY_REJECTED",
+        _ => throw new ArgumentOutOfRangeException(nameof(value), value, null)
+    };
+
+    private static CanonicalOutcomeLifecycleOperation ParseLifecycleOperation(string value) => value switch
+    {
+        "RECOVERY" => CanonicalOutcomeLifecycleOperation.Recovery,
+        "CORRECTION" => CanonicalOutcomeLifecycleOperation.Correction,
+        "CANCELLATION" => CanonicalOutcomeLifecycleOperation.Cancellation,
+        "REPLAY_VERIFIED" => CanonicalOutcomeLifecycleOperation.ReplayVerified,
+        "REPLAY_REJECTED" => CanonicalOutcomeLifecycleOperation.ReplayRejected,
+        _ => throw new InvalidOperationException($"Unsupported canonical lifecycle operation {value}.")
     };
 
     private static SigningProviderType ParseSigningProviderType(string value) => value switch
@@ -1586,5 +1946,6 @@ from game_engine.outcome_settlement_requests
     private sealed record UnconfirmedRequest(
         Guid SettlementRequestId,
         Guid OutcomeVersionId,
-        Guid OutboxEventId);
+        Guid OutboxEventId,
+        Guid? SettlementInputId);
 }

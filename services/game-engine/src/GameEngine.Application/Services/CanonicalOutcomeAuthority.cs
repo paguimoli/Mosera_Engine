@@ -30,9 +30,19 @@ public interface ICanonicalOutcomePipelineRepository
 
     Task<CanonicalOutcomeVersion?> FindCurrentAsync(Guid drawId, CancellationToken cancellationToken);
 
+    Task<CanonicalOutcomeReplayEvidence?> LoadReplayEvidenceAsync(
+        Guid outcomeVersionId,
+        CancellationToken cancellationToken);
+
+    Task<CanonicalOutcomeLifecycleEvent> AppendLifecycleEventAsync(
+        CanonicalOutcomeLifecycleEvent lifecycleEvent,
+        CancellationToken cancellationToken);
+
     Task<CanonicalOutcomePipelineReadiness> CheckReadinessAsync(CancellationToken cancellationToken);
 
-    Task<CanonicalOutcomeRecoveryResult> RecoverAsync(int limit, CancellationToken cancellationToken);
+    Task<CanonicalOutcomeRecoveryResult> RecoverAsync(
+        CanonicalOutcomeRecoveryCommand command,
+        CancellationToken cancellationToken);
 }
 
 public sealed class CanonicalOutcomeAuthority(
@@ -42,6 +52,90 @@ public sealed class CanonicalOutcomeAuthority(
     CertificateVerificationService certificateVerification)
 {
     public async Task<CanonicalOutcomeVersion> PublishAsync(
+        CanonicalOutcomePublicationCommand command,
+        CancellationToken cancellationToken)
+    {
+        if (command.VersionKind != CanonicalOutcomeVersionKind.Published)
+        {
+            throw new InvalidOperationException(
+                "Post-publication changes must use Canonical Outcome Lifecycle Authority.");
+        }
+
+        return await PublishCoreAsync(command, cancellationToken);
+    }
+
+    internal Task<CanonicalOutcomeVersion> AppendLifecycleVersionAsync(
+        CanonicalOutcomePublicationCommand command,
+        CancellationToken cancellationToken)
+    {
+        if (command.VersionKind == CanonicalOutcomeVersionKind.Published)
+        {
+            throw new InvalidOperationException(
+                "Initial publication must use Canonical Outcome Authority.");
+        }
+
+        return PublishCoreAsync(command, cancellationToken);
+    }
+
+    internal async Task<CanonicalOutcomeVersion> VerifyPersistedEvidenceAsync(
+        CanonicalOutcomeReplayEvidence replay,
+        CancellationToken cancellationToken)
+    {
+        var outcome = replay.Outcome;
+        var manifest = replay.Manifest;
+        if (manifest.DrawId != outcome.DrawId ||
+            manifest.ExecutionManifestId != outcome.ExecutionManifestId ||
+            manifest.CanonicalManifestHash != outcome.ExecutionManifestHash ||
+            manifest.GameDefinitionVersionId != outcome.GameDefinitionVersionId ||
+            manifest.EvaluatorVersion != outcome.EvaluatorVersion ||
+            manifest.OutcomeProviderId != outcome.OutcomeProviderId ||
+            manifest.OutcomeProviderVersion != outcome.OutcomeProviderVersion ||
+            manifest.ProviderConfigurationVersion != outcome.ProviderConfigurationVersion)
+        {
+            throw new InvalidOperationException("Replay detected an Execution Manifest binding mismatch.");
+        }
+
+        if (replay.ProviderEvidenceHash != outcome.ProviderEvidenceHash ||
+            replay.ProviderResultHash != outcome.ValidatedOutcomeHash)
+        {
+            throw new InvalidOperationException("Replay detected a provider evidence hash mismatch.");
+        }
+
+        var definitionVersion = await gameDefinitionVersions.GetAsync(
+            outcome.GameDefinitionVersionId,
+            cancellationToken)
+            ?? throw new InvalidOperationException("Replay could not load the immutable Game Definition version.");
+        var parsed = ValidateProviderResult(
+            manifest,
+            definitionVersion,
+            replay.ProviderResultJson,
+            replay.ProviderSourceResultHash);
+        var persistedResultHash = CanonicalProviderOutcomeFactory.Hash(replay.ProviderResultJson);
+        if (persistedResultHash != outcome.ValidatedOutcomeHash ||
+            persistedResultHash != replay.ProviderResultHash ||
+            outcome.GameDefinitionHash != definitionVersion.DefinitionHash ||
+            outcome.CanonicalOutcomeHash != outcome.OutcomeCertificateHash)
+        {
+            throw new InvalidOperationException("Replay detected canonical outcome content or definition hash drift.");
+        }
+
+        ValidateCertificate(
+            outcome.DrawId,
+            outcome.OutcomeCertificateId,
+            outcome.OutcomeCertificateHash,
+            replay.ProviderSourceResultHash,
+            replay.CertificateEvidence);
+        if (replay.CertificateEvidence.SignatureId != outcome.CertificateSignatureId ||
+            replay.CertificateEvidence.VerificationEvidenceHash != outcome.CertificateVerificationHash ||
+            !replay.SettlementReferencesValid)
+        {
+            throw new InvalidOperationException("Replay detected certificate or Settlement reference drift.");
+        }
+
+        return outcome;
+    }
+
+    private async Task<CanonicalOutcomeVersion> PublishCoreAsync(
         CanonicalOutcomePublicationCommand command,
         CancellationToken cancellationToken)
     {
@@ -77,8 +171,10 @@ public sealed class CanonicalOutcomeAuthority(
             ?? throw new InvalidOperationException(
                 "Canonical Outcome publication requires one verified Outcome Certificate signature.");
         ValidateCertificate(
-            authoritativeCommand,
-            provider.Evidence,
+            authoritativeCommand.DrawId,
+            authoritativeCommand.OutcomeCertificateId,
+            authoritativeCommand.OutcomeCertificateHash,
+            provider.Evidence.ResultHash,
             certificateEvidence);
         var context = new CanonicalOutcomeAuthorityContext(
             manifest,
@@ -116,18 +212,6 @@ public sealed class CanonicalOutcomeAuthority(
     public Task<CanonicalOutcomePipelineReadiness> CheckReadinessAsync(CancellationToken cancellationToken)
     {
         return repository.CheckReadinessAsync(cancellationToken);
-    }
-
-    public Task<CanonicalOutcomeRecoveryResult> RecoverAsync(
-        int limit,
-        CancellationToken cancellationToken)
-    {
-        if (limit is < 1 or > 100)
-        {
-            throw new ArgumentOutOfRangeException(nameof(limit), "Recovery limit must be between 1 and 100.");
-        }
-
-        return repository.RecoverAsync(limit, cancellationToken);
     }
 
     private static string HashPublication(
@@ -221,14 +305,27 @@ public sealed class CanonicalOutcomeAuthority(
         GameDefinitionVersion definitionVersion,
         OutcomeProviderExecutionEvidence evidence)
     {
-        var result = CanonicalProviderOutcomeFactory.Parse(evidence.CanonicalResultJson!);
+        return ValidateProviderResult(
+            manifest,
+            definitionVersion,
+            evidence.CanonicalResultJson!,
+            evidence.ResultHash);
+    }
+
+    private static CanonicalProviderOutcomeResult ValidateProviderResult(
+        DrawExecutionManifest manifest,
+        GameDefinitionVersion definitionVersion,
+        string canonicalResultJson,
+        string sourceResultHash)
+    {
+        var result = CanonicalProviderOutcomeFactory.Parse(canonicalResultJson);
         if (result.SchemaVersion != "mosera.canonical-provider-result.v1" ||
             result.DrawId != manifest.DrawId ||
             result.ExecutionManifestId != manifest.ExecutionManifestId ||
             result.GameDefinitionVersionId != manifest.GameDefinitionVersionId ||
             result.GameDefinitionHash != definitionVersion.DefinitionHash ||
             result.EvaluatorVersion != manifest.EvaluatorVersion ||
-            result.SourceResultHash != evidence.ResultHash)
+            result.SourceResultHash != sourceResultHash)
         {
             throw new InvalidOperationException(
                 "Canonical provider result does not match the immutable Execution Manifest, Game Definition, evaluator, or source result.");
@@ -265,13 +362,15 @@ public sealed class CanonicalOutcomeAuthority(
     }
 
     private void ValidateCertificate(
-        CanonicalOutcomePublicationCommand command,
-        OutcomeProviderExecutionEvidence providerEvidence,
+        Guid drawId,
+        Guid certificateId,
+        string certificateHash,
+        string providerResultHash,
         CanonicalOutcomeCertificateVerificationEvidence certificateEvidence)
     {
-        if (certificateEvidence.DrawId != command.DrawId ||
-            certificateEvidence.OutcomeHash != command.OutcomeCertificateHash ||
-            providerEvidence.ResultHash != command.OutcomeCertificateHash ||
+        if (certificateEvidence.DrawId != drawId ||
+            certificateEvidence.OutcomeHash != certificateHash ||
+            providerResultHash != certificateHash ||
             certificateEvidence.Signature.VerificationStatus != SignatureVerificationStatus.Verified)
         {
             throw new InvalidOperationException(
@@ -280,8 +379,8 @@ public sealed class CanonicalOutcomeAuthority(
 
         var verification = certificateVerification.Verify(new CertificateVerificationRequest(
             "OutcomeCertificate",
-            command.OutcomeCertificateId,
-            command.OutcomeCertificateHash,
+            certificateId,
+            certificateHash,
             certificateEvidence.OutcomePayloadJson,
             certificateEvidence.Signature,
             certificateEvidence.SigningProvider,
@@ -382,6 +481,16 @@ public sealed class DisabledCanonicalOutcomePipelineRepository : ICanonicalOutco
     public Task<CanonicalOutcomeVersion?> FindCurrentAsync(Guid drawId, CancellationToken cancellationToken) =>
         Task.FromResult<CanonicalOutcomeVersion?>(null);
 
+    public Task<CanonicalOutcomeReplayEvidence?> LoadReplayEvidenceAsync(
+        Guid outcomeVersionId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<CanonicalOutcomeReplayEvidence?>(null);
+
+    public Task<CanonicalOutcomeLifecycleEvent> AppendLifecycleEventAsync(
+        CanonicalOutcomeLifecycleEvent lifecycleEvent,
+        CancellationToken cancellationToken) =>
+        Task.FromException<CanonicalOutcomeLifecycleEvent>(new InvalidOperationException(Message));
+
     public Task<CanonicalOutcomePipelineReadiness> CheckReadinessAsync(CancellationToken cancellationToken) =>
         Task.FromResult(new CanonicalOutcomePipelineReadiness(
             false,
@@ -404,7 +513,7 @@ public sealed class DisabledCanonicalOutcomePipelineRepository : ICanonicalOutco
             [Message]));
 
     public Task<CanonicalOutcomeRecoveryResult> RecoverAsync(
-        int limit,
+        CanonicalOutcomeRecoveryCommand command,
         CancellationToken cancellationToken) =>
         Task.FromResult(new CanonicalOutcomeRecoveryResult(
             0,
