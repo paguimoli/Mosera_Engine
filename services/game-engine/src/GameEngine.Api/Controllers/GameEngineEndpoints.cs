@@ -17,6 +17,8 @@ public static class GameEngineEndpoints
                 service = configuration.ServiceName,
                 environment = configuration.Environment,
                 productionGameLogicEnabled = false,
+                productionActivationConfigured = configuration.ProductionActivation.Enabled,
+                productionActivationAuthority = "GameEngineProductionActivationAuthority",
                 timestamp = DateTimeOffset.UtcNow,
                 correlationId = context.GetCorrelationId()
             });
@@ -44,6 +46,8 @@ public static class GameEngineEndpoints
         group.MapPost("/outcome-settlement-requests", EmitOutcomeSettlementRequestAsync);
         group.MapPost("/outcome-publications/recover", RecoverCanonicalOutcomeRequestsAsync);
         group.MapPost("/outcome-publications/{outcomeVersionId:guid}/replay", ReplayCanonicalOutcomeAsync);
+        group.MapGet("/production-activation/readiness", GetProductionActivationReadinessAsync);
+        group.MapPost("/production-activation/transitions", AdvanceProductionActivationAsync);
         group.MapGet("/outcome-publication-status", async (
             HttpContext context,
             ServiceConfiguration configuration,
@@ -64,7 +68,8 @@ public static class GameEngineEndpoints
                 canonicalPipelineEnabled = configuration.CanonicalOutcomePipelineEnabled,
                 canonicalRecoveryEnabled = configuration.CanonicalOutcomeRecoveryEnabled,
                 legacyPublicationEnabled = configuration.LegacyOutcomePublicationEnabled,
-                productionOutcomeAuthorityEnabled = false,
+                productionActivationConfigured = configuration.ProductionActivation.Enabled,
+                productionActivationAuthority = "GameEngineProductionActivationAuthority",
                 correlationId = context.GetCorrelationId()
             });
         });
@@ -1152,7 +1157,7 @@ public static class GameEngineEndpoints
             {
                 success = true,
                 data = result,
-                productionOutcomeAuthorityEnabled = false,
+                productionActivationGoverned = true,
                 correlationId = context.GetCorrelationId()
             });
         }
@@ -1275,7 +1280,7 @@ public static class GameEngineEndpoints
             success = true,
             data = result,
             directSettlementCallsEnabled = false,
-            productionOutcomeAuthorityEnabled = false,
+            productionActivationGoverned = true,
             correlationId = context.GetCorrelationId()
         });
     }
@@ -1317,6 +1322,67 @@ public static class GameEngineEndpoints
                 authoritativeStateChanged = false,
                 publicationTriggered = false,
                 settlementTriggered = false,
+                correlationId = context.GetCorrelationId()
+            });
+        }
+        catch (ArgumentException error)
+        {
+            return Results.BadRequest(new
+            {
+                success = false,
+                message = error.Message,
+                correlationId = context.GetCorrelationId()
+            });
+        }
+        catch (InvalidOperationException error)
+        {
+            return Results.Conflict(new
+            {
+                success = false,
+                message = error.Message,
+                correlationId = context.GetCorrelationId()
+            });
+        }
+    }
+
+    private static async Task<IResult> GetProductionActivationReadinessAsync(
+        string providerId,
+        string providerVersion,
+        string configurationVersion,
+        HttpContext context,
+        GameEngineProductionActivationAuthority activationAuthority)
+    {
+        var readiness = await activationAuthority.CheckReadinessAsync(
+            providerId,
+            providerVersion,
+            configurationVersion,
+            context.RequestAborted);
+        return Results.Ok(new
+        {
+            success = true,
+            readiness,
+            authority = "GameEngineProductionActivationAuthority",
+            automaticActivationEnabled = false,
+            correlationId = context.GetCorrelationId()
+        });
+    }
+
+    private static async Task<IResult> AdvanceProductionActivationAsync(
+        GameEngineProductionActivationCommand command,
+        HttpContext context,
+        GameEngineProductionActivationAuthority activationAuthority)
+    {
+        try
+        {
+            var activationEvent = await activationAuthority.AdvanceAsync(
+                command,
+                context.RequestAborted);
+            return Results.Ok(new
+            {
+                success = true,
+                data = activationEvent,
+                activationWasExplicit = true,
+                authority = "GameEngineProductionActivationAuthority",
                 correlationId = context.GetCorrelationId()
             });
         }

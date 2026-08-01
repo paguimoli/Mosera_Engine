@@ -51,18 +51,18 @@ async function main() {
 
     const builtIns = await pool.query(
       `select provider.provider_id, provider.provider_version, provider.production_eligible,
-              configuration.production_ready, activation.activation_state
+              configuration.production_ready, activation.stage as activation_stage
        from game_engine.outcome_provider_definitions provider
        join game_engine.outcome_provider_configuration_versions configuration
          on configuration.provider_id = provider.provider_id
         and configuration.provider_version = provider.provider_version
        join lateral (
-         select event.activation_state
-         from game_engine.outcome_provider_activation_events event
+         select event.stage
+         from game_engine.game_engine_production_activation_events event
          where event.provider_id = configuration.provider_id
            and event.provider_version = configuration.provider_version
            and event.configuration_version = configuration.configuration_version
-         order by event.effective_at desc, event.created_at desc
+         order by event.created_at desc, event.activation_event_id desc
          limit 1
        ) activation on true
        where provider.provider_id in (
@@ -71,28 +71,15 @@ async function main() {
          'mosera-manual-certified')`,
     );
     assert(
-      builtIns.rowCount === 6 &&
+      builtIns.rowCount === 3 &&
         builtIns.rows.every(
-          (row) => {
-            const internalProductionReady =
-              row.provider_id === "mosera-internal-csprng" &&
-              row.provider_version === "2.0.0";
-            const officialProductionReady =
-              row.provider_id === "mosera-official-results" &&
-              row.provider_version === "2.0.0";
-            const manualProductionReady =
-              row.provider_id === "mosera-manual-certified" &&
-              row.provider_version === "2.0.0";
-            return (
-              row.production_eligible ===
-                (internalProductionReady || officialProductionReady || manualProductionReady) &&
-              row.production_ready ===
-                (internalProductionReady || officialProductionReady || manualProductionReady) &&
-              row.activation_state === "DISABLED"
-            );
-          },
+          (row) =>
+            row.provider_version === "2.0.0" &&
+            row.production_eligible === true &&
+            row.production_ready === true &&
+            row.activation_stage === "REGISTERED",
         ),
-      "Internal CSPRNG, Official Results, and Manual Certified are production-ready while every built-in provider remains disabled",
+      "production-ready built-in providers remain registered and inactive",
     );
 
     await expectFailure("provider versions are immutable", () =>
@@ -140,13 +127,23 @@ async function main() {
          '{"providerEvidenceHash":true}'::jsonb,'["qa-ready"]'::jsonb,true,'FAIL_CLOSED')`,
       [providerId, providerVersion, configurationVersion, hash(`configuration:${suffix}`)],
     );
-    await pool.query(
-      `insert into game_engine.outcome_provider_activation_events (
-         activation_event_id, provider_id, provider_version, configuration_version,
-         activation_state, reason, evidence_hash, effective_at)
-       values ($1,$2,$3,$4,'ENABLED','Synthetic BF-4.3 QA only.',$5,now())`,
-      [randomUUID(), providerId, providerVersion, configurationVersion, hash(`activation:${suffix}`)],
-    );
+    for (const stage of ["REGISTERED", "READY", "APPROVED", "PRODUCTION_ACTIVE"]) {
+      await pool.query(
+        `insert into game_engine.game_engine_production_activation_events (
+           activation_event_id, provider_id, provider_version, configuration_version,
+           stage, actor_reference, reason_code, approval_reference,
+           signing_provider_id, signing_provider_version, signing_key_version,
+           canonical_request_hash, evidence_hash, idempotency_key, created_at)
+         values ($1,$2,$3,$4,$5,'qa:canonical-provider','QA_PROVIDER_ACTIVATION',
+           'qa:approved','mosera-software-signing','1.0.0','key-v1',$6,$7,$8,now())`,
+        [
+          randomUUID(), providerId, providerVersion, configurationVersion, stage,
+          hash(`activation-request:${suffix}:${stage}`),
+          hash(`activation-evidence:${suffix}:${stage}`),
+          `qa-provider-activation:${suffix}:${stage}`,
+        ],
+      );
+    }
 
     const dependency = await pool.query(
       `select definition.id game_definition_id,

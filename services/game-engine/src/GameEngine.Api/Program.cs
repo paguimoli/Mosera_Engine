@@ -4,6 +4,7 @@ using GameEngine.Api.Infrastructure;
 using GameEngine.Api.Middleware;
 using GameEngine.Application.Interfaces;
 using GameEngine.Application.Services;
+using GameEngine.Domain.Model;
 using GameEngine.Infrastructure.Persistence;
 using System.Text.Json.Serialization;
 
@@ -21,7 +22,16 @@ var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
 var persistenceMode = string.IsNullOrWhiteSpace(databaseUrl) ? "in-memory" : "postgres";
 
 builder.Services.AddSingleton(serviceConfiguration);
+builder.Services.AddSingleton(new GameEngineProductionActivationOptions(
+    serviceConfiguration.ProductionActivation.Enabled,
+    serviceConfiguration.CanonicalOutcomePipelineEnabled,
+    serviceConfiguration.ProductionActivation.SigningEnabled,
+    serviceConfiguration.ProductionActivation.SigningProviderId,
+    serviceConfiguration.ProductionActivation.SigningProviderVersion,
+    serviceConfiguration.ProductionActivation.SigningKeyVersion,
+    serviceConfiguration.ProductionActivation.SigningPublicKeyPem));
 builder.Services.AddSingleton<InfrastructureReadinessChecks>();
+builder.Services.AddSingleton<IGameEngineProductionInfrastructureReadiness, ProductionActivationInfrastructureReadiness>();
 builder.Services.AddSingleton<GameModuleRegistry>();
 builder.Services.AddSingleton<DrawAuthorityRegistry>();
 builder.Services.AddSingleton<RandomnessRegistry>();
@@ -43,6 +53,7 @@ builder.Services.AddSingleton<CanonicalOutcomeProviderAuthority>();
 builder.Services.AddSingleton<InternalCsprngOutcomeProvider>();
 builder.Services.AddSingleton<OfficialResultsProvider>();
 builder.Services.AddSingleton<ManualCertifiedProvider>();
+builder.Services.AddSingleton<IProductionSigningKeyResolver, PemProductionSigningKeyResolver>();
 builder.Services.AddSingleton<CertificateVerificationService>();
 builder.Services.AddSingleton<IMathEvaluator, KenoMathEvaluator>();
 builder.Services.AddSingleton<MathEvaluatorRegistry>();
@@ -52,6 +63,8 @@ builder.Services.AddSingleton<MathEvaluationBatchService>();
 builder.Services.AddSingleton<SettlementInputAdapter>();
 builder.Services.AddSingleton<CanonicalOutcomeAuthority>();
 builder.Services.AddSingleton<CanonicalOutcomeLifecycleAuthority>();
+builder.Services.AddSingleton<GameEngineProductionReadinessAuthority>();
+builder.Services.AddSingleton<GameEngineProductionActivationAuthority>();
 if (string.IsNullOrWhiteSpace(databaseUrl))
 {
     builder.Services.AddSingleton<IDrawScheduleRepository, InMemoryDrawScheduleRepository>();
@@ -80,6 +93,7 @@ if (string.IsNullOrWhiteSpace(databaseUrl))
     builder.Services.AddSingleton<ISettlementInputRepository, InMemorySettlementInputRepository>();
     builder.Services.AddSingleton<ICanonicalOutcomeProviderRepository, DisabledCanonicalOutcomeProviderRepository>();
     builder.Services.AddSingleton<ICanonicalOutcomePipelineRepository, DisabledCanonicalOutcomePipelineRepository>();
+    builder.Services.AddSingleton<IGameEngineProductionActivationRepository, DisabledGameEngineProductionActivationRepository>();
 }
 else
 {
@@ -113,6 +127,8 @@ else
         _ => new PostgresCanonicalOutcomePipelineRepository(
             databaseUrl,
             serviceConfiguration.LegacyOutcomePublicationEnabled));
+    builder.Services.AddSingleton<IGameEngineProductionActivationRepository>(
+        _ => new PostgresGameEngineProductionActivationRepository(databaseUrl));
 }
 
 builder.Services.AddSingleton<ITicketReader, DatabaseTicketReader>();

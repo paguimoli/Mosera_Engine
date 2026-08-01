@@ -39,18 +39,18 @@ async function main() {
     const provider = await pool.query(
       `select provider.production_eligible, provider.lifecycle_state,
               configuration.production_ready, configuration.failure_mode,
-              activation.activation_state
+              activation.stage as activation_stage
        from game_engine.outcome_provider_definitions provider
        join game_engine.outcome_provider_configuration_versions configuration
          on configuration.provider_id = provider.provider_id
         and configuration.provider_version = provider.provider_version
        join lateral (
-         select event.activation_state
-         from game_engine.outcome_provider_activation_events event
+         select event.stage
+         from game_engine.game_engine_production_activation_events event
          where event.provider_id = configuration.provider_id
            and event.provider_version = configuration.provider_version
            and event.configuration_version = configuration.configuration_version
-         order by event.effective_at desc, event.created_at desc
+         order by event.created_at desc, event.activation_event_id desc
          limit 1
        ) activation on true
        where provider.provider_id = 'mosera-official-results'
@@ -64,7 +64,7 @@ async function main() {
         provider.rows[0].production_ready === true &&
         provider.rows[0].lifecycle_state === "Active" &&
         provider.rows[0].failure_mode === "FAIL_CLOSED" &&
-        provider.rows[0].activation_state === "DISABLED",
+        provider.rows[0].activation_stage === "REGISTERED",
       "Official Results provider is production-ready, fail-closed, and inactive",
     );
 

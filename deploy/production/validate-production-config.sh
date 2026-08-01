@@ -290,8 +290,16 @@ validate_runtime() {
   require_authority_safe LEDGER_AUTHORITY
   require_authority_safe CREDIT_AUTHORITY
   require_authority_safe SETTLEMENT_AUTHORITY
-  if [ "${OUTCOME_CANONICAL_PIPELINE_ENABLED:-}" != "false" ]; then
-    fail "OUTCOME_CANONICAL_PIPELINE_ENABLED must remain false until production Outcome Authority activation is approved."
+  if [ "${GAME_ENGINE_PRODUCTION_ACTIVATION_ENABLED:-false}" = "true" ]; then
+    require_exact OUTCOME_CANONICAL_PIPELINE_ENABLED "true"
+    require_exact GAME_ENGINE_PRODUCTION_SIGNING_ENABLED "true"
+    require_safe_var GAME_ENGINE_SIGNING_PROVIDER_ID
+    require_safe_var GAME_ENGINE_SIGNING_PROVIDER_VERSION
+    require_safe_var GAME_ENGINE_SIGNING_KEY_VERSION
+    require_safe_var GAME_ENGINE_SIGNING_PUBLIC_KEY_PEM
+  else
+    require_exact OUTCOME_CANONICAL_PIPELINE_ENABLED "false"
+    require_exact GAME_ENGINE_PRODUCTION_SIGNING_ENABLED "false"
   fi
   if [ "${OUTCOME_LEGACY_PUBLICATION_ENABLED:-}" != "false" ]; then
     fail "OUTCOME_LEGACY_PUBLICATION_ENABLED must be false in production."

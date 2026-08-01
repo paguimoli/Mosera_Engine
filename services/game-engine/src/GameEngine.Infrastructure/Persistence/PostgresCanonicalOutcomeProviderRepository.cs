@@ -24,7 +24,7 @@ select
   configuration.supported_capabilities,
   configuration.evidence_requirements,
   configuration.readiness_capabilities,
-  coalesce(activation.activation_state, 'DISABLED'),
+  case when activation.stage = 'PRODUCTION_ACTIVE' then 'ENABLED' else 'DISABLED' end,
   provider.production_eligible,
   configuration.production_ready,
   configuration.failure_mode = 'FAIL_CLOSED',
@@ -34,13 +34,12 @@ join game_engine.outcome_provider_configuration_versions configuration
   on configuration.provider_id = provider.provider_id
  and configuration.provider_version = provider.provider_version
 left join lateral (
-  select event.activation_state, event.effective_at
-  from game_engine.outcome_provider_activation_events event
+  select event.stage, event.created_at as effective_at
+  from game_engine.game_engine_production_activation_events event
   where event.provider_id = configuration.provider_id
     and event.provider_version = configuration.provider_version
     and event.configuration_version = configuration.configuration_version
-    and event.effective_at <= now()
-  order by event.effective_at desc, event.created_at desc, event.activation_event_id desc
+  order by event.created_at desc, event.activation_event_id desc
   limit 1
 ) activation on true
 where provider.provider_id = @provider_id
@@ -387,6 +386,7 @@ select
   to_regclass('game_engine.outcome_provider_executions') is not null,
   to_regclass('game_engine.outcome_provider_execution_attempts') is not null,
   to_regclass('game_engine.outcome_provider_execution_evidence') is not null,
+  to_regclass('game_engine.game_engine_production_activation_events') is not null,
   (
     select count(distinct canonical_provider_category) = 3
     from game_engine.outcome_provider_definitions
@@ -399,19 +399,18 @@ select
   exists (
     select 1
     from platform_migrations.migration_history
-    where migration_id = '094_add_canonical_outcome_provider_authority'
+    where migration_id = '100_add_game_engine_production_activation'
       and status = 'APPLIED'
   ),
   exists (
     select 1
-    from game_engine.outcome_provider_activation_events
+    from game_engine.game_engine_production_activation_events
     where provider_id in (
         'mosera-internal-csprng',
         'mosera-official-results',
         'mosera-manual-certified'
       )
-      and activation_state = 'ENABLED'
-      and effective_at <= now()
+      and stage = 'PRODUCTION_ACTIVE'
   ),
   exists (
     select 1
@@ -431,13 +430,13 @@ select
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (await reader.ReadAsync(cancellationToken))
             {
-                var tablesReady = Enumerable.Range(0, 6).All(reader.GetBoolean);
-                providerRegistered = reader.GetBoolean(6);
+                var tablesReady = Enumerable.Range(0, 7).All(reader.GetBoolean);
+                providerRegistered = reader.GetBoolean(7);
                 providerVersionResolved = providerRegistered;
-                configurationVersionResolved = reader.GetBoolean(7);
-                evidencePersistenceReady = tablesReady && reader.GetBoolean(8);
-                providerEnabled = reader.GetBoolean(9);
-                providerProductionReady = reader.GetBoolean(10);
+                configurationVersionResolved = reader.GetBoolean(8);
+                evidencePersistenceReady = tablesReady && reader.GetBoolean(9);
+                providerEnabled = reader.GetBoolean(10);
+                providerProductionReady = reader.GetBoolean(11);
                 if (!tablesReady)
                 {
                     blockers.Add("Canonical Outcome Provider persistence tables are incomplete.");
@@ -453,11 +452,6 @@ select
                 if (!evidencePersistenceReady)
                 {
                     blockers.Add("Outcome Provider evidence persistence is unavailable.");
-                }
-                if (providerEnabled)
-                {
-                    blockers.Add(
-                        "Built-in Outcome Providers must remain disabled until explicitly activated.");
                 }
             }
             else

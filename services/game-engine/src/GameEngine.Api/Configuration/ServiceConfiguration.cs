@@ -8,7 +8,8 @@ public sealed record ServiceConfiguration(
     GameEngineSchemaConfiguration Schema,
     bool CanonicalOutcomePipelineEnabled,
     bool LegacyOutcomePublicationEnabled,
-    bool CanonicalOutcomeRecoveryEnabled)
+    bool CanonicalOutcomeRecoveryEnabled,
+    ProductionActivationConfiguration ProductionActivation)
 {
     public static ServiceConfiguration FromEnvironment(IHostEnvironment environment)
     {
@@ -31,7 +32,15 @@ public sealed record ServiceConfiguration(
             string.Equals(
                 System.Environment.GetEnvironmentVariable("OUTCOME_CANONICAL_RECOVERY_ENABLED"),
                 "true",
-                StringComparison.OrdinalIgnoreCase));
+                StringComparison.OrdinalIgnoreCase),
+            new ProductionActivationConfiguration(
+                IsTrue("GAME_ENGINE_PRODUCTION_ACTIVATION_ENABLED"),
+                IsTrue("GAME_ENGINE_PRODUCTION_SIGNING_ENABLED"),
+                GetEnvironmentValue("GAME_ENGINE_SIGNING_PROVIDER_ID", string.Empty),
+                GetEnvironmentValue("GAME_ENGINE_SIGNING_PROVIDER_VERSION", string.Empty),
+                GetEnvironmentValue("GAME_ENGINE_SIGNING_KEY_VERSION", string.Empty),
+                GetEnvironmentValue("GAME_ENGINE_SIGNING_PUBLIC_KEY_PEM", string.Empty)
+                    .Replace("\\n", "\n", StringComparison.Ordinal)));
     }
 
     private static string GetEnvironmentValue(string name, string fallback)
@@ -40,6 +49,11 @@ public sealed record ServiceConfiguration(
 
         return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
     }
+
+    private static bool IsTrue(string name) => string.Equals(
+        System.Environment.GetEnvironmentVariable(name),
+        "true",
+        StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed record RabbitMqConfiguration(string Url, string ExchangeName);
@@ -47,3 +61,11 @@ public sealed record RabbitMqConfiguration(string Url, string ExchangeName);
 public sealed record RedisConfiguration(string Url);
 
 public sealed record GameEngineSchemaConfiguration(string SchemaName);
+
+public sealed record ProductionActivationConfiguration(
+    bool Enabled,
+    bool SigningEnabled,
+    string SigningProviderId,
+    string SigningProviderVersion,
+    string SigningKeyVersion,
+    string SigningPublicKeyPem);

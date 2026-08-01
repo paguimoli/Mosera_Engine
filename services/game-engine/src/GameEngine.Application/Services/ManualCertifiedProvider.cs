@@ -287,11 +287,6 @@ public sealed class ManualCertifiedProvider(
             blockers.Add("Manual Certified provider configuration is not production-ready.");
         }
 
-        if (!authority.ProductionActivationDisabled)
-        {
-            blockers.Add("Manual Certified provider must remain disabled until governed activation.");
-        }
-
         return new ManualCertifiedProviderReadiness(
             true,
             true,

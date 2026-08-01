@@ -100,12 +100,22 @@ insert into game_engine.outcome_provider_configuration_versions (
 values ($1, $2, $3, $4, $5, '["UniqueNumberSet","OrderedNumberSequence"]'::jsonb,
   '{"providerEvidenceHash":true}'::jsonb, '["qa-ready"]'::jsonb, true, 'FAIL_CLOSED');
 `, [providerId, providerVersion, configurationVersion, category, canonicalHash(`provider-config:${suffix}`)]);
-  await pool.query(`
-insert into game_engine.outcome_provider_activation_events (
+  for (const stage of ["REGISTERED", "READY", "APPROVED", "PRODUCTION_ACTIVE"]) {
+    await pool.query(`
+insert into game_engine.game_engine_production_activation_events (
   activation_event_id, provider_id, provider_version, configuration_version,
-  activation_state, reason, evidence_hash, effective_at)
-values ($1, $2, $3, $4, 'ENABLED', 'Disposable BF-4.7 QA activation.', $5, now());
-`, [randomUUID(), providerId, providerVersion, configurationVersion, canonicalHash(`activation:${suffix}`)]);
+  stage, actor_reference, reason_code, approval_reference,
+  signing_provider_id, signing_provider_version, signing_key_version,
+  canonical_request_hash, evidence_hash, idempotency_key, created_at)
+values ($1, $2, $3, $4, $5, 'qa:canonical-outcome', 'QA_PROVIDER_ACTIVATION',
+  'qa:approved', 'mosera-software-signing', '1.0.0', 'key-v1', $6, $7, $8, now());
+`, [
+      randomUUID(), providerId, providerVersion, configurationVersion, stage,
+      canonicalHash(`activation-request:${suffix}:${stage}`),
+      canonicalHash(`activation-evidence:${suffix}:${stage}`),
+      `qa-outcome-activation:${suffix}:${stage}`,
+    ]);
+  }
   await pool.query(`
 insert into game_engine.published_draw_schedule_versions (
   schedule_version_id, schedule_id, version_number, game_definition_id,

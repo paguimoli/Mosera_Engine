@@ -306,11 +306,6 @@ public sealed class OfficialResultsProvider(
             blockers.Add("Official Results provider configuration is not production-ready.");
         }
 
-        if (!authority.ProductionActivationDisabled)
-        {
-            blockers.Add("Official Results provider must remain disabled until governed activation.");
-        }
-
         return new OfficialResultsProviderReadiness(
             true,
             source.SourceRepositoryReady,

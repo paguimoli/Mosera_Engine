@@ -385,7 +385,9 @@ public sealed class CanonicalOutcomeAuthority(
             certificateEvidence.Signature,
             certificateEvidence.SigningProvider,
             certificateEvidence.PreviousCertificates,
-            CertificateVerificationMode.DryRun));
+            certificateEvidence.SigningProvider.ProductionEligible
+                ? CertificateVerificationMode.Production
+                : CertificateVerificationMode.DryRun));
         if (!verification.IsValid)
         {
             throw new InvalidOperationException(

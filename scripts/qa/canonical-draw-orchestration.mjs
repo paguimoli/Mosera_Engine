@@ -418,8 +418,8 @@ try {
     "legacy outcome publication is disabled in production",
   );
   assert(
-    productionCompose.includes('OUTCOME_CANONICAL_PIPELINE_ENABLED: "false"'),
-    "production Outcome Authority remains disabled",
+    productionCompose.includes('OUTCOME_CANONICAL_PIPELINE_ENABLED: ${OUTCOME_CANONICAL_PIPELINE_ENABLED:-false}'),
+    "production Outcome Authority remains disabled by default and explicitly activatable",
   );
 
   await waitFor("Game Engine live endpoint is reachable", async () => {

@@ -36,7 +36,8 @@ public enum CertificateVerificationMode
 {
     DryRun,
     Simulation,
-    ProductionDisabled
+    ProductionDisabled,
+    Production
 }
 
 public sealed record SigningProviderDefinition(

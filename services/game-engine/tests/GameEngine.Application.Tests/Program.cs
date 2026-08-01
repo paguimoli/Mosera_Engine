@@ -36,6 +36,72 @@ if (modules.Any(module => module.Manifest.SupportedWagerTypes.Count == 0))
     throw new InvalidOperationException("Module status must expose supported wager types.");
 }
 
+using (var productionSigningKey = RSA.Create(3072))
+{
+    const string providerId = "qa-production-signing";
+    const string providerVersion = "1.0.0";
+    const string keyVersion = "qa-key-v1";
+    const string payload = "{\"certificate\":\"bf-4.9\"}";
+    var payloadHash = $"sha256:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant()}";
+    var provider = new SigningProviderDefinition(
+        providerId,
+        providerVersion,
+        SigningProviderType.SoftwareKey,
+        ProductionEligible: true,
+        CertificateVerificationService.ProductionSoftwareAlgorithm,
+        keyVersion,
+        "1",
+        VerificationSupport: true,
+        KeyRotationSupport: true,
+        SigningFailureMode.FailClosed,
+        "sha256:bf49-production-signing-provider",
+        SigningProviderLifecycleState.Active);
+    var resolver = new PemProductionSigningKeyResolver(new GameEngineProductionActivationOptions(
+        ActivationEnabled: true,
+        CanonicalPipelineEnabled: true,
+        SigningEnabled: true,
+        providerId,
+        providerVersion,
+        keyVersion,
+        productionSigningKey.ExportSubjectPublicKeyInfoPem()));
+    var verifier = new CertificateVerificationService(resolver);
+    var certificateId = Guid.NewGuid();
+    var signature = new CertificateSignature(
+        Guid.NewGuid(),
+        "OutcomeCertificate",
+        certificateId,
+        providerId,
+        providerVersion,
+        provider.Algorithm,
+        provider.AlgorithmVersion,
+        payloadHash,
+        Convert.ToBase64String(productionSigningKey.SignData(
+            Encoding.UTF8.GetBytes(payloadHash),
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1)),
+        SignatureVerificationStatus.Verified,
+        DateTimeOffset.UtcNow);
+    var request = new CertificateVerificationRequest(
+        "OutcomeCertificate",
+        certificateId,
+        payloadHash,
+        payload,
+        signature,
+        provider,
+        [],
+        CertificateVerificationMode.Production);
+
+    if (!verifier.Verify(request).IsValid)
+    {
+        throw new InvalidOperationException("Production RSA certificate verification must succeed for canonical evidence.");
+    }
+
+    if (verifier.Verify(request with { CanonicalPayloadJson = "{\"certificate\":\"tampered\"}" }).IsValid)
+    {
+        throw new InvalidOperationException("Production RSA certificate verification must reject tampered evidence.");
+    }
+}
+
 static OutcomeProviderDefinitionV1 RuntimeProvider(
     string providerId,
     string providerVersion,

@@ -256,11 +256,6 @@ public sealed class InternalCsprngOutcomeProvider(
             blockers.Add("Internal CSPRNG provider configuration is not production-ready.");
         }
 
-        if (!authority.ProductionActivationDisabled)
-        {
-            blockers.Add("Internal CSPRNG production activation must remain disabled.");
-        }
-
         return new InternalCsprngReadiness(
             ProviderImplementationReady: true,
             OperatingSystemEntropyReady: entropy.Ready,
