@@ -1,6 +1,5 @@
 import { Pool } from "pg";
 
-import { resolveFundingInstrument } from "../financial-authority/funding-instrument-authority";
 import type {
   AcceptCanonicalTicketInput,
   CanonicalTicket,
@@ -118,32 +117,22 @@ function translateError(error: unknown): never {
 
 export async function acceptCanonicalTicket(input: AcceptCanonicalTicketInput) {
   try {
-    const funding = await resolveFundingInstrument({
-      playerAccountId: input.playerAccountId,
-      requestedInstrument: input.fundingInstrument,
-      requestedWalletId: input.walletId,
-      currency: input.currency,
-      operation: "TICKET_ACCEPTANCE",
-      idempotencyKey: `ticket-funding:${input.idempotencyKey}`,
-      correlationId: input.correlationId,
-    });
     const result = await database().query<{ result: Record<string, unknown> }>(
       `select ticket_authority.accept_ticket(
-        $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6::uuid,
-        $7::uuid, $8::uuid, $9::uuid, $10::uuid, $11, $12, $13::jsonb,
-        $14, $15, $16, $17, $18
+        $1::uuid, $2::uuid, $3, $4::uuid, $5::uuid, $6::uuid,
+        $7::uuid, $8::uuid, $9, $10, $11, $12::jsonb,
+        $13, $14, $15, $16, $17
       ) as result`,
       [
         input.playerAccountId,
         input.playerProfileId,
-        funding.walletId,
-        input.gameAvailabilityId,
+        input.fundingInstrument ?? null,
+        input.walletId ?? null,
         input.productId,
         input.manifestId,
         input.paytableDefinitionId,
         input.drawId,
-        input.websiteId ?? null,
-        input.domainId ?? null,
+        input.hostname ?? null,
         input.externalTicketId ?? null,
         input.currency,
         JSON.stringify(input.items),

@@ -388,7 +388,7 @@ const resources: Record<PlatformResourceName, ResourceDefinition> = {
   "game-availability": {
     table: "platform.game_availability",
     responseKey: "availability",
-    filters: ["tenant_id", "brand_id", "market_id", "website_id", "agent_id", "game_code", "status", "version", "content_hash"],
+    filters: ["tenant_id", "brand_id", "market_id", "website_id", "agent_id", "player_account_id", "game_code", "status", "version", "content_hash"],
     fields: [
       field(["id"], "id", { defaultValue: () => randomUUID() }),
       field(["tenantId", "tenant_id"], "tenant_id", { required: true }),
@@ -396,6 +396,7 @@ const resources: Record<PlatformResourceName, ResourceDefinition> = {
       field(["marketId", "market_id"], "market_id"),
       field(["websiteId", "website_id"], "website_id"),
       field(["agentId", "agent_id"], "agent_id", { normalize: "lower" }),
+      field(["playerAccountId", "player_account_id"], "player_account_id"),
       field(["gameId", "game_id"], "game_id", { required: true }),
       field(["gameCode", "game_code"], "game_code", { required: true, normalize: "lower" }),
       field(["gameManifestReference", "game_manifest_reference"], "game_manifest_reference"),

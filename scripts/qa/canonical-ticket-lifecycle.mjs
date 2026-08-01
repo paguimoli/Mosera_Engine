@@ -76,6 +76,7 @@ try {
     master: randomUUID(),
     agent: randomUUID(),
     player: randomUUID(),
+    player2: randomUUID(),
     profile: randomUUID(),
     wallet: randomUUID(),
     freePlayWallet: randomUUID(),
@@ -84,7 +85,9 @@ try {
     availability: randomUUID(),
     otherAvailability: randomUUID(),
     draw: randomUUID(),
+    drawScheduleVersion: randomUUID(),
     closedDraw: randomUUID(),
+    closedDrawScheduleVersion: randomUUID(),
   };
 
   async function insertAccount(id, type, parentId = null, status = "ACTIVE") {
@@ -113,6 +116,7 @@ try {
   await insertAccount(ids.master, "MASTER_AGENT", ids.super);
   await insertAccount(ids.agent, "AGENT", ids.master);
   await insertAccount(ids.player, "PLAYER", ids.agent);
+  await insertAccount(ids.player2, "PLAYER", ids.agent);
   await client.query(
     `insert into public.player_profiles (
       id, account_id, display_name, status
@@ -226,15 +230,46 @@ try {
     ]
   );
   await client.query(
+    `insert into game_engine.published_draw_schedule_versions (
+      schedule_version_id, schedule_id, version_number, game_definition_id,
+      draw_authority_assignment_id, schedule_kind, schedule_configuration,
+      time_zone_id, schedule_hash, published_at
+    ) values
+      ($1,$2,1,$3,$4,'QA','{}','UTC',$5,now() - interval '2 minutes'),
+      ($6,$7,1,$3,$4,'QA','{}','UTC',$8,now() - interval '2 hours')`,
+    [
+      ids.drawScheduleVersion,
+      ids.draw,
+      product.product_id,
+      product.assignment_id,
+      `sha256:ticket-schedule:${runId}`,
+      ids.closedDrawScheduleVersion,
+      ids.closedDraw,
+      `sha256:ticket-closed-schedule:${runId}`,
+    ]
+  );
+  await client.query(
     `insert into game_engine.draw_schedules (
       id, game_definition_id, draw_authority_assignment_id,
-      sales_open_at, sales_close_at, draw_at, status
+      sales_open_at, sales_close_at, draw_at, status,
+      schedule_version_id, scheduled_execution_at, schedule_hash, draw_identity_hash
     ) values
       ($1,$2,$3,now() - interval '1 minute',now() + interval '1 hour',
-        now() + interval '61 minutes','SalesOpen'),
+        now() + interval '61 minutes','SalesOpen',$5,now() + interval '61 minutes',$6,$7),
       ($4,$2,$3,now() - interval '2 hours',now() - interval '1 hour',
-        now() - interval '59 minutes','SalesClosed')`,
-    [ids.draw, product.product_id, product.assignment_id, ids.closedDraw]
+        now() - interval '59 minutes','SalesClosed',$8,now() - interval '59 minutes',$9,$10)`,
+    [
+      ids.draw,
+      product.product_id,
+      product.assignment_id,
+      ids.closedDraw,
+      ids.drawScheduleVersion,
+      `sha256:ticket-schedule:${runId}`,
+      `sha256:ticket-draw:${runId}`,
+      ids.closedDrawScheduleVersion,
+      `sha256:ticket-closed-schedule:${runId}`,
+      `sha256:ticket-closed-draw:${runId}`,
+    ]
   );
 
   const items = [
@@ -272,8 +307,9 @@ try {
     "QA",
   ];
   const acceptSql = `select ticket_authority.accept_ticket(
-    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16,$17,$18
-  ) result`;
+    $1,$2,null,$3,$5,$6,$7,$8,null,$11,$12,$13::jsonb,$14,$15,$16,$17,$18
+  ) result
+  from (values ($4::uuid,$9::uuid,$10::uuid)) ignored(availability_id,website_id,domain_id)`;
   const fundingSql = `select * from funding_authority.resolve_funding_instrument(
     $1::uuid,$2,$3::uuid,$4,$5,$6,$7
   )`;
@@ -451,17 +487,25 @@ try {
       ]),
     /conflicts/
   );
-  await rejected(
-    "cross-market availability is rejected before reservation",
-    () =>
-      client.query(acceptSql, [
-        ...baseArgs.slice(0, 3),
-        ids.otherAvailability,
-        ...baseArgs.slice(4, 13),
-        `cross-scope:${runId}`,
-        ...baseArgs.slice(14),
-      ]),
-    /availability/
+  const ignoredCallerAvailability = (
+    await client.query(acceptSql, [
+      ...baseArgs.slice(0, 3),
+      ids.otherAvailability,
+      ...baseArgs.slice(4, 10),
+      `server-derived-${suffix}`,
+      ...baseArgs.slice(11, 13),
+      `server-derived:${runId}`,
+      ...baseArgs.slice(14),
+    ])
+  ).rows[0].result;
+  const derivedAvailability = await client.query(
+    `select game_availability_id from ticket_authority.tickets where ticket_id=$1`,
+    [ignoredCallerAvailability.ticketId]
+  );
+  check(
+    "caller-supplied availability cannot override server-derived scope",
+    ignoredCallerAvailability.accepted === true &&
+      derivedAvailability.rows[0].game_availability_id === ids.availability
   );
   await rejected(
     "closed draw and passed cutoff reject acceptance",
@@ -698,6 +742,155 @@ try {
     /append-only/
   );
 
+  const decisionEvidence = await client.query(
+    `select request.canonical_intent_hash, decision.decision_hash,
+            decision.applicable_availability_ids
+       from ticket_authority.acceptance_requests request
+       join ticket_authority.availability_decisions decision
+         on decision.ticket_id = request.ticket_id
+      where request.ticket_id = $1`,
+    [ticketId]
+  );
+  check(
+    "acceptance intent and effective availability evidence are immutable and linked",
+    decisionEvidence.rows.length === 1 &&
+      String(decisionEvidence.rows[0].canonical_intent_hash).startsWith("sha256:") &&
+      String(decisionEvidence.rows[0].decision_hash).startsWith("sha256:") &&
+      decisionEvidence.rows[0].applicable_availability_ids.includes(ids.availability)
+  );
+  await rejected(
+    "effective availability evidence cannot be changed",
+    () =>
+      client.query(
+        "delete from ticket_authority.availability_decisions where ticket_id=$1",
+        [ticketId]
+      ),
+    /append-only/
+  );
+
+  const brandLimitId = randomUUID();
+  await client.query(
+    `insert into platform.game_availability (
+      id, tenant_id, brand_id, game_id, game_code, status, effective_from,
+      max_wager_override, version, content_hash, audit_metadata
+    ) values ($1,$2,$3,$4,$5,'Active',now() - interval '1 minute',2.50,$6,$7,'{}')`,
+    [
+      brandLimitId,
+      scope.tenant_id,
+      scope.brand_id,
+      product.product_id,
+      product.game_code,
+      `limit-${suffix}`,
+      `sha256:ticket-brand-limit:${runId}`,
+    ]
+  );
+  await rejected(
+    "effective wager limit intersects applicable parent and child scopes",
+    () =>
+      client.query(acceptSql, [
+        ...baseArgs.slice(0, 10),
+        `limit-${suffix}`,
+        ...baseArgs.slice(11, 13),
+        `limit:${runId}`,
+        ...baseArgs.slice(14),
+      ]),
+    /effective maximum wager/
+  );
+
+  const closeClient = new Client({ connectionString: databaseUrl });
+  const acceptAfterCloseClient = new Client({ connectionString: databaseUrl });
+  await Promise.all([closeClient.connect(), acceptAfterCloseClient.connect()]);
+  await closeClient.query("begin");
+  await closeClient.query(
+    "update game_engine.draw_schedules set status='SalesClosed' where id=$1",
+    [ids.draw]
+  );
+  const fencedAcceptance = acceptAfterCloseClient.query(acceptSql, [
+    ...baseArgs.slice(0, 10),
+    `fenced-${suffix}`,
+    ...baseArgs.slice(11, 13),
+    `fenced:${runId}`,
+    ...baseArgs.slice(14),
+  ]);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await closeClient.query("commit");
+  await rejected(
+    "concurrent draw close wins the fence before acceptance can reserve",
+    () => fencedAcceptance,
+    /draw does not permit/
+  );
+  await Promise.all([closeClient.end(), acceptAfterCloseClient.end()]);
+  const fencedPartials = await client.query(
+    `select
+      (select count(*) from ticket_authority.acceptance_requests where idempotency_key=$1) requests,
+      (select count(*) from public.credit_reservations where idempotency_key=$2) reservations`,
+    [`fenced:${runId}`, `ticket-reservation:fenced:${runId}`]
+  );
+  check(
+    "draw-close rejection creates no reservation or ticket acceptance evidence",
+    Number(fencedPartials.rows[0].requests) === 0 &&
+      Number(fencedPartials.rows[0].reservations) === 0,
+    fencedPartials.rows[0]
+  );
+
+  const playerRestrictionId = randomUUID();
+  await client.query(
+    `insert into platform.game_availability (
+      id, tenant_id, brand_id, market_id, player_account_id,
+      game_id, game_code, status, effective_from, version, content_hash, audit_metadata
+    ) values ($1,$2,$3,$4,$5,$6,$7,'Suspended',now() - interval '1 minute',$8,$9,'{}')`,
+    [
+      playerRestrictionId,
+      scope.tenant_id,
+      scope.brand_id,
+      scope.market_id,
+      ids.player,
+      product.product_id,
+      product.game_code,
+      `player-deny-${suffix}`,
+      `sha256:ticket-player-deny:${runId}`,
+    ]
+  );
+  const availabilitySql = `select * from ticket_authority.resolve_effective_availability(
+    $1,$2,$3,null,$4,$5,$6,$7,clock_timestamp()
+  )`;
+  const playerDenied = await client.query(availabilitySql, [
+      scope.tenant_id, scope.brand_id, scope.market_id,
+      ids.agent, ids.master, ids.player, product.game_code,
+    ]);
+  check(
+    "player restriction narrows commercial availability",
+    playerDenied.rows[0]?.is_available === false
+  );
+  const unrestrictedPlayer = await client.query(availabilitySql, [
+    scope.tenant_id, scope.brand_id, scope.market_id,
+    ids.agent, ids.master, ids.player2, product.game_code,
+  ]);
+  check(
+    "missing player override inherits commercial availability",
+    unrestrictedPlayer.rows.length === 1
+  );
+
+  await client.query(
+    `insert into platform.game_availability (
+      id, tenant_id, brand_id, game_id, game_code, status, effective_from,
+      version, content_hash, audit_metadata
+    ) values ($1,$2,$3,$4,$5,'Suspended',now() - interval '1 minute',$6,$7,'{}')`,
+    [
+      randomUUID(), scope.tenant_id, scope.brand_id, product.product_id,
+      product.game_code, `parent-deny-${suffix}`,
+      `sha256:ticket-parent-deny:${runId}`,
+    ]
+  );
+  const parentDenied = await client.query(availabilitySql, [
+      scope.tenant_id, scope.brand_id, scope.market_id,
+      ids.agent, ids.master, ids.player2, product.game_code,
+    ]);
+  check(
+    "restrictive parent cannot be overridden by active market availability",
+    parentDenied.rows[0]?.is_available === false
+  );
+
   const readiness = await client.query(
     "select * from ticket_authority.ticket_readiness()"
   );
@@ -713,10 +906,39 @@ try {
     "app/api/tickets/[ticketId]/cancel/route.ts",
     "utf8"
   );
+  const acceptanceAuthority = await client.query(`
+    select
+      (select count(*)::int
+         from pg_proc procedure
+         join pg_namespace namespace on namespace.oid = procedure.pronamespace
+        where namespace.nspname = 'ticket_authority'
+          and procedure.proname = 'accept_ticket') as public_acceptance_functions,
+      has_function_privilege(
+        'public',
+        'ticket_authority.persist_authorized_ticket(uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,text,jsonb,text,text,text,text,text)',
+        'EXECUTE'
+      ) as persistence_publicly_executable,
+      position(
+        'draw does not permit ticket acceptance'
+        in pg_get_functiondef(
+          'ticket_authority.persist_authorized_ticket(uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,text,jsonb,text,text,text,text,text)'::regprocedure
+        )
+      ) > 0 as persistence_repeats_draw_fence
+  `);
+  check(
+    "one public acceptance authority owns the only draw-close decision",
+    acceptanceAuthority.rows[0].public_acceptance_functions === 1 &&
+      acceptanceAuthority.rows[0].persistence_publicly_executable === false &&
+      acceptanceAuthority.rows[0].persistence_repeats_draw_fence === false,
+    acceptanceAuthority.rows[0]
+  );
   check(
     "one canonical production Ticket mutation path is enforced",
     route.includes("acceptCanonicalTicket") &&
       route.includes("Legacy external-ID ticket intake is retired") &&
+      !route.includes('requiredUuid(body, "gameAvailabilityId")') &&
+      !route.includes('optionalUuid(body, "websiteId")') &&
+      !route.includes('optionalUuid(body, "domainId")') &&
       !route.includes("supabase") &&
       !route.includes("place_ticket_with_wallet_debit")
   );

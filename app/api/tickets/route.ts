@@ -20,6 +20,7 @@ import type {
   AcceptCanonicalTicketInput,
   CanonicalTicketItemInput,
 } from "@/src/domains/tickets/canonical-ticket.types";
+import { normalizeRuntimeHostname } from "@/src/domains/platform-management/platform-management.repository";
 import { getOrCreateCorrelationId } from "@/src/lib/observability/correlation";
 
 export const runtime = "nodejs";
@@ -149,7 +150,7 @@ export async function POST(request: Request) {
         {
           accepted: false,
           error: "Legacy external-ID ticket intake is retired.",
-          canonicalContract: "playerAccountId/playerProfileId/gameAvailabilityId/productId/manifestId/paytableDefinitionId/drawId/items",
+          canonicalContract: "playerAccountId/playerProfileId/productId/manifestId/paytableDefinitionId/drawId/items",
         },
         { status: 410 }
       );
@@ -179,13 +180,11 @@ export async function POST(request: Request) {
       playerProfileId: requiredUuid(body, "playerProfileId"),
       fundingInstrument: optionalFundingInstrument(body),
       walletId: optionalUuid(body, "walletId"),
-      gameAvailabilityId: requiredUuid(body, "gameAvailabilityId"),
       productId: requiredUuid(body, "productId"),
       manifestId: requiredUuid(body, "manifestId"),
       paytableDefinitionId: requiredUuid(body, "paytableDefinitionId"),
       drawId: requiredUuid(body, "drawId"),
-      websiteId: optionalUuid(body, "websiteId"),
-      domainId: optionalUuid(body, "domainId"),
+      hostname: normalizeRuntimeHostname(request.headers.get("host") ?? ""),
       externalTicketId:
         typeof body.externalTicketId === "string"
           ? body.externalTicketId.trim() || null

@@ -27,13 +27,11 @@ export type AcceptCanonicalTicketInput = {
   playerProfileId: string;
   fundingInstrument?: "CREDIT" | "FREE_PLAY" | null;
   walletId?: string | null;
-  gameAvailabilityId: string;
   productId: string;
   manifestId: string;
   paytableDefinitionId: string;
   drawId: string;
-  websiteId?: string | null;
-  domainId?: string | null;
+  hostname?: string | null;
   externalTicketId?: string | null;
   currency: string;
   items: CanonicalTicketItemInput[];
