@@ -263,6 +263,7 @@
     "qa:legacy-randomness-isolation": "node scripts/qa/legacy-randomness-isolation.mjs",
     "qa:outcome-readiness-report": "node scripts/qa/outcome-readiness-report.mjs",
     "qa:canonical-outcome-pipeline": "node scripts/qa/canonical-outcome-pipeline.mjs",
+    "qa:canonical-outcome-authority": "node scripts/qa/canonical-outcome-pipeline.mjs",
     "qa:canonical-draw-orchestration": "node scripts/qa/canonical-draw-orchestration.mjs",
     "qa:canonical-draw-orchestrator": "node scripts/run-ts-script.mjs scripts/qa/canonical-draw-orchestrator.ts",
     "qa:immutable-draw-authority": "node scripts/run-ts-script.mjs scripts/qa/immutable-draw-authority.ts",

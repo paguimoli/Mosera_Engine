@@ -47,7 +47,7 @@ public static class GameEngineEndpoints
             HttpContext context,
             ServiceConfiguration configuration,
             CanonicalOutcomeProviderAuthority providerAuthority,
-            CanonicalDrawOrchestrator orchestrator) =>
+            CanonicalOutcomeAuthority orchestrator) =>
         {
             var readiness = await orchestrator.CheckReadinessAsync(context.RequestAborted);
             var providerReadiness =
@@ -1122,7 +1122,7 @@ public static class GameEngineEndpoints
         CanonicalOutcomePublicationCommand command,
         HttpContext context,
         ServiceConfiguration configuration,
-        CanonicalDrawOrchestrator orchestrator)
+        CanonicalOutcomeAuthority orchestrator)
     {
         if (!configuration.CanonicalOutcomePipelineEnabled)
         {
@@ -1168,7 +1168,7 @@ public static class GameEngineEndpoints
     private static async Task<IResult> GetCurrentCanonicalOutcomeAsync(
         Guid drawId,
         HttpContext context,
-        CanonicalDrawOrchestrator orchestrator)
+        CanonicalOutcomeAuthority orchestrator)
     {
         var result = await orchestrator.FindCurrentAsync(drawId, context.RequestAborted);
         return result is null
@@ -1191,7 +1191,7 @@ public static class GameEngineEndpoints
         OutcomeSettlementRequestCommand command,
         HttpContext context,
         ServiceConfiguration configuration,
-        CanonicalDrawOrchestrator orchestrator)
+        CanonicalOutcomeAuthority orchestrator)
     {
         if (!configuration.CanonicalOutcomePipelineEnabled)
         {
@@ -1238,7 +1238,7 @@ public static class GameEngineEndpoints
     private static async Task<IResult> RecoverCanonicalOutcomeRequestsAsync(
         HttpContext context,
         ServiceConfiguration configuration,
-        CanonicalDrawOrchestrator orchestrator)
+        CanonicalOutcomeAuthority orchestrator)
     {
         if (!configuration.CanonicalOutcomePipelineEnabled ||
             !configuration.CanonicalOutcomeRecoveryEnabled)

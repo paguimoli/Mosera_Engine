@@ -17,7 +17,7 @@ public sealed class InfrastructureReadinessChecks
     private readonly SettlementInputAdapter settlementInputAdapter;
     private readonly CanonicalOutcomeProviderAuthority canonicalOutcomeProviderAuthority;
     private readonly InternalCsprngOutcomeProvider internalCsprngProvider;
-    private readonly CanonicalDrawOrchestrator canonicalDrawOrchestrator;
+    private readonly CanonicalOutcomeAuthority canonicalOutcomeAuthority;
     private readonly ProvablyFairRuntimeService provablyFairRuntime;
     private readonly OfficialResultsProvider officialResultsProvider;
     private readonly ManualCertifiedProvider manualCertifiedProvider;
@@ -34,7 +34,7 @@ public sealed class InfrastructureReadinessChecks
         SettlementInputAdapter settlementInputAdapter,
         CanonicalOutcomeProviderAuthority canonicalOutcomeProviderAuthority,
         InternalCsprngOutcomeProvider internalCsprngProvider,
-        CanonicalDrawOrchestrator canonicalDrawOrchestrator,
+        CanonicalOutcomeAuthority canonicalOutcomeAuthority,
         ProvablyFairRuntimeService provablyFairRuntime,
         OfficialResultsProvider officialResultsProvider,
         ManualCertifiedProvider manualCertifiedProvider,
@@ -50,7 +50,7 @@ public sealed class InfrastructureReadinessChecks
         this.settlementInputAdapter = settlementInputAdapter;
         this.canonicalOutcomeProviderAuthority = canonicalOutcomeProviderAuthority;
         this.internalCsprngProvider = internalCsprngProvider;
-        this.canonicalDrawOrchestrator = canonicalDrawOrchestrator;
+        this.canonicalOutcomeAuthority = canonicalOutcomeAuthority;
         this.provablyFairRuntime = provablyFairRuntime;
         this.officialResultsProvider = officialResultsProvider;
         this.manualCertifiedProvider = manualCertifiedProvider;
@@ -217,7 +217,7 @@ public sealed class InfrastructureReadinessChecks
 
     public async Task<DependencyHealthResult> CheckCanonicalOutcomePipelineAsync(CancellationToken cancellationToken)
     {
-            var readiness = await canonicalDrawOrchestrator.CheckReadinessAsync(cancellationToken);
+        var readiness = await canonicalOutcomeAuthority.CheckReadinessAsync(cancellationToken);
         var ready = readiness.DurablePersistenceConfigured &&
             readiness.DurablePersistenceReachable &&
             readiness.ImmutableVersioningReady &&

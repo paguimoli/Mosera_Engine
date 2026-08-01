@@ -2,6 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { Pool } from "pg";
+import {
+  appendCertifiedProviderResult,
+  canonicalHash,
+  createCanonicalOutcomeFixture,
+} from "./lib/canonical-outcome-authority-fixture.mjs";
 
 const gameEngineUrl = process.env.QA_GAME_ENGINE_URL ?? "http://127.0.0.1:5500";
 const databaseUrl =
@@ -83,297 +88,24 @@ async function scalar(statement, values = []) {
   return result.rows[0] ? Object.values(result.rows[0])[0] : null;
 }
 
-async function seedDrawLineage(drawId, suffix) {
-  const dependency = await pool.query(`
-select definition.id game_definition_id, definition.active_version_id game_definition_version_id,
-       assignment.id assignment_id, assignment.draw_authority_version_id,
-       module.code engine_name, module_version.version engine_version,
-       authority.code provider_id, authority_version.provider_version
-from game_engine.draw_authority_assignments assignment
-join game_engine.game_definitions definition on definition.id = assignment.game_definition_id
-join game_engine.game_modules module on module.id = definition.game_module_id
-join game_engine.game_module_versions module_version on module_version.id = module.active_version_id
-join game_engine.draw_authorities authority on authority.id = assignment.draw_authority_id
-join game_engine.draw_authority_versions authority_version on authority_version.id = assignment.draw_authority_version_id
-order by assignment.effective_from, assignment.id limit 1;
-`);
-  if (dependency.rowCount !== 1) throw new Error("Draw lineage dependency fixture is unavailable.");
-  const row = dependency.rows[0];
-  const scheduleId = randomUUID();
-  const scheduleVersionId = randomUUID();
-  const manifestId = randomUUID();
-  const scheduledAt = new Date(Date.now() + 60_000);
-  const scheduleHash = hash(`orchestration-schedule:${suffix}`);
-  const identityHash = hash(`orchestration-draw:${drawId}`);
-  const manifestHash = hash(`orchestration-manifest:${drawId}`);
-  const outcomeProviderId = `qa-canonical-provider:${suffix}`;
-  const outcomeProviderVersion = "1.0.0";
-  const providerConfigurationVersion = "1";
-  await pool.query(
-    `insert into game_engine.outcome_provider_definitions (
-      id, provider_id, provider_version, provider_type, lifecycle_state,
-      production_eligible, supported_outcome_primitive_types,
-      evidence_requirements, health_readiness_capabilities, idempotency_model,
-      custody_support, signing_requirements, replayability_support, failure_mode,
-      capability_markers, content_hash, canonical_provider_category)
-     values ($1,$2,$3,'CERTIFIED_CSPRNG','Active',true,
-       '["UniqueNumberSet"]'::jsonb,'{"providerEvidenceHash":true}'::jsonb,
-       '["qa-ready"]'::jsonb,'PerDraw','["Generated","Certified"]'::jsonb,
-       '{"signatureRequired":true}'::jsonb,true,'FailClosed',
-       '{"generatesOutcomes":true,"ingestsExternalOutcomes":false,"supportsPlayerVerificationReceipt":false,"supportsDeterministicReplay":true,"supportsProviderHealthEvidence":true,"supportsDisputeHandling":true,"supportsExternalSourceEvidence":false,"supportsPhysicalDrawEvidence":false}'::jsonb,
-       $4,'INTERNAL_CSPRNG')`,
-    [randomUUID(), outcomeProviderId, outcomeProviderVersion, hash(`provider:${suffix}`)],
-  );
-  await pool.query(
-    `insert into game_engine.outcome_provider_configuration_versions (
-       provider_id, provider_version, configuration_version,
-       canonical_provider_category, configuration_hash, supported_capabilities,
-       evidence_requirements, readiness_capabilities, production_ready, failure_mode)
-     values ($1,$2,$3,'INTERNAL_CSPRNG',$4,'["UniqueNumberSet"]'::jsonb,
-       '{"providerEvidenceHash":true}'::jsonb,'["qa-ready"]'::jsonb,true,'FAIL_CLOSED')`,
-    [outcomeProviderId, outcomeProviderVersion, providerConfigurationVersion, hash(`provider-config:${suffix}`)],
-  );
-  await pool.query(
-    `insert into game_engine.outcome_provider_activation_events (
-       activation_event_id, provider_id, provider_version, configuration_version,
-       activation_state, reason, evidence_hash, effective_at)
-     values ($1,$2,$3,$4,'ENABLED','Synthetic canonical draw orchestration QA only.',$5,now())`,
-    [
-      randomUUID(),
-      outcomeProviderId,
-      outcomeProviderVersion,
-      providerConfigurationVersion,
-      hash(`provider-activation:${suffix}`),
-    ],
-  );
-  await pool.query(
-    `insert into game_engine.published_draw_schedule_versions
-      (schedule_version_id, schedule_id, version_number, game_definition_id,
-       draw_authority_assignment_id, schedule_kind, schedule_configuration,
-       time_zone_id, schedule_hash, published_at)
-     values ($1,$2,1,$3,$4,'QA_FIXED','{}'::jsonb,'UTC',$5,now())`,
-    [scheduleVersionId, scheduleId, row.game_definition_id, row.assignment_id, scheduleHash],
-  );
-  await pool.query(
-    `insert into game_engine.draw_schedules
-      (id, game_definition_id, draw_authority_assignment_id, sales_open_at,
-       sales_close_at, draw_at, status, schedule_version_id,
-       scheduled_execution_at, schedule_hash, draw_identity_hash)
-     values ($1,$2,$3,$4::timestamptz - interval '10 minutes',
-       $4::timestamptz - interval '1 minute',$4,'Certified',$5,$4,$6,$7)`,
-    [drawId, row.game_definition_id, row.assignment_id, scheduledAt, scheduleVersionId, scheduleHash, identityHash],
-  );
-  await pool.query(
-    `insert into game_engine.draw_execution_manifests
-      (execution_manifest_id, draw_id, schedule_version_id,
-       game_definition_version_id, draw_authority_version_id,
-       engine_name, engine_version, outcome_provider_id, outcome_provider_version,
-       provider_configuration_version, evaluator_version, paytable_version, scheduled_execution_at,
-       schedule_hash, draw_identity_hash, canonical_manifest_hash, created_at)
-     select $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-       definition.evaluator_version,definition.paytable_version,$11,$12,$13,$14,now()
-     from game_engine.game_definition_versions definition where definition.id=$4`,
-    [
-      manifestId, drawId, scheduleVersionId, row.game_definition_version_id,
-      row.draw_authority_version_id, row.engine_name, row.engine_version,
-      outcomeProviderId, outcomeProviderVersion, providerConfigurationVersion,
-      scheduledAt, scheduleHash, identityHash, manifestHash,
-    ],
-  );
-  return {
-    manifestId,
-    manifestHash,
-    outcomeProviderId,
-    outcomeProviderVersion,
-    providerConfigurationVersion,
-  };
-}
-
 async function seedCertifiedOutcome(suffix) {
-  const strategyId = `strategy:orchestration:${suffix}`;
-  const providerId = `provider:orchestration:${suffix}`;
-  const evidenceHash = hash(`evidence:${suffix}`);
-  const drawId = randomUUID();
-  const outcomeId = randomUUID();
-  const certificateId = randomUUID();
+  const fixture = await createCanonicalOutcomeFixture(pool, { suffix });
+  const result = await appendCertifiedProviderResult(pool, fixture);
   const settlementInputId = randomUUID();
   const mathCertificateId = randomUUID();
   const ticketId = randomUUID();
   const ticketLineId = randomUUID();
-  const outcomePayload = { numbers: [2, 7, 11, 19, 31] };
-  const outcomeHash = hash(JSON.stringify(outcomePayload));
   const mathHash = hash(`math:${suffix}`);
   const canonicalSettlementPayload = {
     mathEvaluationCertificateHash: mathHash,
     prizeFactsHash: mathHash,
     ticketReference: `ticket:${suffix}`,
   };
-  const lineage = await seedDrawLineage(drawId, suffix);
-
-  await pool.query(
-    `
-insert into game_engine.outcome_strategy_definitions (
-  id, strategy_id, strategy_version, primitive_graph, input_schema, output_schema,
-  constraints, jurisdiction_profile_references, lifecycle_state, content_hash,
-  certification_binding_placeholder, signature_metadata)
-values (
-  $1, $2, '1.0.0', $3::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
-  '[]'::jsonb, 'GovernanceApproved', $4, null, $5::jsonb);
-`,
-    [
-      randomUUID(),
-      strategyId,
-      JSON.stringify([
-        {
-          nodeId: "numbers",
-          primitiveType: "UniqueNumberSet",
-          dependsOn: [],
-          minNumber: 1,
-          maxNumber: 40,
-          count: 5,
-        },
-      ]),
-      hash(`strategy:${suffix}`),
-      JSON.stringify({ signingKeyId: "qa-only", signature: "qa-only" }),
-    ],
-  );
-  await pool.query(
-    `
-insert into game_engine.rng_provider_definitions (
-  id, provider_id, provider_version, provider_type, production_eligible,
-  certification_state, algorithm_references, entropy_source_metadata,
-  health_test_capabilities, failure_mode, content_hash, signature_metadata)
-values (
-  $1, $2, '1.0.0', 'TEST_DETERMINISTIC', false, 'InternalVerified',
-  '["deterministic-test-v1"]'::jsonb, '{}'::jsonb, '["qa"]'::jsonb,
-  'FailClosed', $3, $4::jsonb);
-`,
-    [
-      randomUUID(),
-      providerId,
-      hash(`provider:${suffix}`),
-      JSON.stringify({ signingKeyId: "qa-only", signature: "qa-only" }),
-    ],
-  );
-  await pool.query(
-    `
-insert into game_engine.rng_provider_evidence (
-  evidence_id, provider_id, provider_version, entropy_source_reference,
-  health_test_result, known_answer_test_result, continuous_test_result,
-  generated_at, canonical_evidence_hash, signing_metadata)
-values (
-  $1, $2, '1.0.0', 'qa:deterministic', 'Passed', 'Passed', 'Passed',
-  now(), $3, $4::jsonb);
-`,
-    [
-      randomUUID(),
-      providerId,
-      evidenceHash,
-      JSON.stringify({ signingKeyId: "qa-only", signature: "qa-only" }),
-    ],
-  );
-  const providerExecutionId = randomUUID();
-  const providerRequestHash = hash(`provider-request:${suffix}`);
-  const providerResultHash = hash(`provider-result:${suffix}:${outcomeHash}`);
-  await pool.query(
-    `insert into game_engine.outcome_provider_executions (
-       execution_id, execution_manifest_id, provider_id, provider_version,
-       configuration_version, idempotency_key, canonical_request_hash, claimed_at)
-     values ($1,$2,$3,$4,$5,$6,$7,now())`,
-    [
-      providerExecutionId,
-      lineage.manifestId,
-      lineage.outcomeProviderId,
-      lineage.outcomeProviderVersion,
-      lineage.providerConfigurationVersion,
-      `provider-execution:${suffix}`,
-      providerRequestHash,
-    ],
-  );
-  await pool.query(
-    `insert into game_engine.outcome_provider_execution_attempts (
-       attempt_id, execution_id, attempt_number, status, failure_classification,
-       request_hash, attempt_hash, started_at, completed_at)
-     values ($1,$2,1,'COMPLETED','NONE',$3,$4,now(),now())`,
-    [
-      randomUUID(),
-      providerExecutionId,
-      providerRequestHash,
-      hash(`provider-attempt:${suffix}`),
-    ],
-  );
-
-  await pool.query(
-    `
-insert into game_engine.outcome_events (
-  outcome_id, request_id, draw_id, game_manifest_reference, strategy_id,
-  strategy_version, rng_provider_id, rng_provider_version, rng_evidence_hash,
-  idempotency_key, outcome_mode, outcome_payload, canonical_outcome_hash, generated_at)
-values (
-  $1, $2, $3, 'game-manifest:orchestration-qa:1.0.0', $4, '1.0.0',
-  $5, '1.0.0', $6, $7, 'DryRun', $8::jsonb, $9, now());
-`,
-    [
-      outcomeId,
-      randomUUID(),
-      drawId,
-      strategyId,
-      providerId,
-      evidenceHash,
-      `orchestration-source:${suffix}`,
-      JSON.stringify(outcomePayload),
-      outcomeHash,
-    ],
-  );
-  await pool.query(
-    `
-insert into game_engine.outcome_certificates (
-  certificate_id, outcome_id, draw_id, strategy_id, strategy_version,
-  rng_provider_id, rng_provider_version, canonical_outcome_hash,
-  evidence_hash_reference, previous_certificates, signing_metadata,
-  custody_state, issued_at)
-values (
-  $1, $2, $3, $4, '1.0.0', $5, '1.0.0', $6, $7, '[]'::jsonb,
-  $8::jsonb, 'Certified', now());
-`,
-    [
-      certificateId,
-      outcomeId,
-      drawId,
-      strategyId,
-      providerId,
-      outcomeHash,
-      evidenceHash,
-      JSON.stringify({ signingKeyId: "qa-only", signature: "qa-only" }),
-    ],
-  );
-  await pool.query(
-    `insert into game_engine.outcome_provider_execution_evidence (
-       evidence_id, execution_id, execution_manifest_id, draw_id, provider_id,
-       provider_version, configuration_version, request_hash, result_hash,
-       evidence_hash, outcome_certificate_id, outcome_certificate_hash,
-       execution_attempt, idempotency_key, status, started_at, completed_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,1,$13,
-       'AUTHORITATIVE',now(),now());`,
-    [
-      randomUUID(),
-      providerExecutionId,
-      lineage.manifestId,
-      drawId,
-      lineage.outcomeProviderId,
-      lineage.outcomeProviderVersion,
-      lineage.providerConfigurationVersion,
-      providerRequestHash,
-      providerResultHash,
-      hash(`provider-evidence:${suffix}`),
-      certificateId,
-      outcomeHash,
-      `provider-execution:${suffix}`,
-    ],
-  );
-
-  await pool.query(
-    `
+  const canonicalPayload = (await pool.query(
+    "select $1::jsonb::text as value",
+    [JSON.stringify(canonicalSettlementPayload)],
+  )).rows[0].value;
+  await pool.query(`
 insert into game_engine.settlement_input_records (
   settlement_input_id, math_evaluation_certificate_id,
   math_evaluation_certificate_hash, outcome_certificate_id,
@@ -386,33 +118,22 @@ insert into game_engine.settlement_input_records (
 values (
   $1, $2, $3, $4, $5, $6, 'manifest:orchestration-qa', '1.0.0', $7,
   'math:orchestration-qa', '1.0.0', $8, 'paytable:orchestration-qa',
-  '1.0.0', $9, 'qa-evaluator-1', 'Win', 'QA', $10::jsonb, $3, 1, 1,
-  $11, $12, now(), '{"authority":"MathAuthority"}'::jsonb, $13::jsonb, $14);
-`,
-    [
-      settlementInputId,
-      mathCertificateId,
-      mathHash,
-      certificateId,
-      outcomeHash,
-      ticketId,
-      hash(`manifest:${suffix}`),
-      hash(`math-model:${suffix}`),
-      hash(`paytable:${suffix}`),
-      JSON.stringify({ outcome: "Win", prizeTier: "QA", payoutUnits: 1, multiplier: 1 }),
-      hash(`replay:${suffix}`),
-      `settlement-input:${suffix}`,
-      JSON.stringify(canonicalSettlementPayload),
-      hash(JSON.stringify(canonicalSettlementPayload)),
-    ],
-  );
-
+  '1.0.0', $9, $10, 'Win', 'QA', $11::jsonb, $3, 1, 1,
+  $12, $13, now(), '{"authority":"MathAuthority"}'::jsonb, $14::jsonb, $15);
+`, [
+    settlementInputId, mathCertificateId, mathHash, result.certificateId,
+    result.outcomeHash, ticketId, hash(`manifest:${suffix}`),
+    hash(`math-model:${suffix}`), hash(`paytable:${suffix}`), fixture.evaluatorVersion,
+    JSON.stringify({ outcome: "Win", prizeTier: "QA", payoutUnits: 1, multiplier: 1 }),
+    hash(`replay:${suffix}`), `settlement-input:${suffix}`, canonicalPayload,
+    canonicalHash(canonicalPayload),
+  ]);
   return {
-    certificateId,
-    drawId,
+    certificateId: result.certificateId,
+    drawId: fixture.drawId,
     mathCertificateId,
     mathHash,
-    outcomeHash,
+    outcomeHash: result.outcomeHash,
     settlementInputId,
     ticketId,
     ticketLineId,
@@ -620,6 +341,9 @@ async function publish(evidence, suffix) {
     correlationId: `orchestration:${suffix}`,
     causationId: `draw-execution:${suffix}`,
     auditReference: `audit:${suffix}`,
+    actorReference: "worker:canonical-draw-orchestration-qa",
+    reasonCode: "CERTIFIED_RESULT_PUBLICATION",
+    lifecycleEvidenceHash: hash(`lifecycle:${suffix}`),
   });
 }
 

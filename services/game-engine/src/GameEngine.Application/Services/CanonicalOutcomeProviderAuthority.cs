@@ -174,6 +174,7 @@ public sealed class CanonicalOutcomeProviderAuthority(ICanonicalOutcomeProviderR
         RequireHash(evidence.RequestHash, "Provider request hash");
         RequireHash(evidence.ResultHash, "Provider result hash");
         RequireHash(evidence.EvidenceHash, "Provider evidence hash");
+        RequireCanonicalResult(evidence);
         if (evidence.Stage != OutcomeProviderEvidenceStage.Authoritative ||
             evidence.OutcomeCertificateId is null)
         {
@@ -192,6 +193,7 @@ public sealed class CanonicalOutcomeProviderAuthority(ICanonicalOutcomeProviderR
         RequireHash(evidence.RequestHash, "Provider request hash");
         RequireHash(evidence.ResultHash, "Provider result hash");
         RequireHash(evidence.EvidenceHash, "Provider evidence hash");
+        RequireCanonicalResult(evidence);
         if (evidence.Stage != OutcomeProviderEvidenceStage.Generated ||
             evidence.OutcomeCertificateId is not null ||
             evidence.OutcomeCertificateHash is not null)
@@ -225,6 +227,7 @@ public sealed class CanonicalOutcomeProviderAuthority(ICanonicalOutcomeProviderR
         RequireHash(evidence.RequestHash, "Provider request hash");
         RequireHash(evidence.ResultHash, "Provider result hash");
         RequireHash(evidence.EvidenceHash, "Provider evidence hash");
+        RequireCanonicalResult(evidence);
         if (evidence.Stage != OutcomeProviderEvidenceStage.Generated ||
             evidence.ExecutionId != attempt.ExecutionId ||
             evidence.ExecutionAttempt != attempt.AttemptNumber ||
@@ -245,12 +248,12 @@ public sealed class CanonicalOutcomeProviderAuthority(ICanonicalOutcomeProviderR
         CancellationToken cancellationToken) =>
         repository.FindGeneratedEvidenceAsync(executionManifestId, cancellationToken);
 
-    public async Task<OutcomeProviderExecutionEvidence> AuthorizePublicationAsync(
+    public async Task<AuthorizedOutcomeProviderEvidence> AuthorizePublicationAsync(
         DrawExecutionManifest manifest,
         CanonicalOutcomePublicationCommand command,
         CancellationToken cancellationToken)
     {
-        await ResolveAsync(manifest, cancellationToken);
+        var registration = await ResolveAsync(manifest, cancellationToken);
         var evidence = await repository.FindAuthoritativeEvidenceAsync(
             manifest.ExecutionManifestId,
             cancellationToken)
@@ -279,7 +282,8 @@ public sealed class CanonicalOutcomeProviderAuthority(ICanonicalOutcomeProviderR
                 "Provider result evidence does not match the Outcome Certificate selected for publication.");
         }
 
-        return evidence;
+        RequireCanonicalResult(evidence);
+        return new AuthorizedOutcomeProviderEvidence(registration, evidence);
     }
 
     public Task<IReadOnlyCollection<OutcomeProviderExecutionClaim>> FindIncompleteExecutionsAsync(
@@ -317,6 +321,23 @@ public sealed class CanonicalOutcomeProviderAuthority(ICanonicalOutcomeProviderR
             !value.StartsWith("sha256:", StringComparison.Ordinal))
         {
             throw new ArgumentException($"{name} must be a canonical sha256 hash.");
+        }
+    }
+
+    private static void RequireCanonicalResult(OutcomeProviderExecutionEvidence evidence)
+    {
+        if (string.IsNullOrWhiteSpace(evidence.CanonicalResultJson))
+        {
+            throw new ArgumentException("Canonical provider result payload is required.");
+        }
+
+        RequireHash(evidence.CanonicalResultHash, "Canonical provider result hash");
+        if (!string.Equals(
+                CanonicalProviderOutcomeFactory.Hash(evidence.CanonicalResultJson),
+                evidence.CanonicalResultHash,
+                StringComparison.Ordinal))
+        {
+            throw new ArgumentException("Canonical provider result hash does not match its payload.");
         }
     }
 }

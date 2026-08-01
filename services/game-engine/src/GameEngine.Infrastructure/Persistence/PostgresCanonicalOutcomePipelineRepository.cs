@@ -24,6 +24,7 @@ public sealed class PostgresCanonicalOutcomePipelineRepository : ICanonicalOutco
 
     public async Task<CanonicalOutcomeVersion> PublishAsync(
         CanonicalOutcomePublicationCommand command,
+        CanonicalOutcomeAuthorityContext authorityContext,
         string canonicalRequestHash,
         CancellationToken cancellationToken)
     {
@@ -51,8 +52,9 @@ public sealed class PostgresCanonicalOutcomePipelineRepository : ICanonicalOutco
             var source = await LoadSourceOutcomeAsync(connection, transaction, command, cancellationToken);
             var manifest = await FindExecutionManifestAsync(connection, transaction, command.DrawId, cancellationToken)
                 ?? throw new InvalidOperationException("The Draw Instance has no authoritative Execution Manifest.");
+            ValidateAuthorityContext(command, authorityContext, manifest, source);
             var current = await FindCurrentAsync(connection, transaction, command.DrawId, cancellationToken);
-            ValidateVersionTransition(command, current, source);
+            ValidateVersionTransition(command, current, source, authorityContext);
 
             var outcomeVersionId = Guid.NewGuid();
             var outboxEventId = Guid.NewGuid();
@@ -68,12 +70,23 @@ public sealed class PostgresCanonicalOutcomePipelineRepository : ICanonicalOutco
                 ["engineName"] = command.EngineName,
                 ["engineVersion"] = command.EngineVersion,
                 ["generatedAt"] = source.GeneratedAt,
+                ["gameDefinitionHash"] = authorityContext.GameDefinitionVersion.DefinitionHash,
+                ["gameDefinitionVersionId"] = authorityContext.GameDefinitionVersion.Id,
+                ["lifecycleEvidenceHash"] = command.LifecycleEvidenceHash,
                 ["outcomeCertificateHash"] = command.OutcomeCertificateHash,
                 ["outcomeCertificateId"] = command.OutcomeCertificateId,
                 ["outcomeHash"] = source.CanonicalOutcomeHash,
+                ["outcomeProviderCategory"] = authorityContext.Provider.Registration.ProviderCategory.ToString(),
+                ["outcomeProviderId"] = authorityContext.Provider.Registration.ProviderId,
+                ["outcomeProviderVersion"] = authorityContext.Provider.Registration.ProviderVersion,
                 ["outcomeVersionId"] = outcomeVersionId,
                 ["previousOutcomeVersionId"] = command.PreviousOutcomeVersionId,
                 ["productReference"] = command.ProductReference,
+                ["providerConfigurationVersion"] = authorityContext.Provider.Registration.ConfigurationVersion,
+                ["providerEvidenceHash"] = authorityContext.Provider.Evidence.EvidenceHash,
+                ["providerEvidenceId"] = authorityContext.Provider.Evidence.EvidenceId,
+                ["reasonCode"] = command.ReasonCode,
+                ["validatedOutcomeHash"] = authorityContext.ValidatedResultHash,
                 ["versionKind"] = command.VersionKind.ToString(),
                 ["versionNumber"] = versionNumber
             });
@@ -94,10 +107,23 @@ public sealed class PostgresCanonicalOutcomePipelineRepository : ICanonicalOutco
                 insert.Transaction = transaction;
                 insert.CommandText = """
 insert into game_engine.canonical_outcome_versions (
+  authority_model_version,
   outcome_version_id,
   draw_id,
   execution_manifest_id,
   execution_manifest_hash,
+  provider_evidence_id,
+  provider_execution_id,
+  outcome_provider_category,
+  outcome_provider_id,
+  outcome_provider_version,
+  provider_configuration_version,
+  provider_evidence_hash,
+  game_definition_version_id,
+  game_definition_hash,
+  evaluator_version,
+  certificate_signature_id,
+  certificate_verification_hash,
   product_reference,
   engine_name,
   engine_version,
@@ -109,20 +135,42 @@ insert into game_engine.canonical_outcome_versions (
   previous_outcome_version_id,
   outcome_payload,
   canonical_outcome_hash,
+  validated_outcome_payload,
+  validated_outcome_hash,
+  validated_primary_result,
+  validated_bonus_result,
+  derived_outcome_data,
+  outcome_schema_version,
   generated_at,
   authoritative_source,
   correlation_id,
   causation_id,
   audit_reference,
+  actor_reference,
+  reason_code,
+  lifecycle_evidence_hash,
   canonical_request_hash,
   idempotency_key,
   outbox_event_id,
   published_at)
 values (
+  'CANONICAL_V1',
   @outcome_version_id,
   @draw_id,
   @execution_manifest_id,
   @execution_manifest_hash,
+  @provider_evidence_id,
+  @provider_execution_id,
+  @outcome_provider_category,
+  @outcome_provider_id,
+  @outcome_provider_version,
+  @provider_configuration_version,
+  @provider_evidence_hash,
+  @game_definition_version_id,
+  @game_definition_hash,
+  @evaluator_version,
+  @certificate_signature_id,
+  @certificate_verification_hash,
   @product_reference,
   @engine_name,
   @engine_version,
@@ -134,11 +182,20 @@ values (
   @previous_outcome_version_id,
   @outcome_payload,
   @canonical_outcome_hash,
+  @validated_outcome_payload,
+  @validated_outcome_hash,
+  @validated_primary_result,
+  @validated_bonus_result,
+  @derived_outcome_data,
+  @outcome_schema_version,
   @generated_at,
   @authoritative_source,
   @correlation_id,
   @causation_id,
   @audit_reference,
+  @actor_reference,
+  @reason_code,
+  @lifecycle_evidence_hash,
   @canonical_request_hash,
   @idempotency_key,
   @outbox_event_id,
@@ -148,6 +205,18 @@ values (
                 insert.Parameters.AddWithValue("draw_id", command.DrawId);
                 insert.Parameters.AddWithValue("execution_manifest_id", manifest.ExecutionManifestId);
                 insert.Parameters.AddWithValue("execution_manifest_hash", manifest.CanonicalManifestHash);
+                insert.Parameters.AddWithValue("provider_evidence_id", authorityContext.Provider.Evidence.EvidenceId);
+                insert.Parameters.AddWithValue("provider_execution_id", authorityContext.Provider.Evidence.ExecutionId);
+                insert.Parameters.AddWithValue("outcome_provider_category", ToDatabaseCategory(authorityContext.Provider.Registration.ProviderCategory));
+                insert.Parameters.AddWithValue("outcome_provider_id", authorityContext.Provider.Registration.ProviderId);
+                insert.Parameters.AddWithValue("outcome_provider_version", authorityContext.Provider.Registration.ProviderVersion);
+                insert.Parameters.AddWithValue("provider_configuration_version", authorityContext.Provider.Registration.ConfigurationVersion);
+                insert.Parameters.AddWithValue("provider_evidence_hash", authorityContext.Provider.Evidence.EvidenceHash);
+                insert.Parameters.AddWithValue("game_definition_version_id", authorityContext.GameDefinitionVersion.Id);
+                insert.Parameters.AddWithValue("game_definition_hash", authorityContext.GameDefinitionVersion.DefinitionHash);
+                insert.Parameters.AddWithValue("evaluator_version", manifest.EvaluatorVersion);
+                insert.Parameters.AddWithValue("certificate_signature_id", authorityContext.CertificateEvidence.SignatureId);
+                insert.Parameters.AddWithValue("certificate_verification_hash", authorityContext.CertificateEvidence.VerificationEvidenceHash);
                 insert.Parameters.AddWithValue("product_reference", command.ProductReference);
                 insert.Parameters.AddWithValue("engine_name", command.EngineName);
                 insert.Parameters.AddWithValue("engine_version", command.EngineVersion);
@@ -161,11 +230,20 @@ values (
                     command.PreviousOutcomeVersionId is null ? DBNull.Value : command.PreviousOutcomeVersionId.Value);
                 insert.Parameters.AddWithValue("outcome_payload", NpgsqlDbType.Jsonb, source.OutcomePayloadJson);
                 insert.Parameters.AddWithValue("canonical_outcome_hash", source.CanonicalOutcomeHash);
+                insert.Parameters.AddWithValue("validated_outcome_payload", NpgsqlDbType.Jsonb, authorityContext.ValidatedResultJson);
+                insert.Parameters.AddWithValue("validated_outcome_hash", authorityContext.ValidatedResultHash);
+                insert.Parameters.AddWithValue("validated_primary_result", NpgsqlDbType.Jsonb, JsonSerializer.Serialize(authorityContext.ValidatedResult.PrimaryNumbers));
+                insert.Parameters.AddWithValue("validated_bonus_result", NpgsqlDbType.Jsonb, JsonSerializer.Serialize(authorityContext.ValidatedResult.BonusNumbers));
+                insert.Parameters.AddWithValue("derived_outcome_data", NpgsqlDbType.Jsonb, JsonSerializer.Serialize(authorityContext.ValidatedResult.DerivedOutcomeData));
+                insert.Parameters.AddWithValue("outcome_schema_version", authorityContext.ValidatedResult.SchemaVersion);
                 insert.Parameters.AddWithValue("generated_at", source.GeneratedAt);
                 insert.Parameters.AddWithValue("authoritative_source", command.AuthoritativeSource);
                 insert.Parameters.AddWithValue("correlation_id", command.CorrelationId);
                 insert.Parameters.AddWithValue("causation_id", command.CausationId);
                 insert.Parameters.AddWithValue("audit_reference", command.AuditReference);
+                insert.Parameters.AddWithValue("actor_reference", command.ActorReference);
+                insert.Parameters.AddWithValue("reason_code", command.ReasonCode);
+                insert.Parameters.AddWithValue("lifecycle_evidence_hash", command.LifecycleEvidenceHash);
                 insert.Parameters.AddWithValue("canonical_request_hash", canonicalRequestHash);
                 insert.Parameters.AddWithValue("idempotency_key", command.IdempotencyKey);
                 insert.Parameters.AddWithValue("outbox_event_id", outboxEventId);
@@ -240,9 +318,11 @@ values (
                 cancellationToken)
                 ?? throw new InvalidOperationException("SettlementInput was not found.");
             if (settlementInput.OutcomeCertificateId != version.OutcomeCertificateId ||
-                !string.Equals(settlementInput.OutcomeCertificateHash, version.OutcomeCertificateHash, StringComparison.Ordinal))
+                !string.Equals(settlementInput.OutcomeCertificateHash, version.OutcomeCertificateHash, StringComparison.Ordinal) ||
+                !string.Equals(settlementInput.EvaluatorVersion, version.EvaluatorVersion, StringComparison.Ordinal))
             {
-                throw new InvalidOperationException("SettlementInput does not reference the canonical published Outcome Certificate.");
+                throw new InvalidOperationException(
+                    "SettlementInput does not reference the exact canonical Outcome Certificate and evaluator version.");
             }
         }
 
@@ -259,6 +339,18 @@ values (
             ["mathEvaluationCertificateId"] = settlementInput?.MathEvaluationCertificateId,
             ["outcomeCertificateHash"] = version.OutcomeCertificateHash,
             ["outcomeCertificateId"] = version.OutcomeCertificateId,
+            ["canonicalOutcomeHash"] = version.CanonicalOutcomeHash,
+            ["certificateSignatureId"] = version.CertificateSignatureId,
+            ["executionManifestHash"] = version.ExecutionManifestHash,
+            ["executionManifestId"] = version.ExecutionManifestId,
+            ["gameDefinitionHash"] = version.GameDefinitionHash,
+            ["gameDefinitionVersionId"] = version.GameDefinitionVersionId,
+            ["outcomeProviderCategory"] = version.ProviderCategory.ToString(),
+            ["outcomeProviderId"] = version.OutcomeProviderId,
+            ["outcomeProviderVersion"] = version.OutcomeProviderVersion,
+            ["providerConfigurationVersion"] = version.ProviderConfigurationVersion,
+            ["providerEvidenceHash"] = version.ProviderEvidenceHash,
+            ["providerEvidenceId"] = version.ProviderEvidenceId,
             ["outcomeVersionId"] = version.OutcomeVersionId,
             ["requestKind"] = version.VersionKind.ToString(),
             ["settlementInputHash"] = settlementInput?.CanonicalPayloadHash,
@@ -349,6 +441,119 @@ values (
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
         return await FindExecutionManifestAsync(connection, null, drawId, cancellationToken);
+    }
+
+    public async Task<CanonicalOutcomeCertificateVerificationEvidence?> FindCertificateEvidenceAsync(
+        Guid certificateId,
+        string certificateHash,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+select
+  event.outcome_id,
+  event.draw_id,
+  event.outcome_payload::text,
+  event.canonical_outcome_hash,
+  event.generated_at,
+  signature.signature_id,
+  signature.certificate_reference_type,
+  signature.provider_id,
+  signature.provider_version,
+  signature.algorithm,
+  signature.algorithm_version,
+  signature.canonical_payload_hash,
+  signature.signature_value,
+  signature.verification_status,
+  signature.issued_at,
+  provider.provider_type,
+  provider.production_eligible,
+  provider.key_identifier,
+  provider.verification_support,
+  provider.key_rotation_support,
+  provider.failure_mode,
+  provider.content_hash,
+  provider.lifecycle_state,
+  certificate.previous_certificates::text
+from game_engine.outcome_certificates certificate
+join game_engine.outcome_events event on event.outcome_id = certificate.outcome_id
+join game_engine.certificate_signatures signature
+  on signature.certificate_reference_type = 'OutcomeCertificate'
+ and signature.certificate_id = certificate.certificate_id
+ and signature.canonical_payload_hash = certificate.canonical_outcome_hash
+ and signature.verification_status = 'Verified'
+join game_engine.signing_providers provider
+  on provider.provider_id = signature.provider_id
+ and provider.provider_version = signature.provider_version
+where certificate.certificate_id = @certificate_id
+  and certificate.canonical_outcome_hash = @certificate_hash
+  and certificate.custody_state = 'Certified';
+""";
+        command.Parameters.AddWithValue("certificate_id", certificateId);
+        command.Parameters.AddWithValue("certificate_hash", certificateHash);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        var evidence = new CanonicalOutcomeCertificateVerificationEvidence(
+            reader.GetGuid(0),
+            reader.GetGuid(1),
+            reader.GetString(2),
+            reader.GetString(3),
+            reader.GetFieldValue<DateTimeOffset>(4),
+            reader.GetGuid(5),
+            string.Empty,
+            new SigningProviderDefinition(
+                reader.GetString(7),
+                reader.GetString(8),
+                ParseSigningProviderType(reader.GetString(15)),
+                reader.GetBoolean(16),
+                reader.GetString(9),
+                reader.GetString(17),
+                reader.GetString(10),
+                reader.GetBoolean(18),
+                reader.GetBoolean(19),
+                ParseSigningFailureMode(reader.GetString(20)),
+                reader.GetString(21),
+                ParseSigningLifecycle(reader.GetString(22))),
+            new CertificateSignature(
+                reader.GetGuid(5),
+                reader.GetString(6),
+                certificateId,
+                reader.GetString(7),
+                reader.GetString(8),
+                reader.GetString(9),
+                reader.GetString(10),
+                reader.GetString(11),
+                reader.GetString(12),
+                ParseSignatureStatus(reader.GetString(13)),
+                reader.GetFieldValue<DateTimeOffset>(14)),
+            JsonSerializer.Deserialize<CertificateReference[]>(
+                reader.GetString(23),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? []);
+        if (await reader.ReadAsync(cancellationToken))
+        {
+            throw new InvalidOperationException(
+                "Outcome Certificate has multiple verified signatures; exact verification evidence is ambiguous.");
+        }
+
+        return evidence with
+        {
+            VerificationEvidenceHash = HashCanonical(string.Join(
+                "|",
+                evidence.SignatureId.ToString("N"),
+                evidence.Signature.ProviderId,
+                evidence.Signature.ProviderVersion,
+                evidence.Signature.Algorithm,
+                evidence.Signature.AlgorithmVersion,
+                evidence.Signature.CanonicalPayloadHash,
+                evidence.Signature.SignatureValue,
+                evidence.Signature.VerificationStatus))
+        };
     }
 
     public async Task<CanonicalOutcomePipelineReadiness> CheckReadinessAsync(CancellationToken cancellationToken)
@@ -902,7 +1107,8 @@ limit 1;
     private static void ValidateVersionTransition(
         CanonicalOutcomePublicationCommand command,
         CanonicalOutcomeVersion? current,
-        SourceOutcome source)
+        SourceOutcome source,
+        CanonicalOutcomeAuthorityContext context)
     {
         if (command.VersionKind == CanonicalOutcomeVersionKind.Published)
         {
@@ -927,6 +1133,53 @@ limit 1;
             string.Equals(source.CanonicalOutcomeHash, current.CanonicalOutcomeHash, StringComparison.Ordinal))
         {
             throw new InvalidOperationException("A corrected outcome must contain different certified outcome evidence.");
+        }
+
+        if (command.VersionKind == CanonicalOutcomeVersionKind.Corrected &&
+            current.ProviderEvidenceId != Guid.Empty &&
+            (current.ProviderEvidenceId == context.Provider.Evidence.EvidenceId ||
+             current.ProviderExecutionId == context.Provider.Evidence.ExecutionId))
+        {
+            throw new InvalidOperationException(
+                "A corrected outcome requires different superseding provider evidence.");
+        }
+    }
+
+    private static void ValidateAuthorityContext(
+        CanonicalOutcomePublicationCommand command,
+        CanonicalOutcomeAuthorityContext context,
+        DrawExecutionManifest storedManifest,
+        SourceOutcome source)
+    {
+        var manifest = context.Manifest;
+        var provider = context.Provider;
+        if (manifest != storedManifest ||
+            manifest.DrawId != command.DrawId ||
+            provider.Evidence.ExecutionManifestId != manifest.ExecutionManifestId ||
+            provider.Evidence.DrawId != manifest.DrawId ||
+            provider.Evidence.Stage != OutcomeProviderEvidenceStage.Authoritative ||
+            provider.Evidence.OutcomeCertificateId != command.OutcomeCertificateId ||
+            provider.Evidence.OutcomeCertificateHash != command.OutcomeCertificateHash ||
+            provider.Registration.ProviderId != manifest.OutcomeProviderId ||
+            provider.Registration.ProviderVersion != manifest.OutcomeProviderVersion ||
+            provider.Registration.ConfigurationVersion != manifest.ProviderConfigurationVersion)
+        {
+            throw new InvalidOperationException(
+                "Canonical Outcome authority context does not match the persisted manifest and provider evidence.");
+        }
+
+        if (context.GameDefinitionVersion.Id != manifest.GameDefinitionVersionId ||
+            context.GameDefinitionVersion.DefinitionHash != context.ValidatedResult.GameDefinitionHash ||
+            context.ValidatedResult.EvaluatorVersion != manifest.EvaluatorVersion ||
+            context.ValidatedResultHash != provider.Evidence.CanonicalResultHash ||
+            context.ValidatedResultJson != provider.Evidence.CanonicalResultJson ||
+            source.OutcomeId != context.CertificateEvidence.OutcomeId ||
+            source.CanonicalOutcomeHash != context.CertificateEvidence.OutcomeHash ||
+            context.CertificateEvidence.Signature.CertificateId != command.OutcomeCertificateId ||
+            context.CertificateEvidence.Signature.CanonicalPayloadHash != command.OutcomeCertificateHash)
+        {
+            throw new InvalidOperationException(
+                "Canonical Outcome authority context contains mismatched game, evaluator, result, or certificate evidence.");
         }
     }
 
@@ -1095,6 +1348,7 @@ select
   outcome_certificate_hash,
   math_evaluation_certificate_id,
   math_evaluation_certificate_hash,
+  evaluator_version,
   canonical_payload_hash
 from game_engine.settlement_input_records
 where settlement_input_id = @id
@@ -1108,7 +1362,8 @@ limit 1;
                 reader.GetString(1),
                 reader.GetGuid(2),
                 reader.GetString(3),
-                reader.GetString(4))
+                reader.GetString(4),
+                reader.GetString(5))
             : null;
     }
 
@@ -1120,6 +1375,58 @@ limit 1;
         }
     }
 
+    private static CanonicalOutcomeProviderCategory ParseCategory(string value) => value switch
+    {
+        "INTERNAL_CSPRNG" => CanonicalOutcomeProviderCategory.InternalCsprng,
+        "OFFICIAL_RESULTS" => CanonicalOutcomeProviderCategory.OfficialResults,
+        "MANUAL_CERTIFIED" => CanonicalOutcomeProviderCategory.ManualCertified,
+        _ => throw new InvalidOperationException($"Unsupported canonical provider category {value}.")
+    };
+
+    private static string ToDatabaseCategory(CanonicalOutcomeProviderCategory value) => value switch
+    {
+        CanonicalOutcomeProviderCategory.InternalCsprng => "INTERNAL_CSPRNG",
+        CanonicalOutcomeProviderCategory.OfficialResults => "OFFICIAL_RESULTS",
+        CanonicalOutcomeProviderCategory.ManualCertified => "MANUAL_CERTIFIED",
+        _ => throw new ArgumentOutOfRangeException(nameof(value), value, null)
+    };
+
+    private static SigningProviderType ParseSigningProviderType(string value) => value switch
+    {
+        "LOCAL_TEST" => SigningProviderType.LocalTest,
+        "SOFTWARE_KEY" => SigningProviderType.SoftwareKey,
+        "KMS" => SigningProviderType.Kms,
+        "HSM" => SigningProviderType.Hsm,
+        "SIMULATION" => SigningProviderType.Simulation,
+        _ => throw new InvalidOperationException($"Unsupported signing provider type {value}.")
+    };
+
+    private static SigningFailureMode ParseSigningFailureMode(string value) => value switch
+    {
+        "FailClosed" => SigningFailureMode.FailClosed,
+        "FailOpen" => SigningFailureMode.FailOpen,
+        _ => throw new InvalidOperationException($"Unsupported signing failure mode {value}.")
+    };
+
+    private static SigningProviderLifecycleState ParseSigningLifecycle(string value) => value switch
+    {
+        "Draft" => SigningProviderLifecycleState.Draft,
+        "Active" => SigningProviderLifecycleState.Active,
+        "Disabled" => SigningProviderLifecycleState.Disabled,
+        "Retired" => SigningProviderLifecycleState.Retired,
+        "Revoked" => SigningProviderLifecycleState.Revoked,
+        _ => throw new InvalidOperationException($"Unsupported signing provider lifecycle {value}.")
+    };
+
+    private static SignatureVerificationStatus ParseSignatureStatus(string value) => value switch
+    {
+        "Pending" => SignatureVerificationStatus.Pending,
+        "Verified" => SignatureVerificationStatus.Verified,
+        "Failed" => SignatureVerificationStatus.Failed,
+        "Revoked" => SignatureVerificationStatus.Revoked,
+        _ => throw new InvalidOperationException($"Unsupported signature verification status {value}.")
+    };
+
     private static CanonicalOutcomeVersion MapOutcome(NpgsqlDataReader reader)
     {
         return new CanonicalOutcomeVersion(
@@ -1127,26 +1434,47 @@ limit 1;
             reader.GetGuid(1),
             reader.GetGuid(2),
             reader.GetString(3),
-            reader.GetString(4),
-            reader.GetString(5),
-            reader.GetString(6),
-            reader.GetInt32(7),
-            Enum.Parse<CanonicalOutcomeVersionKind>(reader.GetString(8)),
-            reader.GetGuid(9),
-            reader.GetGuid(10),
-            reader.GetString(11),
-            reader.IsDBNull(12) ? null : reader.GetGuid(12),
-            reader.GetString(13),
-            reader.GetString(14),
-            reader.GetFieldValue<DateTimeOffset>(15),
+            reader.IsDBNull(4) ? Guid.Empty : reader.GetGuid(4),
+            reader.IsDBNull(5) ? Guid.Empty : reader.GetGuid(5),
+            reader.IsDBNull(6) ? CanonicalOutcomeProviderCategory.InternalCsprng : ParseCategory(reader.GetString(6)),
+            reader.IsDBNull(7) ? string.Empty : reader.GetString(7),
+            reader.IsDBNull(8) ? string.Empty : reader.GetString(8),
+            reader.IsDBNull(9) ? string.Empty : reader.GetString(9),
+            reader.IsDBNull(10) ? string.Empty : reader.GetString(10),
+            reader.IsDBNull(11) ? Guid.Empty : reader.GetGuid(11),
+            reader.IsDBNull(12) ? string.Empty : reader.GetString(12),
+            reader.IsDBNull(13) ? string.Empty : reader.GetString(13),
+            reader.IsDBNull(14) ? Guid.Empty : reader.GetGuid(14),
+            reader.IsDBNull(15) ? string.Empty : reader.GetString(15),
             reader.GetString(16),
             reader.GetString(17),
             reader.GetString(18),
-            reader.GetString(19),
-            reader.GetString(20),
-            reader.GetString(21),
+            reader.GetInt32(19),
+            Enum.Parse<CanonicalOutcomeVersionKind>(reader.GetString(20)),
+            reader.GetGuid(21),
             reader.GetGuid(22),
-            reader.GetFieldValue<DateTimeOffset>(23));
+            reader.GetString(23),
+            reader.IsDBNull(24) ? null : reader.GetGuid(24),
+            reader.GetString(25),
+            reader.GetString(26),
+            reader.IsDBNull(27) ? reader.GetString(25) : reader.GetString(27),
+            reader.IsDBNull(28) ? reader.GetString(26) : reader.GetString(28),
+            reader.IsDBNull(29) ? [] : JsonSerializer.Deserialize<int[]>(reader.GetString(29)) ?? [],
+            reader.IsDBNull(30) ? [] : JsonSerializer.Deserialize<int[]>(reader.GetString(30)) ?? [],
+            reader.IsDBNull(31) ? new Dictionary<string, object?>() : JsonSerializer.Deserialize<Dictionary<string, object?>>(reader.GetString(31)) ?? new Dictionary<string, object?>(),
+            reader.IsDBNull(32) ? "legacy.v0" : reader.GetString(32),
+            reader.GetFieldValue<DateTimeOffset>(33),
+            reader.GetString(34),
+            reader.GetString(35),
+            reader.GetString(36),
+            reader.GetString(37),
+            reader.IsDBNull(38) ? "legacy" : reader.GetString(38),
+            reader.IsDBNull(39) ? "LEGACY_IMPORT" : reader.GetString(39),
+            reader.IsDBNull(40) ? "sha256:legacy" : reader.GetString(40),
+            reader.GetString(41),
+            reader.GetString(42),
+            reader.GetGuid(43),
+            reader.GetFieldValue<DateTimeOffset>(44));
     }
 
     private static OutcomeSettlementRequest MapSettlementRequest(NpgsqlDataReader reader)
@@ -1172,6 +1500,18 @@ select
   draw_id,
   execution_manifest_id,
   execution_manifest_hash,
+  provider_evidence_id,
+  provider_execution_id,
+  outcome_provider_category,
+  outcome_provider_id,
+  outcome_provider_version,
+  provider_configuration_version,
+  provider_evidence_hash,
+  game_definition_version_id,
+  game_definition_hash,
+  evaluator_version,
+  certificate_signature_id,
+  certificate_verification_hash,
   product_reference,
   engine_name,
   engine_version,
@@ -1183,11 +1523,20 @@ select
   previous_outcome_version_id,
   outcome_payload::text,
   canonical_outcome_hash,
+  validated_outcome_payload::text,
+  validated_outcome_hash,
+  validated_primary_result::text,
+  validated_bonus_result::text,
+  derived_outcome_data::text,
+  outcome_schema_version,
   generated_at,
   authoritative_source,
   correlation_id,
   causation_id,
   audit_reference,
+  actor_reference,
+  reason_code,
+  lifecycle_evidence_hash,
   canonical_request_hash,
   idempotency_key,
   outbox_event_id,
@@ -1223,6 +1572,7 @@ from game_engine.outcome_settlement_requests
         string OutcomeCertificateHash,
         Guid MathEvaluationCertificateId,
         string MathEvaluationCertificateHash,
+        string EvaluatorVersion,
         string CanonicalPayloadHash);
 
     private sealed record RecoveryCandidate(

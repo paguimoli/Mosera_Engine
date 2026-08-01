@@ -43,13 +43,14 @@ builder.Services.AddSingleton<CanonicalOutcomeProviderAuthority>();
 builder.Services.AddSingleton<InternalCsprngOutcomeProvider>();
 builder.Services.AddSingleton<OfficialResultsProvider>();
 builder.Services.AddSingleton<ManualCertifiedProvider>();
+builder.Services.AddSingleton<CertificateVerificationService>();
 builder.Services.AddSingleton<IMathEvaluator, KenoMathEvaluator>();
 builder.Services.AddSingleton<MathEvaluatorRegistry>();
 builder.Services.AddSingleton<MathCertificateEvaluationService>();
 builder.Services.AddSingleton<DurableMathEvaluationService>();
 builder.Services.AddSingleton<MathEvaluationBatchService>();
 builder.Services.AddSingleton<SettlementInputAdapter>();
-builder.Services.AddSingleton<CanonicalDrawOrchestrator>();
+builder.Services.AddSingleton<CanonicalOutcomeAuthority>();
 if (string.IsNullOrWhiteSpace(databaseUrl))
 {
     builder.Services.AddSingleton<IDrawScheduleRepository, InMemoryDrawScheduleRepository>();

@@ -20,13 +20,28 @@ public sealed record CanonicalOutcomePublicationCommand(
     string AuthoritativeSource,
     string CorrelationId,
     string CausationId,
-    string AuditReference);
+    string AuditReference,
+    string ActorReference,
+    string ReasonCode,
+    string LifecycleEvidenceHash);
 
 public sealed record CanonicalOutcomeVersion(
     Guid OutcomeVersionId,
     Guid DrawId,
     Guid ExecutionManifestId,
     string ExecutionManifestHash,
+    Guid ProviderEvidenceId,
+    Guid ProviderExecutionId,
+    CanonicalOutcomeProviderCategory ProviderCategory,
+    string OutcomeProviderId,
+    string OutcomeProviderVersion,
+    string ProviderConfigurationVersion,
+    string ProviderEvidenceHash,
+    Guid GameDefinitionVersionId,
+    string GameDefinitionHash,
+    string EvaluatorVersion,
+    Guid CertificateSignatureId,
+    string CertificateVerificationHash,
     string ProductReference,
     string EngineName,
     string EngineVersion,
@@ -38,15 +53,45 @@ public sealed record CanonicalOutcomeVersion(
     Guid? PreviousOutcomeVersionId,
     string CanonicalOutcomeJson,
     string CanonicalOutcomeHash,
+    string ValidatedOutcomeJson,
+    string ValidatedOutcomeHash,
+    IReadOnlyList<int> ValidatedPrimaryResult,
+    IReadOnlyList<int> ValidatedBonusResult,
+    IReadOnlyDictionary<string, object?> DerivedOutcomeData,
+    string OutcomeSchemaVersion,
     DateTimeOffset GeneratedAt,
     string AuthoritativeSource,
     string CorrelationId,
     string CausationId,
     string AuditReference,
+    string ActorReference,
+    string ReasonCode,
+    string LifecycleEvidenceHash,
     string CanonicalRequestHash,
     string IdempotencyKey,
     Guid OutboxEventId,
     DateTimeOffset PublishedAt);
+
+public sealed record CanonicalOutcomeCertificateVerificationEvidence(
+    Guid OutcomeId,
+    Guid DrawId,
+    string OutcomePayloadJson,
+    string OutcomeHash,
+    DateTimeOffset GeneratedAt,
+    Guid SignatureId,
+    string VerificationEvidenceHash,
+    SigningProviderDefinition SigningProvider,
+    CertificateSignature Signature,
+    IReadOnlyCollection<CertificateReference> PreviousCertificates);
+
+public sealed record CanonicalOutcomeAuthorityContext(
+    DrawExecutionManifest Manifest,
+    AuthorizedOutcomeProviderEvidence Provider,
+    GameDefinitionVersion GameDefinitionVersion,
+    CanonicalProviderOutcomeResult ValidatedResult,
+    string ValidatedResultJson,
+    string ValidatedResultHash,
+    CanonicalOutcomeCertificateVerificationEvidence CertificateEvidence);
 
 public sealed record DrawExecutionManifest(
     Guid ExecutionManifestId,

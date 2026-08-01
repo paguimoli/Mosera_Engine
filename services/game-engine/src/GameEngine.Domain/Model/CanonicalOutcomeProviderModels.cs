@@ -93,7 +93,27 @@ public sealed record OutcomeProviderExecutionEvidence(
     OutcomeProviderEvidenceStage Stage,
     string ProviderEvidenceJson,
     DateTimeOffset StartedAt,
-    DateTimeOffset CompletedAt);
+    DateTimeOffset CompletedAt,
+    string? CanonicalResultJson = null,
+    string? CanonicalResultHash = null);
+
+public sealed record CanonicalProviderOutcomeResult(
+    string SchemaVersion,
+    Guid DrawId,
+    Guid ExecutionManifestId,
+    Guid GameDefinitionVersionId,
+    string GameDefinitionHash,
+    string EvaluatorVersion,
+    IReadOnlyList<int> PrimaryNumbers,
+    IReadOnlyList<int> BonusNumbers,
+    OutcomeNumberOrdering PrimaryOrdering,
+    OutcomeNumberOrdering? BonusOrdering,
+    IReadOnlyDictionary<string, object?> DerivedOutcomeData,
+    string SourceResultHash);
+
+public sealed record AuthorizedOutcomeProviderEvidence(
+    CanonicalOutcomeProviderRegistration Registration,
+    OutcomeProviderExecutionEvidence Evidence);
 
 public sealed record OutcomeProviderClaimResult(
     OutcomeProviderExecutionClaim Claim,

@@ -924,6 +924,15 @@
       "reason": "Adds the production-ready but disabled Manual Certified provider, immutable operator/certification evidence, exact draw validation, supersession, replay, and recovery."
     },
     {
+      "id": "098_add_canonical_outcome_authority",
+      "path": "scripts/migrations/local/098_add_canonical_outcome_authority.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Completes the single immutable Canonical Outcome Aggregate with provider-neutral result evidence, exact manifest/game/evaluator/certificate bindings, terminal cancellation, supersession, and SettlementInput enforcement."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

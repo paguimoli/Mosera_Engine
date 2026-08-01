@@ -243,7 +243,7 @@ where conname in (
     );
 
     const orchestrator = readFileSync(
-      "services/game-engine/src/GameEngine.Application/Services/CanonicalDrawOrchestrator.cs",
+      "services/game-engine/src/GameEngine.Application/Services/CanonicalOutcomeAuthority.cs",
       "utf8",
     );
     assert(

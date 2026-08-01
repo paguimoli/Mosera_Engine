@@ -112,7 +112,13 @@ public sealed class InternalCsprngOutcomeProvider(
                 generated.Evidence.CompletedAt);
             await providerAuthority.CompleteGeneratedExecutionAsync(
                 attempt,
-                ToGeneratedAuthorityEvidence(manifest, claim.Claim, generated, attempt),
+                ToGeneratedAuthorityEvidence(
+                    manifest,
+                    definitionVersion,
+                    generationDefinition,
+                    claim.Claim,
+                    generated,
+                    attempt),
                 cancellationToken);
             return generated;
         }
@@ -140,6 +146,11 @@ public sealed class InternalCsprngOutcomeProvider(
             cancellationToken)
             ?? throw new InvalidOperationException(
                 "Outcome Certificate binding requires persisted generated provider evidence.");
+        if (!FixedHashEquals(generated.ResultHash, outcomeCertificateHash))
+        {
+            throw new InvalidOperationException(
+                "Outcome Certificate hash does not match the generated Internal CSPRNG result.");
+        }
         var bindingHash = HashCanonical(
             $"{generated.EvidenceHash}|{outcomeCertificateId:N}|{outcomeCertificateHash}");
         var authoritative = generated with
@@ -440,10 +451,22 @@ public sealed class InternalCsprngOutcomeProvider(
 
     private static OutcomeProviderExecutionEvidence ToGeneratedAuthorityEvidence(
         DrawExecutionManifest manifest,
+        GameDefinitionVersion definitionVersion,
+        NumberOutcomeGenerationDefinition generationDefinition,
         OutcomeProviderExecutionClaim claim,
         InternalCsprngGenerationResult result,
-        OutcomeProviderExecutionAttempt attempt) =>
-        new(
+        OutcomeProviderExecutionAttempt attempt)
+    {
+        var canonical = CanonicalProviderOutcomeFactory.Create(
+            manifest,
+            definitionVersion,
+            result.Evidence.GeneratedNumbers,
+            [],
+            generationDefinition.Ordering,
+            null,
+            null,
+            result.CanonicalOutcomeHash);
+        return new(
             Guid.NewGuid(),
             claim.ExecutionId,
             manifest.ExecutionManifestId,
@@ -461,7 +484,10 @@ public sealed class InternalCsprngOutcomeProvider(
             OutcomeProviderEvidenceStage.Generated,
             JsonSerializer.Serialize(result.Evidence, CanonicalJsonOptions),
             result.Evidence.StartedAt,
-            result.Evidence.CompletedAt);
+            result.Evidence.CompletedAt,
+            canonical.Json,
+            canonical.Hash);
+    }
 
     private static string CanonicalOutcome(
         DrawExecutionManifest manifest,

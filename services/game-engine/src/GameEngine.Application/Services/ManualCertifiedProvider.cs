@@ -142,6 +142,7 @@ public sealed class ManualCertifiedProvider(
                 completedAt);
             var authorityEvidence = ToAuthorityEvidence(
                 manifest,
+                definitionVersion,
                 claim.Claim,
                 evidence,
                 attempt);
@@ -612,10 +613,21 @@ public sealed class ManualCertifiedProvider(
 
     private static OutcomeProviderExecutionEvidence ToAuthorityEvidence(
         DrawExecutionManifest manifest,
+        GameDefinitionVersion definitionVersion,
         OutcomeProviderExecutionClaim claim,
         ManualCertifiedProviderEvidence evidence,
-        OutcomeProviderExecutionAttempt attempt) =>
-        new(
+        OutcomeProviderExecutionAttempt attempt)
+    {
+        var canonical = CanonicalProviderOutcomeFactory.Create(
+            manifest,
+            definitionVersion,
+            evidence.NormalizedResult.CertifiedNumbers,
+            evidence.NormalizedResult.BonusNumbers,
+            evidence.NormalizedResult.NumberOrdering,
+            evidence.NormalizedResult.BonusNumberOrdering,
+            null,
+            evidence.NormalizedPayloadHash);
+        return new(
             Guid.NewGuid(),
             claim.ExecutionId,
             manifest.ExecutionManifestId,
@@ -633,7 +645,10 @@ public sealed class ManualCertifiedProvider(
             OutcomeProviderEvidenceStage.Generated,
             JsonSerializer.Serialize(evidence, JsonOptions),
             attempt.StartedAt,
-            evidence.CompletedAt);
+            evidence.CompletedAt,
+            canonical.Json,
+            canonical.Hash);
+    }
 
     private static string HashEvidence(ManualCertifiedProviderEvidence evidence) =>
         HashCanonical(JsonSerializer.Serialize(new

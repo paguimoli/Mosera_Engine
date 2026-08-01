@@ -5,7 +5,7 @@ namespace GameEngine.Api.Infrastructure;
 
 public sealed class CanonicalOutcomeRecoveryHostedService(
     ServiceConfiguration configuration,
-    CanonicalDrawOrchestrator orchestrator,
+    CanonicalOutcomeAuthority orchestrator,
     ILogger<CanonicalOutcomeRecoveryHostedService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

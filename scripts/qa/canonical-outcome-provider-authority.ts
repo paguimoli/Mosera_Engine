@@ -525,7 +525,7 @@ async function main() {
       "canonical authority rejects disabled, unready, and fallback provider selection",
     );
     const orchestratorSource = readFileSync(
-      "services/game-engine/src/GameEngine.Application/Services/CanonicalDrawOrchestrator.cs",
+      "services/game-engine/src/GameEngine.Application/Services/CanonicalOutcomeAuthority.cs",
       "utf8",
     );
     assert(

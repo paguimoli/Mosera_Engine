@@ -589,6 +589,8 @@ insert into game_engine.outcome_provider_execution_evidence (
   idempotency_key,
   status,
   provider_evidence_payload,
+  canonical_result_payload,
+  canonical_result_hash,
   started_at,
   completed_at)
 values (
@@ -608,6 +610,8 @@ values (
   @idempotency_key,
   @status,
   @provider_evidence_payload::jsonb,
+  @canonical_result_payload::jsonb,
+  @canonical_result_hash,
   @started_at,
   @completed_at);
 """;
@@ -641,6 +645,12 @@ values (
         command.Parameters.AddWithValue(
             "provider_evidence_payload",
             evidence.ProviderEvidenceJson);
+        command.Parameters.AddWithValue(
+            "canonical_result_payload",
+            evidence.CanonicalResultJson is null ? DBNull.Value : evidence.CanonicalResultJson);
+        command.Parameters.AddWithValue(
+            "canonical_result_hash",
+            evidence.CanonicalResultHash is null ? DBNull.Value : evidence.CanonicalResultHash);
         command.Parameters.AddWithValue("started_at", evidence.StartedAt);
         command.Parameters.AddWithValue("completed_at", evidence.CompletedAt);
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -777,8 +787,10 @@ where idempotency_key = @idempotency_key;
             reader.GetString(13),
             ParseEvidenceStage(reader.GetString(14)),
             reader.GetString(15),
-            reader.GetFieldValue<DateTimeOffset>(16),
-            reader.GetFieldValue<DateTimeOffset>(17));
+            reader.GetFieldValue<DateTimeOffset>(18),
+            reader.GetFieldValue<DateTimeOffset>(19),
+            reader.IsDBNull(16) ? null : reader.GetString(16),
+            reader.IsDBNull(17) ? null : reader.GetString(17));
 
     private static CanonicalOutcomeProviderCategory ParseCategory(string value) =>
         value switch
@@ -874,6 +886,8 @@ select
   evidence.idempotency_key,
   evidence.status,
   evidence.provider_evidence_payload::text,
+  evidence.canonical_result_payload::text,
+  evidence.canonical_result_hash,
   evidence.started_at,
   evidence.completed_at
 from game_engine.outcome_provider_execution_evidence evidence

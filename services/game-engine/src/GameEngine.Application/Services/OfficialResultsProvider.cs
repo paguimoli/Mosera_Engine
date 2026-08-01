@@ -160,6 +160,7 @@ public sealed class OfficialResultsProvider(
                 completedAt);
             var authorityEvidence = ToAuthorityEvidence(
                 manifest,
+                definitionVersion,
                 claim.Claim,
                 evidence,
                 attempt);
@@ -209,6 +210,11 @@ public sealed class OfficialResultsProvider(
             cancellationToken)
             ?? throw new InvalidOperationException(
                 "Outcome Certificate binding requires persisted official result evidence.");
+        if (!FixedHashEquals(generated.ResultHash, outcomeCertificateHash))
+        {
+            throw new InvalidOperationException(
+                "Outcome Certificate hash does not match the normalized Official Result.");
+        }
         var authoritative = generated with
         {
             EvidenceId = Guid.NewGuid(),
@@ -692,10 +698,21 @@ public sealed class OfficialResultsProvider(
 
     private static OutcomeProviderExecutionEvidence ToAuthorityEvidence(
         DrawExecutionManifest manifest,
+        GameDefinitionVersion definitionVersion,
         OutcomeProviderExecutionClaim claim,
         OfficialResultProviderEvidence evidence,
-        OutcomeProviderExecutionAttempt attempt) =>
-        new(
+        OutcomeProviderExecutionAttempt attempt)
+    {
+        var canonical = CanonicalProviderOutcomeFactory.Create(
+            manifest,
+            definitionVersion,
+            evidence.NormalizedResult.OfficialNumbers,
+            evidence.NormalizedResult.BonusNumbers,
+            evidence.NormalizedResult.NumberOrdering,
+            evidence.NormalizedResult.BonusNumberOrdering,
+            null,
+            evidence.NormalizedPayloadHash);
+        return new(
             Guid.NewGuid(),
             claim.ExecutionId,
             manifest.ExecutionManifestId,
@@ -713,7 +730,10 @@ public sealed class OfficialResultsProvider(
             OutcomeProviderEvidenceStage.Generated,
             JsonSerializer.Serialize(evidence, JsonOptions),
             attempt.StartedAt,
-            evidence.CompletedAt);
+            evidence.CompletedAt,
+            canonical.Json,
+            canonical.Hash);
+    }
 
     private static string HashEvidence(OfficialResultProviderEvidence evidence) =>
         HashCanonical(JsonSerializer.Serialize(

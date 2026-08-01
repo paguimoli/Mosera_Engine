@@ -1,78 +1,55 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { printJson, queryScalar, runPsql } from "../migrations/lib/local-migration-utils.mjs";
+import { Pool } from "pg";
 
+import {
+  appendCertifiedProviderResult,
+  canonicalHash,
+  createCanonicalOutcomeFixture,
+  publicationCommand,
+} from "./lib/canonical-outcome-authority-fixture.mjs";
+
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) throw new Error("DATABASE_URL is required for Canonical Outcome Authority QA.");
+const pool = new Pool({ connectionString: databaseUrl, max: 6 });
 const checks = [];
 const port = 18179;
-const externalServiceUrl = process.env.QA_GAME_ENGINE_URL?.trim();
-const baseUrl = externalServiceUrl || `http://127.0.0.1:${port}`;
+const externalUrl = process.env.QA_GAME_ENGINE_URL?.trim();
+const baseUrl = externalUrl || `http://127.0.0.1:${port}`;
 let service;
 
-function addCheck(name, passed, metadata = {}) {
-  checks.push({ name, status: passed ? "PASS" : "FAIL", metadata });
-}
-
-function sql(value) {
-  return `'${String(value).replaceAll("'", "''")}'`;
-}
-
-function json(value) {
-  return `${sql(JSON.stringify(value))}::jsonb`;
-}
-
-function hash(value) {
-  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
-}
-
-function runSql(statement, options = {}) {
-  return runPsql(["-q", "-c", statement], options);
-}
-
-function count(statement) {
-  return Number(queryScalar(statement));
+function check(name, condition, metadata = {}) {
+  checks.push({ name, status: condition ? "PASS" : "FAIL", metadata });
 }
 
 async function waitForService() {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
     try {
-      const response = await fetch(`${baseUrl}/health/live`);
-      if (response.ok) return;
-    } catch {
-      // The process is still starting.
-    }
+      if ((await fetch(`${baseUrl}/health/live`)).ok) return;
+    } catch {}
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  throw new Error("Game Engine did not become live for canonical outcome QA.");
+  throw new Error("Game Engine did not become live for Canonical Outcome Authority QA.");
 }
 
 async function startService() {
-  if (externalServiceUrl) {
-    await waitForService();
-    return;
-  }
-  service = spawn(
-    "dotnet",
-    [
-      "run",
-      "--no-build",
-      "--project",
-      "services/game-engine/src/GameEngine.Api/GameEngine.Api.csproj",
-      "--urls",
-      baseUrl,
-    ],
-    {
-      env: {
-        ...process.env,
-        ASPNETCORE_ENVIRONMENT: "Development",
-        DATABASE_URL: process.env.DATABASE_URL,
-        RABBITMQ_URL: process.env.RABBITMQ_URL ?? "amqp://guest:guest@127.0.0.1:5672",
-        REDIS_URL: process.env.REDIS_URL ?? "redis://127.0.0.1:6379",
-        OUTCOME_CANONICAL_PIPELINE_ENABLED: "true",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
+  if (externalUrl) return waitForService();
+  service = spawn("dotnet", [
+    "run", "--no-build", "--project",
+    "services/game-engine/src/GameEngine.Api/GameEngine.Api.csproj", "--urls", baseUrl,
+  ], {
+    env: {
+      ...process.env,
+      ASPNETCORE_ENVIRONMENT: "Development",
+      DATABASE_URL: databaseUrl,
+      RABBITMQ_URL: process.env.RABBITMQ_URL ?? "amqp://guest:guest@127.0.0.1:5672",
+      REDIS_URL: process.env.REDIS_URL ?? "redis://127.0.0.1:6379",
+      OUTCOME_CANONICAL_PIPELINE_ENABLED: "true",
+      OUTCOME_CANONICAL_RECOVERY_ENABLED: "true",
     },
-  );
-  await waitForService();
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return waitForService();
 }
 
 async function stopService() {
@@ -83,6 +60,7 @@ async function stopService() {
     new Promise((resolve) => setTimeout(resolve, 3000)),
   ]);
   if (service.exitCode === null) service.kill("SIGKILL");
+  service = undefined;
 }
 
 async function post(path, body) {
@@ -92,473 +70,212 @@ async function post(path, body) {
     body: JSON.stringify(body),
   });
   let payload;
-  try {
-    payload = await response.json();
-  } catch {
-    payload = null;
-  }
+  try { payload = await response.json(); } catch { payload = null; }
   return { status: response.status, payload };
 }
 
-function seedOutcome({
-  drawId,
-  strategyId,
-  providerId,
-  evidenceHash,
-  outcomeId,
-  certificateId,
-  outcomePayload,
-  outcomeHash,
-  suffix,
-}) {
-  runSql(`
-insert into game_engine.outcome_events (
-  outcome_id,
-  request_id,
-  draw_id,
-  game_manifest_reference,
-  strategy_id,
-  strategy_version,
-  rng_provider_id,
-  rng_provider_version,
-  rng_evidence_hash,
-  idempotency_key,
-  outcome_mode,
-  outcome_payload,
-  canonical_outcome_hash,
-  generated_at)
-values (
-  '${outcomeId}',
-  '${randomUUID()}',
-  '${drawId}',
-  'game-manifest:canonical-qa:1.0.0',
-  ${sql(strategyId)},
-  '1.0.0',
-  ${sql(providerId)},
-  '1.0.0',
-  ${sql(evidenceHash)},
-  ${sql(`canonical-outcome-source:${suffix}`)},
-  'DryRun',
-  ${json(outcomePayload)},
-  ${sql(outcomeHash)},
-  now());
-
-insert into game_engine.outcome_certificates (
-  certificate_id,
-  outcome_id,
-  draw_id,
-  strategy_id,
-  strategy_version,
-  rng_provider_id,
-  rng_provider_version,
-  canonical_outcome_hash,
-  evidence_hash_reference,
-  previous_certificates,
-  signing_metadata,
-  custody_state,
-  issued_at)
-values (
-  '${certificateId}',
-  '${outcomeId}',
-  '${drawId}',
-  ${sql(strategyId)},
-  '1.0.0',
-  ${sql(providerId)},
-  '1.0.0',
-  ${sql(outcomeHash)},
-  ${sql(evidenceHash)},
-  '[]'::jsonb,
-  ${json({ signingKeyId: "qa-only", signature: "qa-only" })},
-  'Certified',
-  now());
-`);
+async function scalar(statement, values = []) {
+  const result = await pool.query(statement, values);
+  return result.rows[0] ? Object.values(result.rows[0])[0] : null;
 }
 
-function seedSettlementInput({ settlementInputId, certificateId, outcomeHash, suffix }) {
-  const mathCertificateId = randomUUID();
-  const mathHash = hash(`math:${suffix}`);
-  const payload = {
-    mathEvaluationCertificateHash: mathHash,
-    prizeFactsHash: mathHash,
-    ticketReference: `ticket:${suffix}`,
-  };
-  runSql(`
+async function seedSettlementInput(fixture, result, suffix) {
+  const id = randomUUID();
+  const mathHash = canonicalHash(`math:${suffix}`);
+  const payload = { mathEvaluationCertificateHash: mathHash, ticketReference: `ticket:${suffix}` };
+  const canonicalPayload = (await pool.query("select $1::jsonb::text as value", [JSON.stringify(payload)])).rows[0].value;
+  await pool.query(`
 insert into game_engine.settlement_input_records (
-  settlement_input_id,
-  math_evaluation_certificate_id,
-  math_evaluation_certificate_hash,
-  outcome_certificate_id,
-  outcome_certificate_hash,
-  ticket_reference,
-  game_manifest_id,
-  game_manifest_version,
-  game_manifest_hash,
-  math_model_id,
-  math_model_version,
-  math_model_hash,
-  paytable_id,
-  paytable_version,
-  paytable_hash,
-  evaluator_version,
-  evaluation_outcome,
-  prize_tier,
-  prize_facts,
-  prize_facts_hash,
-  payout_units,
-  multiplier,
-  replay_hash,
-  idempotency_key,
-  issued_at,
-  provenance,
-  canonical_payload,
-  canonical_payload_hash)
-values (
-  '${settlementInputId}',
-  '${mathCertificateId}',
-  ${sql(mathHash)},
-  '${certificateId}',
-  ${sql(outcomeHash)},
-  ${sql(`ticket:${suffix}`)},
-  'manifest:canonical-qa',
-  '1.0.0',
-  ${sql(hash(`manifest:${suffix}`))},
-  'math:canonical-qa',
-  '1.0.0',
-  ${sql(hash(`math-model:${suffix}`))},
-  'paytable:canonical-qa',
-  '1.0.0',
-  ${sql(hash(`paytable:${suffix}`))},
-  'qa-evaluator-1',
-  'Win',
-  'QA',
-  ${json({ outcome: "Win", prizeTier: "QA", payoutUnits: 1, multiplier: 1 })},
-  ${sql(mathHash)},
-  1,
-  1,
-  ${sql(hash(`replay:${suffix}`))},
-  ${sql(`settlement-input:${suffix}`)},
-  now(),
-  ${json({ authority: "MathAuthority" })},
-  ${json(payload)},
-  ${sql(hash(JSON.stringify(payload)))});
-`);
+  settlement_input_id, math_evaluation_certificate_id, math_evaluation_certificate_hash,
+  outcome_certificate_id, outcome_certificate_hash, ticket_reference,
+  game_manifest_id, game_manifest_version, game_manifest_hash,
+  math_model_id, math_model_version, math_model_hash,
+  paytable_id, paytable_version, paytable_hash, evaluator_version,
+  evaluation_outcome, prize_tier, prize_facts, prize_facts_hash,
+  payout_units, multiplier, replay_hash, idempotency_key, issued_at,
+  provenance, canonical_payload, canonical_payload_hash)
+values ($1, $2, $3, $4, $5, $6, 'manifest:bf-4.7', '1.0.0', $7,
+  'math:bf-4.7', '1.0.0', $8, 'paytable:bf-4.7', '1.0.0', $9, $10,
+  'Win', 'QA', '{"outcome":"Win"}'::jsonb, $3, 1, 1, $11, $12, now(),
+  '{"authority":"MathAuthority"}'::jsonb, $13::jsonb, $14);
+`, [
+    id, randomUUID(), mathHash, result.certificateId, result.outcomeHash, `ticket:${suffix}`,
+    canonicalHash(`manifest:${suffix}`), canonicalHash(`math-model:${suffix}`),
+    canonicalHash(`paytable:${suffix}`), fixture.evaluatorVersion,
+    canonicalHash(`replay:${suffix}`), `settlement-input:${suffix}`, canonicalPayload,
+    canonicalHash(canonicalPayload),
+  ]);
+  return id;
 }
-
-const runId = randomUUID();
-const strategyId = `strategy:canonical:${runId}`;
-const providerId = `provider:canonical:${runId}`;
-const evidenceHash = hash(`evidence:${runId}`);
-const drawId = randomUUID();
-const firstOutcomeId = randomUUID();
-const firstCertificateId = randomUUID();
-const firstOutcomePayload = { numbers: [1, 4, 9, 16, 25] };
-const firstOutcomeHash = hash(JSON.stringify(firstOutcomePayload));
-const firstSettlementInputId = randomUUID();
-const correctedOutcomeId = randomUUID();
-const correctedCertificateId = randomUUID();
-const correctedOutcomePayload = { numbers: [2, 5, 10, 17, 26] };
-const correctedOutcomeHash = hash(JSON.stringify(correctedOutcomePayload));
-const correctedSettlementInputId = randomUUID();
-const concurrentDrawId = randomUUID();
-const concurrentOutcomeId = randomUUID();
-const concurrentCertificateId = randomUUID();
-const concurrentOutcomePayload = { numbers: [3, 6, 12, 18, 27] };
-const concurrentOutcomeHash = hash(JSON.stringify(concurrentOutcomePayload));
 
 try {
-  addCheck(
-    "canonical publication tables exist",
-    queryScalar("select to_regclass('game_engine.canonical_outcome_versions') is not null;") === "t" &&
-      queryScalar("select to_regclass('game_engine.outcome_settlement_requests') is not null;") === "t",
-  );
-
-  runSql(`
-insert into game_engine.outcome_strategy_definitions (
-  id, strategy_id, strategy_version, primitive_graph, input_schema, output_schema,
-  constraints, jurisdiction_profile_references, lifecycle_state, content_hash,
-  certification_binding_placeholder, signature_metadata)
-values (
-  '${randomUUID()}',
-  ${sql(strategyId)},
-  '1.0.0',
-  ${json([{ nodeId: "numbers", primitiveType: "UniqueNumberSet", dependsOn: [], minNumber: 1, maxNumber: 40, count: 5 }])},
-  '{}'::jsonb,
-  '{}'::jsonb,
-  '{}'::jsonb,
-  '[]'::jsonb,
-  'GovernanceApproved',
-  ${sql(hash(`strategy:${runId}`))},
-  null,
-  ${json({ signingKeyId: "qa-only", signature: "qa-only" })});
-
-insert into game_engine.rng_provider_definitions (
-  id, provider_id, provider_version, provider_type, production_eligible,
-  certification_state, algorithm_references, entropy_source_metadata,
-  health_test_capabilities, failure_mode, content_hash, signature_metadata)
-values (
-  '${randomUUID()}',
-  ${sql(providerId)},
-  '1.0.0',
-  'TEST_DETERMINISTIC',
-  false,
-  'InternalVerified',
-  '["deterministic-test-v1"]'::jsonb,
-  '{}'::jsonb,
-  '["qa"]'::jsonb,
-  'FailClosed',
-  ${sql(hash(`provider:${runId}`))},
-  ${json({ signingKeyId: "qa-only", signature: "qa-only" })});
-
-insert into game_engine.rng_provider_evidence (
-  evidence_id, provider_id, provider_version, entropy_source_reference,
-  health_test_result, known_answer_test_result, continuous_test_result,
-  generated_at, canonical_evidence_hash, signing_metadata)
-values (
-  '${randomUUID()}',
-  ${sql(providerId)},
-  '1.0.0',
-  'qa:deterministic',
-  'Passed',
-  'Passed',
-  'Passed',
-  now(),
-  ${sql(evidenceHash)},
-  ${json({ signingKeyId: "qa-only", signature: "qa-only" })});
-`);
-
-  seedOutcome({
-    drawId,
-    strategyId,
-    providerId,
-    evidenceHash,
-    outcomeId: firstOutcomeId,
-    certificateId: firstCertificateId,
-    outcomePayload: firstOutcomePayload,
-    outcomeHash: firstOutcomeHash,
-    suffix: `${runId}:first`,
-  });
-  seedSettlementInput({
-    settlementInputId: firstSettlementInputId,
-    certificateId: firstCertificateId,
-    outcomeHash: firstOutcomeHash,
-    suffix: `${runId}:first`,
-  });
-
   await startService();
-  const publication = {
-    idempotencyKey: `publish:${runId}:1`,
-    drawId,
-    productReference: "keno:qa",
-    engineName: "game-engine",
-    engineVersion: "p1-012.1",
-    outcomeCertificateId: firstCertificateId,
-    outcomeCertificateHash: firstOutcomeHash,
-    versionKind: "Published",
-    previousOutcomeVersionId: null,
-    authoritativeSource: "OutcomeCertificate",
-    correlationId: `correlation:${runId}`,
-    causationId: `draw-execution:${runId}`,
-    auditReference: `audit:${runId}:1`,
-  };
-  const first = await post("/api/game-engine/outcome-publications", publication);
-  addCheck("normal outcome publication succeeds", first.status === 200, { status: first.status, payload: first.payload });
-  const firstVersionId = first.payload?.data?.outcomeVersionId;
+  const categories = ["INTERNAL_CSPRNG", "OFFICIAL_RESULTS", "MANUAL_CERTIFIED"];
+  const published = [];
+  for (const category of categories) {
+    const fixture = await createCanonicalOutcomeFixture(pool, { category });
+    const result = await appendCertifiedProviderResult(pool, fixture);
+    const response = await post("/api/game-engine/outcome-publications", publicationCommand(fixture, result));
+    check(`${category} publishes through the canonical authority`, response.status === 200, response);
+    published.push({ fixture, result, response });
+  }
 
-  const duplicate = await post("/api/game-engine/outcome-publications", publication);
-  addCheck(
-    "duplicate publication is idempotent",
-    duplicate.status === 200 && duplicate.payload?.data?.outcomeVersionId === firstVersionId,
-  );
-
-  const conflict = await post("/api/game-engine/outcome-publications", {
-    ...publication,
-    engineVersion: "conflicting-version",
+  const invalidNumberFixture = await createCanonicalOutcomeFixture(pool);
+  const invalidNumberResult = await appendCertifiedProviderResult(pool, invalidNumberFixture, {
+    primary: invalidNumberFixture.primary.map((value, index) => index === 0 ? 999999 : value),
   });
-  addCheck("conflicting publication fails closed", conflict.status === 409, { status: conflict.status });
+  const invalidNumber = await post("/api/game-engine/outcome-publications",
+    publicationCommand(invalidNumberFixture, invalidNumberResult));
+  check("out-of-universe provider result fails closed", invalidNumber.status === 409, invalidNumber);
 
-  const firstSettlement = {
-    idempotencyKey: `settlement-request:${runId}:1`,
-    outcomeVersionId: firstVersionId,
-    settlementInputId: firstSettlementInputId,
-    correlationId: `correlation:${runId}`,
-    causationId: `publication:${firstVersionId}`,
-    auditReference: `audit:${runId}:settlement:1`,
-  };
-  const settlementResult = await post("/api/game-engine/outcome-settlement-requests", firstSettlement);
-  const duplicateSettlement = await post("/api/game-engine/outcome-settlement-requests", firstSettlement);
-  addCheck(
-    "one idempotent settlement request is emitted",
-    settlementResult.status === 200 &&
-      duplicateSettlement.status === 200 &&
-      settlementResult.payload?.data?.settlementRequestId === duplicateSettlement.payload?.data?.settlementRequestId,
-  );
+  if (invalidNumberFixture.bonus.length > 0) {
+    const invalidBonusFixture = await createCanonicalOutcomeFixture(pool);
+    const invalidBonusResult = await appendCertifiedProviderResult(pool, invalidBonusFixture, {
+      bonus: invalidBonusFixture.bonus.map((value, index) => index === 0 ? 999999 : value),
+    });
+    const invalidBonus = await post("/api/game-engine/outcome-publications",
+      publicationCommand(invalidBonusFixture, invalidBonusResult));
+    check("invalid bonus result fails closed", invalidBonus.status === 409, invalidBonus);
+  }
 
-  seedOutcome({
-    drawId: concurrentDrawId,
-    strategyId,
-    providerId,
-    evidenceHash,
-    outcomeId: concurrentOutcomeId,
-    certificateId: concurrentCertificateId,
-    outcomePayload: concurrentOutcomePayload,
-    outcomeHash: concurrentOutcomeHash,
-    suffix: `${runId}:concurrent`,
+  const invalidSignatureFixture = await createCanonicalOutcomeFixture(pool);
+  const invalidSignatureResult = await appendCertifiedProviderResult(pool, invalidSignatureFixture, {
+    invalidSignature: true,
   });
-  const concurrentBase = {
-    ...publication,
-    drawId: concurrentDrawId,
-    outcomeCertificateId: concurrentCertificateId,
-    outcomeCertificateHash: concurrentOutcomeHash,
-    correlationId: `correlation:${runId}:concurrent`,
-    causationId: `draw-execution:${runId}:concurrent`,
-    auditReference: `audit:${runId}:concurrent`,
-  };
-  const concurrentResults = await Promise.all([
-    post("/api/game-engine/outcome-publications", {
-      ...concurrentBase,
-      idempotencyKey: `publish:${runId}:concurrent:a`,
-    }),
-    post("/api/game-engine/outcome-publications", {
-      ...concurrentBase,
-      idempotencyKey: `publish:${runId}:concurrent:b`,
-    }),
+  const invalidSignature = await post("/api/game-engine/outcome-publications",
+    publicationCommand(invalidSignatureFixture, invalidSignatureResult));
+  check("unverified certificate content fails closed", invalidSignature.status === 409, invalidSignature);
+
+  const concurrentFixture = await createCanonicalOutcomeFixture(pool);
+  const concurrentResult = await appendCertifiedProviderResult(pool, concurrentFixture);
+  const concurrentBase = publicationCommand(concurrentFixture, concurrentResult);
+  const concurrent = await Promise.all([
+    post("/api/game-engine/outcome-publications", { ...concurrentBase, idempotencyKey: `${concurrentBase.idempotencyKey}:a` }),
+    post("/api/game-engine/outcome-publications", { ...concurrentBase, idempotencyKey: `${concurrentBase.idempotencyKey}:b` }),
   ]);
-  addCheck(
-    "concurrent draw execution produces one publication",
-    concurrentResults.filter((result) => result.status === 200).length === 1 &&
-      concurrentResults.filter((result) => result.status === 409).length === 1 &&
-      count(`select count(*) from game_engine.canonical_outcome_versions where draw_id = '${concurrentDrawId}';`) === 1,
-    { statuses: concurrentResults.map((result) => result.status) },
-  );
+  check("concurrent publication creates exactly one canonical version",
+    concurrent.filter((entry) => entry.status === 200).length === 1 &&
+      concurrent.filter((entry) => entry.status === 409).length === 1 &&
+      Number(await scalar("select count(*) from game_engine.canonical_outcome_versions where draw_id = $1",
+        [concurrentFixture.drawId])) === 1,
+  { statuses: concurrent.map((entry) => entry.status) });
+
+  const { fixture, result: initial, response: firstResponse } = published[0];
+  const firstVersionId = firstResponse.payload?.data?.outcomeVersionId;
+  const initialCommand = publicationCommand(fixture, initial);
+  const duplicate = await post("/api/game-engine/outcome-publications", initialCommand);
+  check("duplicate publication returns the immutable existing aggregate",
+    duplicate.status === 200 && duplicate.payload?.data?.outcomeVersionId === firstVersionId);
+  const conflict = await post("/api/game-engine/outcome-publications", {
+    ...initialCommand, reasonCode: "CONFLICTING_REUSE",
+  });
+  check("conflicting idempotency fails closed", conflict.status === 409, conflict);
+
+  const firstInput = await seedSettlementInput(fixture, initial, `${fixture.suffix}:first`);
+  const settlementCommand = {
+    idempotencyKey: `settlement:${fixture.suffix}:1`, outcomeVersionId: firstVersionId,
+    settlementInputId: firstInput, correlationId: `correlation:${fixture.suffix}`,
+    causationId: `publication:${firstVersionId}`, auditReference: `audit:settlement:${fixture.suffix}:1`,
+  };
+  const settlement = await post("/api/game-engine/outcome-settlement-requests", settlementCommand);
+  const duplicateSettlement = await post("/api/game-engine/outcome-settlement-requests", settlementCommand);
+  check("exact SettlementInput is emitted idempotently", settlement.status === 200 &&
+    duplicateSettlement.payload?.data?.settlementRequestId === settlement.payload?.data?.settlementRequestId,
+  { settlement, duplicateSettlement });
+
+  const replacement = fixture.primaryUniverse.find((value) =>
+    !fixture.primary.includes(value) && !fixture.bonus.includes(value));
+  if (replacement === undefined) throw new Error("Correction fixture lacks an alternate valid number.");
+  const nextPrimary = [...fixture.primary];
+  nextPrimary[0] = replacement;
+  if (fixture.primaryOrdering === "Ascending") nextPrimary.sort((left, right) => left - right);
+  const corrected = await appendCertifiedProviderResult(pool, fixture, {
+    primary: nextPrimary,
+    outcomePayload: { numbers: nextPrimary, bonusNumbers: fixture.bonus },
+    previousCertificateId: initial.certificateId,
+    previousCertificateHash: initial.outcomeHash,
+  });
+  const correctionCommand = publicationCommand(fixture, corrected, {
+    versionKind: "Corrected", previousOutcomeVersionId: firstVersionId,
+    reasonCode: "CERTIFIED_CORRECTION",
+  });
+  const correction = await post("/api/game-engine/outcome-publications", correctionCommand);
+  const correctedVersionId = correction.payload?.data?.outcomeVersionId;
+  check("correction appends certified superseding evidence", correction.status === 200 &&
+    correction.payload?.data?.versionNumber === 2 &&
+    correction.payload?.data?.previousOutcomeVersionId === firstVersionId, correction);
+
+  const correctedInput = await seedSettlementInput(fixture, corrected, `${fixture.suffix}:corrected`);
+  const correctedSettlement = await post("/api/game-engine/outcome-settlement-requests", {
+    ...settlementCommand, idempotencyKey: `settlement:${fixture.suffix}:2`,
+    outcomeVersionId: correctedVersionId, settlementInputId: correctedInput,
+    causationId: `publication:${correctedVersionId}`,
+  });
+  check("corrected outcome emits its exact SettlementInput", correctedSettlement.status === 200, correctedSettlement);
+
+  const cancellationCommand = publicationCommand(fixture, corrected, {
+    idempotencyKey: `publish:${fixture.suffix}:cancel`, versionKind: "Cancelled",
+    previousOutcomeVersionId: correctedVersionId, reasonCode: "GOVERNED_DRAW_CANCELLATION",
+    lifecycleEvidenceHash: canonicalHash(`cancel:${fixture.suffix}`),
+  });
+  const cancellation = await post("/api/game-engine/outcome-publications", cancellationCommand);
+  const cancelledVersionId = cancellation.payload?.data?.outcomeVersionId;
+  check("cancellation appends a terminal lifecycle version", cancellation.status === 200 &&
+    cancellation.payload?.data?.versionNumber === 3, cancellation);
+  const cancellationSettlement = await post("/api/game-engine/outcome-settlement-requests", {
+    ...settlementCommand, idempotencyKey: `settlement:${fixture.suffix}:cancel`,
+    outcomeVersionId: cancelledVersionId, settlementInputId: null,
+    causationId: `publication:${cancelledVersionId}`,
+  });
+  check("cancelled outcome emits no financial input", cancellationSettlement.status === 200, cancellationSettlement);
+  const afterCancellation = await post("/api/game-engine/outcome-publications", {
+    ...correctionCommand, idempotencyKey: `publish:${fixture.suffix}:after-cancel`,
+    previousOutcomeVersionId: cancelledVersionId,
+  });
+  check("cancelled outcome is terminal", afterCancellation.status === 409, afterCancellation);
+
+  const immutable = await pool.query(
+    "update game_engine.canonical_outcome_versions set reason_code = 'tampered' where outcome_version_id = $1",
+    [firstVersionId],
+  ).then(() => false).catch(() => true);
+  check("canonical outcome aggregate is append-only", immutable);
+  check("one canonical version chain is retained",
+    Number(await scalar("select count(*) from game_engine.canonical_outcome_versions where draw_id = $1", [fixture.drawId])) === 3);
+  check("all new outcome versions use CANONICAL_V1",
+    Number(await scalar("select count(*) from game_engine.canonical_outcome_versions where draw_id = $1 and authority_model_version = 'CANONICAL_V1'", [fixture.drawId])) === 3);
+  check("publication and Settlement handoff are outbox-backed",
+    Number(await scalar(`select count(*) from public.outbox_events where correlation_id = $1
+      and event_type in ('outcome.published','outcome.corrected','outcome.cancelled','settlement.requested')`,
+      [`correlation:${fixture.suffix}`])) === 6);
+  check("no Settlement authority write is performed by outcome publication",
+    Number(await scalar("select count(*) from settlement_service.settlement_requests where settlement_input_id = any($1::uuid[])",
+      [[firstInput, correctedInput]])) === 0);
+  const derived = await pool.query(`select validated_primary_result, validated_bonus_result, derived_outcome_data
+    from game_engine.canonical_outcome_versions where outcome_version_id = $1`, [correctedVersionId]);
+  check("derived and Bullseye consumers retain references to the same validated result sets",
+    derived.rows[0].derived_outcome_data.primaryResultHash === canonicalHash(JSON.stringify(derived.rows[0].validated_primary_result)) &&
+      derived.rows[0].derived_outcome_data.bonusResultHash === canonicalHash(JSON.stringify(derived.rows[0].validated_bonus_result)));
+
+  const beforeRecovery = Number(await scalar(
+    "select count(*) from game_engine.canonical_outcome_versions where draw_id = $1", [fixture.drawId]));
+  const recovery = await post("/api/game-engine/outcome-publications/recover", {});
+  check("recovery uses persisted evidence without republishing completed outcomes",
+    recovery.status === 200 && Number(await scalar(
+      "select count(*) from game_engine.canonical_outcome_versions where draw_id = $1", [fixture.drawId])) === beforeRecovery,
+  recovery);
 
   await stopService();
   await startService();
-  const recovered = await post("/api/game-engine/outcome-publications", publication);
-  addCheck(
-    "process restart returns durable publication",
-    recovered.status === 200 && recovered.payload?.data?.outcomeVersionId === firstVersionId,
-  );
-
-  seedOutcome({
-    drawId,
-    strategyId,
-    providerId,
-    evidenceHash,
-    outcomeId: correctedOutcomeId,
-    certificateId: correctedCertificateId,
-    outcomePayload: correctedOutcomePayload,
-    outcomeHash: correctedOutcomeHash,
-    suffix: `${runId}:corrected`,
-  });
-  seedSettlementInput({
-    settlementInputId: correctedSettlementInputId,
-    certificateId: correctedCertificateId,
-    outcomeHash: correctedOutcomeHash,
-    suffix: `${runId}:corrected`,
-  });
-
-  const correction = await post("/api/game-engine/outcome-publications", {
-    ...publication,
-    idempotencyKey: `publish:${runId}:2`,
-    outcomeCertificateId: correctedCertificateId,
-    outcomeCertificateHash: correctedOutcomeHash,
-    versionKind: "Corrected",
-    previousOutcomeVersionId: firstVersionId,
-    auditReference: `audit:${runId}:2`,
-  });
-  const correctedVersionId = correction.payload?.data?.outcomeVersionId;
-  addCheck(
-    "correction appends version two",
-    correction.status === 200 &&
-      correction.payload?.data?.versionNumber === 2 &&
-      correction.payload?.data?.previousOutcomeVersionId === firstVersionId,
-  );
-
-  const correctedSettlement = await post("/api/game-engine/outcome-settlement-requests", {
-    ...firstSettlement,
-    idempotencyKey: `settlement-request:${runId}:2`,
-    outcomeVersionId: correctedVersionId,
-    settlementInputId: correctedSettlementInputId,
-    causationId: `publication:${correctedVersionId}`,
-    auditReference: `audit:${runId}:settlement:2`,
-  });
-  addCheck("corrected outcome emits one corrected settlement request", correctedSettlement.status === 200);
-
-  const cancellation = await post("/api/game-engine/outcome-publications", {
-    ...publication,
-    idempotencyKey: `publish:${runId}:3`,
-    outcomeCertificateId: correctedCertificateId,
-    outcomeCertificateHash: correctedOutcomeHash,
-    versionKind: "Cancelled",
-    previousOutcomeVersionId: correctedVersionId,
-    auditReference: `audit:${runId}:3`,
-  });
-  const cancelledVersionId = cancellation.payload?.data?.outcomeVersionId;
-  addCheck("cancellation appends terminal version", cancellation.status === 200 && cancellation.payload?.data?.versionNumber === 3);
-
-  const cancellationSettlement = await post("/api/game-engine/outcome-settlement-requests", {
-    ...firstSettlement,
-    idempotencyKey: `settlement-request:${runId}:3`,
-    outcomeVersionId: cancelledVersionId,
-    settlementInputId: null,
-    causationId: `publication:${cancelledVersionId}`,
-    auditReference: `audit:${runId}:settlement:3`,
-  });
-  addCheck("cancellation emits request without financial input", cancellationSettlement.status === 200);
-
-  const staleReplay = await post("/api/game-engine/outcome-settlement-requests", {
-    ...firstSettlement,
-    idempotencyKey: `settlement-request:${runId}:stale`,
-  });
-  addCheck("stale outcome settlement emission fails closed", staleReplay.status === 409);
-
-  const updateAttempt = runSql(
-    `update game_engine.canonical_outcome_versions set product_reference = 'tampered' where outcome_version_id = '${firstVersionId}';`,
-    { allowFailure: true },
-  );
-  const deleteAttempt = runSql(
-    `delete from game_engine.outcome_settlement_requests where outcome_version_id = '${firstVersionId}';`,
-    { allowFailure: true },
-  );
-  addCheck("outcome history is immutable", updateAttempt.status !== 0);
-  addCheck("settlement request evidence is immutable", deleteAttempt.status !== 0);
-  addCheck(
-    "version chain remains complete",
-    count(`select count(*) from game_engine.canonical_outcome_versions where draw_id = '${drawId}';`) === 3,
-  );
-  addCheck(
-    "outbox has one event per publication and settlement request",
-    count(`
-select count(*)
-from public.outbox_events
-where correlation_id = ${sql(`correlation:${runId}`)}
-  and event_type in ('outcome.published', 'outcome.corrected', 'outcome.cancelled', 'settlement.requested');
-`) === 6,
-  );
-  addCheck(
-    "settlement requests reference only canonical versions",
-    count(`
-select count(*)
-from game_engine.outcome_settlement_requests request
-join game_engine.canonical_outcome_versions version
-  on version.outcome_version_id = request.outcome_version_id
-where version.draw_id = '${drawId}';
-`) === 3,
-  );
-  addCheck(
-    "no direct Settlement authority writes occurred",
-    count(`
-select count(*)
-from settlement_service.settlement_requests
-where settlement_input_id in ('${firstSettlementInputId}', '${correctedSettlementInputId}');
-`) === 0,
-  );
+  const replay = await post("/api/game-engine/outcome-publications", cancellationCommand);
+  check("restart replay validates and returns existing evidence only",
+    replay.status === 200 && replay.payload?.data?.outcomeVersionId === cancelledVersionId, replay);
 } catch (error) {
-  addCheck("canonical outcome QA completed", false, { error: error.message });
+  check("Canonical Outcome Authority QA completes", false, { error: error instanceof Error ? error.message : String(error) });
 } finally {
   await stopService();
+  await pool.end();
 }
 
-const failed = checks.filter((check) => check.status !== "PASS");
-printJson({ status: failed.length === 0 ? "PASS" : "FAIL", checks });
+const failed = checks.filter((entry) => entry.status !== "PASS");
+console.log(JSON.stringify({ status: failed.length === 0 ? "PASS" : "FAIL", checks }, null, 2));
 if (failed.length > 0) process.exitCode = 1;
