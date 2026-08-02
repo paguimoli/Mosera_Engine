@@ -231,12 +231,23 @@ async function main() {
            from pg_proc procedure
            join pg_namespace namespace on namespace.oid = procedure.pronamespace
            where namespace.nspname = 'ticket_authority'
-             and procedure.proname = 'record_correlation'
+             and procedure.proname = 'request_settlement'
+         )
+         and exists (
+           select 1
+           from pg_proc procedure
+           join pg_namespace namespace on namespace.oid = procedure.pronamespace
+           where namespace.nspname = 'ticket_authority'
+             and procedure.proname = 'mark_settled'
+         )
+         and to_regprocedure(
+           'ticket_authority.record_correlation(uuid,uuid,text,text,text,text,jsonb,text)'
+         ) is null
          )
          as ready`
     );
     check(
-      "durable downstream Ticket correlation contract is callable",
+      "durable typed Ticket lifecycle authority is callable",
       correlationResult.rows[0]?.ready === true
     );
   } finally {

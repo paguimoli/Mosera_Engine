@@ -970,6 +970,15 @@
       "reason": "Adds the canonical append-only Ticket Liability Authority with immutable paytable calculations, hierarchy-aware open exposure, durable idempotent decisions, and concurrency-safe pre-reservation enforcement."
     },
     {
+      "id": "103_add_typed_ticket_lifecycle_authority",
+      "path": "scripts/migrations/local/103_add_typed_ticket_lifecycle_authority.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ticket_authority"
+      ],
+      "reason": "Adds the sole typed Ticket Lifecycle Authority command stream, immutable versioned evidence, conflict-safe idempotency, authority-specific transitions, and retires generic correlation-driven status mutation."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

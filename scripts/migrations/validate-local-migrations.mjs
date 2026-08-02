@@ -1428,7 +1428,29 @@ addCheck("canonical_ticket_history_immutable", triggerExists("ticket_authority",
 addCheck("canonical_ticket_correlation_immutable", triggerExists("ticket_authority", "ticket_correlations", "ticket_correlations_update_guard"));
 addCheck("canonical_ticket_acceptance_function", functionExists("ticket_authority", "accept_ticket"));
 addCheck("canonical_ticket_cancellation_function", functionExists("ticket_authority", "cancel_ticket"));
-addCheck("canonical_ticket_correlation_function", functionExists("ticket_authority", "record_correlation"));
+for (const command of [
+  "request_settlement",
+  "confirm_settlement",
+  "post_ledger",
+  "apply_wallet",
+  "mark_settled",
+  "mark_commission_eligible",
+  "mark_rebate_eligible",
+  "reverse_settlement",
+  "resettle_ticket",
+  "cancel_draw",
+  "cancel_ticket_after_draw",
+  "void_ticket",
+]) {
+  addCheck(
+    `canonical_ticket_lifecycle_command:${command}`,
+    functionExists("ticket_authority", command)
+  );
+}
+addCheck(
+  "canonical_ticket_generic_correlation_retired",
+  !functionExists("ticket_authority", "record_correlation")
+);
 addCheck("canonical_ticket_readiness_function", functionExists("ticket_authority", "ticket_readiness"));
 addCheck("game_engine_duplicate_create_conflict_resolved_or_blocked", true, {
   resolution: manifest.knownConflicts?.find((conflict) => conflict.id === "game_engine_evaluation_table_duplicate_create")?.resolution,

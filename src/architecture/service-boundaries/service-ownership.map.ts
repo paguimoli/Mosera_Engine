@@ -64,6 +64,11 @@ const ownedResources = [
   { owner: "TICKET_SERVICE", name: "ticket_authority.ticket_lifecycle_events", kind: "table" },
   { owner: "TICKET_SERVICE", name: "ticket_authority.accept_ticket", kind: "rpc" },
   { owner: "TICKET_SERVICE", name: "ticket_authority.cancel_ticket", kind: "rpc" },
+  { owner: "TICKET_SERVICE", name: "ticket_authority.request_settlement", kind: "rpc" },
+  { owner: "TICKET_SERVICE", name: "ticket_authority.confirm_settlement", kind: "rpc" },
+  { owner: "TICKET_SERVICE", name: "ticket_authority.post_ledger", kind: "rpc" },
+  { owner: "TICKET_SERVICE", name: "ticket_authority.apply_wallet", kind: "rpc" },
+  { owner: "TICKET_SERVICE", name: "ticket_authority.mark_settled", kind: "rpc" },
 
   { owner: "SETTLEMENT_SERVICE", name: "settlement_service.settlement_requests", kind: "table" },
   { owner: "SETTLEMENT_SERVICE", name: "settlement_service.settlement_runs", kind: "table" },

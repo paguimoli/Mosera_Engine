@@ -825,83 +825,188 @@ try {
     new Set(concurrentResults.map((result) => result.rows[0].result.ticketId)).size === 1
   );
 
+  const lifecycleSql = (command) =>
+    `select ticket_authority.${command}(
+      $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb
+    ) result`;
+  const lifecycleArgs = (source, hash, key, reason, evidence = {}) => [
+    ticketId,
+    source,
+    hash,
+    key,
+    reason,
+    "qa-ticket-lifecycle",
+    `correlation:${runId}`,
+    `causation:${runId}`,
+    JSON.stringify(evidence),
+  ];
   const outcomeHash = `sha256:${"a".repeat(64)}`;
   const settlementHash = `sha256:${"b".repeat(64)}`;
-  const correlationSql = `select ticket_authority.record_correlation(
-    $1,null,$2,$3,$4,$5,$6::jsonb,$7
-  ) result`;
-  await client.query(correlationSql, [
-    ticketId,
-    "OUTCOME",
+  const requestArgs = lifecycleArgs(
     `outcome-${runId}`,
     outcomeHash,
-    "PUBLISHED",
-    JSON.stringify({ outcome: "WIN" }),
-    `correlation:${runId}`,
-  ]);
-  await client.query(correlationSql, [
-    ticketId,
-    "SETTLEMENT",
-    `settlement-${runId}`,
-    settlementHash,
-    "COMPLETED",
-    JSON.stringify({ outcome: "WIN" }),
-    `correlation:${runId}`,
-  ]);
-  const duplicateSettlement = await client.query(correlationSql, [
-    ticketId,
-    "SETTLEMENT",
-    `settlement-${runId}`,
-    settlementHash,
-    "COMPLETED",
-    JSON.stringify({ outcome: "WIN" }),
-    `correlation:${runId}`,
-  ]);
-  check(
-    "Outcome and Settlement delivery is correlated idempotently",
-    duplicateSettlement.rows[0].result.duplicate === true
+    `request-settlement:${runId}`,
+    "CERTIFIED_OUTCOME_AVAILABLE",
+    { outcome: "WIN" }
   );
-  await client.query(correlationSql, [
-    ticketId,
-    "LEDGER_ENTRY",
+  await client.query(lifecycleSql("request_settlement"), requestArgs);
+  const duplicateRequest = await client.query(
+    lifecycleSql("request_settlement"),
+    requestArgs
+  );
+  check(
+    "typed settlement request is idempotent",
+    duplicateRequest.rows[0].result.duplicate === true
+  );
+  await rejected(
+    "conflicting typed lifecycle command fails closed",
+    () =>
+      client.query(lifecycleSql("request_settlement"), [
+        ...requestArgs.slice(0, 2),
+        `sha256:${"f".repeat(64)}`,
+        ...requestArgs.slice(3),
+      ]),
+    /conflicts/
+  );
+  await client.query(
+    lifecycleSql("confirm_settlement"),
+    lifecycleArgs(
+      `settlement-${runId}`,
+      settlementHash,
+      `confirm-settlement:${runId}`,
+      "AUTHORITATIVE_SETTLEMENT_EXECUTED",
+      { outcome: "WIN" }
+    )
+  );
+  await rejected(
+    "out-of-order lifecycle command is rejected",
+    () =>
+      client.query(
+        lifecycleSql("mark_settled"),
+        lifecycleArgs(
+          `settlement-${runId}`,
+          settlementHash,
+          `early-settled:${runId}`,
+          "SETTLEMENT_COMPLETE"
+        )
+      ),
+    /invalid from state/
+  );
+  await client.query(lifecycleSql("post_ledger"), lifecycleArgs(
     `ledger-${runId}`,
     `sha256:${"c".repeat(64)}`,
-    "POSTED",
-    "{}",
-    `correlation:${runId}`,
-  ]);
-  await client.query(correlationSql, [
-    ticketId,
-    "WALLET_OPERATION",
+    `post-ledger:${runId}`,
+    "LEDGER_POSTED"
+  ));
+  await client.query(lifecycleSql("apply_wallet"), lifecycleArgs(
     `wallet-${runId}`,
     `sha256:${"d".repeat(64)}`,
-    "SETTLED",
-    "{}",
-    `correlation:${runId}`,
-  ]);
-  await client.query(correlationSql, [
-    ticketId,
-    "RESETTLEMENT",
+    `apply-wallet:${runId}`,
+    "WALLET_APPLIED"
+  ));
+  await client.query(lifecycleSql("mark_settled"), lifecycleArgs(
+    `settlement-${runId}`,
+    settlementHash,
+    `mark-settled:${runId}`,
+    "SETTLEMENT_COMPLETE"
+  ));
+  await client.query(lifecycleSql("mark_commission_eligible"), lifecycleArgs(
+    `commission-eligibility-${runId}`,
+    `sha256:${"5".repeat(64)}`,
+    `commission-eligible:${runId}`,
+    "SETTLED_ACTIVITY_ELIGIBLE"
+  ));
+  await client.query(lifecycleSql("mark_rebate_eligible"), lifecycleArgs(
+    `rebate-eligibility-${runId}`,
+    `sha256:${"6".repeat(64)}`,
+    `rebate-eligible:${runId}`,
+    "SETTLED_ACTIVITY_ELIGIBLE"
+  ));
+  await client.query(lifecycleSql("reverse_settlement"), lifecycleArgs(
+    `reversal-${runId}`,
+    `sha256:${"7".repeat(64)}`,
+    `reverse-settlement:${runId}`,
+    "SETTLEMENT_REVERSED"
+  ));
+  await client.query(lifecycleSql("resettle_ticket"), lifecycleArgs(
     `resettlement-${runId}`,
     `sha256:${"e".repeat(64)}`,
-    "CORRECTED",
-    "{}",
-    `correlation:${runId}`,
-  ]);
+    `resettle-ticket:${runId}`,
+    "SETTLEMENT_CORRECTED"
+  ));
   const settled = await client.query(
-    `select status, acceptance_hash,
+    `select status, lifecycle_state, lifecycle_version, acceptance_hash,
       (select count(*) from ticket_authority.ticket_correlations c
        where c.ticket_id=t.ticket_id) correlations,
       (select count(*) from ticket_authority.ticket_lifecycle_events e
-       where e.ticket_id=t.ticket_id) lifecycle
+       where e.ticket_id=t.ticket_id and e.command_type is not null) lifecycle,
+      (select count(distinct e.ticket_version)
+       from ticket_authority.ticket_lifecycle_events e
+       where e.ticket_id=t.ticket_id and e.command_type is not null) versions
      from ticket_authority.tickets t where ticket_id=$1`,
     [ticketId]
   );
   check(
-    "settled ticket preserves immutable Outcome Settlement Ledger and Wallet chain",
+    "typed lifecycle preserves the immutable authority chain",
     settled.rows[0].status === "SETTLED" &&
-      Number(settled.rows[0].correlations) === 5 &&
-      Number(settled.rows[0].lifecycle) >= 5
+      settled.rows[0].lifecycle_state === "TICKET_RESETTLED" &&
+      Number(settled.rows[0].correlations) === 6 &&
+      Number(settled.rows[0].lifecycle) === 11 &&
+      Number(settled.rows[0].versions) === 11 &&
+      Number(settled.rows[0].lifecycle_version) === 11,
+    settled.rows[0]
+  );
+  await rejected(
+    "ticket lifecycle projection cannot be changed directly",
+    () => client.query(
+      "update ticket_authority.tickets set status='VOIDED' where ticket_id=$1",
+      [ticketId]
+    ),
+    /controlled by typed/
+  );
+  await rejected(
+    "typed lifecycle evidence is append-only",
+    () => client.query(
+      `update ticket_authority.ticket_lifecycle_events
+          set reason_code='tampered'
+        where ticket_id=$1 and command_type='ConfirmSettlement'`,
+      [ticketId]
+    ),
+    /append-only/
+  );
+  const retiredGeneric = await client.query(
+    `select to_regprocedure(
+      'ticket_authority.record_correlation(uuid,uuid,text,text,text,text,jsonb,text)'
+    ) is null retired`
+  );
+  check(
+    "generic correlation-driven lifecycle mutation is retired",
+    retiredGeneric.rows[0].retired === true
+  );
+
+  const concurrentLifecycleArgs = [
+    freePlayAccepted.ticketId,
+    `outcome-free-play-${runId}`,
+    `sha256:${"9".repeat(64)}`,
+    `request-settlement-free-play:${runId}`,
+    "CERTIFIED_OUTCOME_AVAILABLE",
+    "qa-ticket-lifecycle",
+    `correlation-free-play:${runId}`,
+    `causation-free-play:${runId}`,
+    "{}",
+  ];
+  const lifecycleA = new Client({ connectionString: databaseUrl });
+  const lifecycleB = new Client({ connectionString: databaseUrl });
+  await Promise.all([lifecycleA.connect(), lifecycleB.connect()]);
+  const concurrentLifecycle = await Promise.all([
+    lifecycleA.query(lifecycleSql("request_settlement"), concurrentLifecycleArgs),
+    lifecycleB.query(lifecycleSql("request_settlement"), concurrentLifecycleArgs),
+  ]);
+  await Promise.all([lifecycleA.end(), lifecycleB.end()]);
+  check(
+    "concurrent identical lifecycle commands create one version",
+    new Set(concurrentLifecycle.map((result) => result.rows[0].result.eventId)).size === 1 &&
+      concurrentLifecycle.some((result) => result.rows[0].result.duplicate === true)
   );
 
   const cancelArgs = [
