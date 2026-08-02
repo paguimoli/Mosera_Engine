@@ -286,6 +286,49 @@ try {
       `sha256:ticket-closed-draw:${runId}`,
     ]
   );
+  await client.query(
+    `insert into game_engine.draw_execution_manifests (
+      execution_manifest_id, draw_id, schedule_version_id,
+      game_definition_version_id, draw_authority_version_id,
+      engine_name, engine_version, outcome_provider_id,
+      outcome_provider_version, evaluator_version, paytable_version,
+      scheduled_execution_at, schedule_hash, draw_identity_hash,
+      canonical_manifest_hash, created_at, provider_configuration_version
+    )
+    select
+      gen_random_uuid(), draw.id, draw.schedule_version_id,
+      definition_version.id, assignment.draw_authority_version_id,
+      module.code, module_version.version, provider.provider_id,
+      provider.provider_version, definition_version.evaluator_version,
+      definition_version.paytable_version, draw.scheduled_execution_at,
+      draw.schedule_hash, draw.draw_identity_hash,
+      'sha256:' || encode(digest(convert_to(
+        'ticket-execution-manifest:' || draw.id::text, 'UTF8'
+      ), 'sha256'), 'hex'), now(), provider.configuration_version
+    from game_engine.draw_schedules draw
+    join game_engine.game_definitions definition
+      on definition.id = draw.game_definition_id
+    join game_engine.game_definition_versions definition_version
+      on definition_version.id = definition.active_version_id
+    join game_engine.game_modules module on module.id = definition.game_module_id
+    join game_engine.game_module_versions module_version
+      on module_version.id = module.active_version_id
+    join game_engine.draw_authority_assignments assignment
+      on assignment.id = draw.draw_authority_assignment_id
+    cross join lateral (
+      select configuration.provider_id, configuration.provider_version,
+             configuration.configuration_version
+      from game_engine.outcome_provider_configuration_versions configuration
+      join game_engine.outcome_provider_definitions provider_definition
+        using (provider_id, provider_version)
+      where provider_definition.lifecycle_state = 'Active'
+      order by (provider_definition.provider_type = 'CERTIFIED_CSPRNG') desc,
+               configuration.provider_id
+      limit 1
+    ) provider
+    where draw.id in ($1, $2)`,
+    [ids.draw, ids.closedDraw]
+  );
 
   const liabilityVersions = new Map();
   async function setLiabilityLimit(

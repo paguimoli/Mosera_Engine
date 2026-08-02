@@ -74,6 +74,9 @@ export type CanonicalTicket = CanonicalTicketScope & {
   gameAvailabilityHash: string;
   drawId: string;
   drawBindingHash: string;
+  executionManifestId: string | null;
+  executionManifestHash: string | null;
+  lineageModel: "CANONICAL_V1" | "LEGACY_READ_ONLY";
   status: CanonicalTicketStatus;
   currency: string;
   totalStakeMinor: number;

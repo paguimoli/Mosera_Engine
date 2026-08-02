@@ -1479,6 +1479,51 @@ addCheck(
   functionExists("ticket_completion_authority", "complete_ticket")
 );
 addCheck(
+  "ticket_execution_manifest_lineage_column",
+  columnExists("ticket_authority", "tickets", "execution_manifest_id")
+);
+addCheck(
+  "ticket_lineage_model_column",
+  columnExists("ticket_authority", "tickets", "lineage_model")
+);
+for (const [table, constraint] of [
+  ["tickets", "fk_ticket_product_version_lineage"],
+  ["tickets", "fk_ticket_manifest_lineage"],
+  ["tickets", "fk_ticket_paytable_lineage"],
+  ["tickets", "fk_ticket_execution_manifest_lineage"],
+  ["tickets", "fk_ticket_wallet_lineage"],
+  ["availability_decisions", "fk_availability_decision_ticket_selection"],
+]) {
+  addCheck(
+    `ticket_referential_constraint:${constraint}`,
+    constraintExists("ticket_authority", table, constraint)
+  );
+}
+addCheck(
+  "ticket_referential_insert_guard",
+  triggerExists("ticket_authority", "tickets", "trg_bind_ticket_referential_lineage")
+);
+addCheck(
+  "ticket_item_manifest_guard",
+  triggerExists("ticket_authority", "ticket_items", "trg_validate_ticket_item_lineage")
+);
+addCheck(
+  "ticket_lifecycle_source_guard",
+  triggerExists("ticket_authority", "ticket_lifecycle_events", "trg_validate_internal_lifecycle_source_lineage")
+);
+addCheck(
+  "ticket_completion_source_lineage_guard",
+  triggerExists("ticket_completion_authority", "completion_sources", "trg_validate_completion_source_lineage")
+);
+addCheck(
+  "ticket_completion_evidence_lineage_guard",
+  triggerExists("ticket_completion_authority", "completion_evidence", "trg_validate_completion_evidence_lineage")
+);
+addCheck(
+  "ticket_referential_integrity_readiness",
+  functionExists("ticket_authority", "ticket_referential_integrity_readiness")
+);
+addCheck(
   "canonical_ticket_generic_correlation_retired",
   !functionExists("ticket_authority", "record_correlation")
 );
