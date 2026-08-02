@@ -253,7 +253,11 @@ select
   and to_regclass('settlement_service.financial_instruction_execution_attempts') is not null
   and to_regclass('settlement_service.recovery_events') is not null
   and to_regclass('settlement_service.reconciliation_events') is not null
-  and to_regclass('settlement_service.authoritative_settlement_records') is not null;
+  and to_regclass('settlement_service.authoritative_settlement_records') is not null
+  and to_regclass('ticket_completion_authority.completion_evidence') is not null
+  and to_regprocedure(
+    'ticket_completion_authority.complete_ticket(uuid,jsonb,text,text,text,text)'
+  ) is not null;
 """;
             var ready = await command.ExecuteScalarAsync(cancellationToken) is true;
             return new FinancialInstructionReadiness(

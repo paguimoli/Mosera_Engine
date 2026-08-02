@@ -265,6 +265,10 @@ const requiredTables = [
   "compensation.entitlements",
   "compensation.events",
   "compensation.reporting_entitlements",
+  "ticket_completion_authority.completion_requests",
+  "ticket_completion_authority.completion_sources",
+  "ticket_completion_authority.completion_attempts",
+  "ticket_completion_authority.completion_evidence",
 ];
 
 for (const table of requiredTables) {
@@ -1430,12 +1434,6 @@ addCheck("canonical_ticket_acceptance_function", functionExists("ticket_authorit
 addCheck("canonical_ticket_cancellation_function", functionExists("ticket_authority", "cancel_ticket"));
 for (const command of [
   "request_settlement",
-  "confirm_settlement",
-  "post_ledger",
-  "apply_wallet",
-  "mark_settled",
-  "mark_commission_eligible",
-  "mark_rebate_eligible",
   "reverse_settlement",
   "resettle_ticket",
   "cancel_draw",
@@ -1447,6 +1445,39 @@ for (const command of [
     functionExists("ticket_authority", command)
   );
 }
+for (const retiredCommand of [
+  "confirm_settlement",
+  "post_ledger",
+  "apply_wallet",
+  "mark_settled",
+  "mark_commission_eligible",
+  "mark_rebate_eligible",
+]) {
+  addCheck(
+    `ticket_completion_direct_command_retired:${retiredCommand}`,
+    !functionExists("ticket_authority", retiredCommand)
+  );
+}
+addCheck(
+  "ticket_completion_requests_table",
+  existsRegclass("ticket_completion_authority.completion_requests")
+);
+addCheck(
+  "ticket_completion_attempts_table",
+  existsRegclass("ticket_completion_authority.completion_attempts")
+);
+addCheck(
+  "ticket_completion_sources_table",
+  existsRegclass("ticket_completion_authority.completion_sources")
+);
+addCheck(
+  "ticket_completion_evidence_table",
+  existsRegclass("ticket_completion_authority.completion_evidence")
+);
+addCheck(
+  "ticket_completion_authority_function",
+  functionExists("ticket_completion_authority", "complete_ticket")
+);
 addCheck(
   "canonical_ticket_generic_correlation_retired",
   !functionExists("ticket_authority", "record_correlation")

@@ -50,10 +50,7 @@ export const coreAuthorityOwnership: readonly CoreAuthorityOwnership[] = [
       "ticket_authority.accept_ticket",
       "ticket_authority.cancel_ticket",
       "ticket_authority.request_settlement",
-      "ticket_authority.confirm_settlement",
-      "ticket_authority.post_ledger",
-      "ticket_authority.apply_wallet",
-      "ticket_authority.mark_settled",
+      "ticket_completion_authority.complete_ticket",
     ],
     retainedCompatibility: [
       "Client-only local demonstration state; never imported by API or worker code",

@@ -267,6 +267,10 @@ export async function getAuthoritativeSettledNetResult(
        from public.credit_settlement_applications application
        join public.credit_reservations reservation
          on reservation.id = application.reservation_id
+       join ticket_authority.tickets ticket
+         on ticket.ticket_id::text = application.ticket_id
+       join ticket_completion_authority.completion_evidence completion
+         on completion.ticket_id = ticket.ticket_id
        join descendants scope on scope.id = application.player_id
       where application.created_at >= $2
         and application.created_at < $3

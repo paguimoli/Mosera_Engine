@@ -841,7 +841,6 @@ try {
     JSON.stringify(evidence),
   ];
   const outcomeHash = `sha256:${"a".repeat(64)}`;
-  const settlementHash = `sha256:${"b".repeat(64)}`;
   const requestArgs = lifecycleArgs(
     `outcome-${runId}`,
     outcomeHash,
@@ -868,72 +867,6 @@ try {
       ]),
     /conflicts/
   );
-  await client.query(
-    lifecycleSql("confirm_settlement"),
-    lifecycleArgs(
-      `settlement-${runId}`,
-      settlementHash,
-      `confirm-settlement:${runId}`,
-      "AUTHORITATIVE_SETTLEMENT_EXECUTED",
-      { outcome: "WIN" }
-    )
-  );
-  await rejected(
-    "out-of-order lifecycle command is rejected",
-    () =>
-      client.query(
-        lifecycleSql("mark_settled"),
-        lifecycleArgs(
-          `settlement-${runId}`,
-          settlementHash,
-          `early-settled:${runId}`,
-          "SETTLEMENT_COMPLETE"
-        )
-      ),
-    /invalid from state/
-  );
-  await client.query(lifecycleSql("post_ledger"), lifecycleArgs(
-    `ledger-${runId}`,
-    `sha256:${"c".repeat(64)}`,
-    `post-ledger:${runId}`,
-    "LEDGER_POSTED"
-  ));
-  await client.query(lifecycleSql("apply_wallet"), lifecycleArgs(
-    `wallet-${runId}`,
-    `sha256:${"d".repeat(64)}`,
-    `apply-wallet:${runId}`,
-    "WALLET_APPLIED"
-  ));
-  await client.query(lifecycleSql("mark_settled"), lifecycleArgs(
-    `settlement-${runId}`,
-    settlementHash,
-    `mark-settled:${runId}`,
-    "SETTLEMENT_COMPLETE"
-  ));
-  await client.query(lifecycleSql("mark_commission_eligible"), lifecycleArgs(
-    `commission-eligibility-${runId}`,
-    `sha256:${"5".repeat(64)}`,
-    `commission-eligible:${runId}`,
-    "SETTLED_ACTIVITY_ELIGIBLE"
-  ));
-  await client.query(lifecycleSql("mark_rebate_eligible"), lifecycleArgs(
-    `rebate-eligibility-${runId}`,
-    `sha256:${"6".repeat(64)}`,
-    `rebate-eligible:${runId}`,
-    "SETTLED_ACTIVITY_ELIGIBLE"
-  ));
-  await client.query(lifecycleSql("reverse_settlement"), lifecycleArgs(
-    `reversal-${runId}`,
-    `sha256:${"7".repeat(64)}`,
-    `reverse-settlement:${runId}`,
-    "SETTLEMENT_REVERSED"
-  ));
-  await client.query(lifecycleSql("resettle_ticket"), lifecycleArgs(
-    `resettlement-${runId}`,
-    `sha256:${"e".repeat(64)}`,
-    `resettle-ticket:${runId}`,
-    "SETTLEMENT_CORRECTED"
-  ));
   const settled = await client.query(
     `select status, lifecycle_state, lifecycle_version, acceptance_hash,
       (select count(*) from ticket_authority.ticket_correlations c
@@ -947,13 +880,13 @@ try {
     [ticketId]
   );
   check(
-    "typed lifecycle preserves the immutable authority chain",
-    settled.rows[0].status === "SETTLED" &&
-      settled.rows[0].lifecycle_state === "TICKET_RESETTLED" &&
-      Number(settled.rows[0].correlations) === 6 &&
-      Number(settled.rows[0].lifecycle) === 11 &&
-      Number(settled.rows[0].versions) === 11 &&
-      Number(settled.rows[0].lifecycle_version) === 11,
+    "typed lifecycle hands financial completion to the canonical Completion Authority",
+    settled.rows[0].status === "SETTLEMENT_PENDING" &&
+      settled.rows[0].lifecycle_state === "SETTLEMENT_REQUESTED" &&
+      Number(settled.rows[0].correlations) === 1 &&
+      Number(settled.rows[0].lifecycle) === 3 &&
+      Number(settled.rows[0].versions) === 3 &&
+      Number(settled.rows[0].lifecycle_version) === 3,
     settled.rows[0]
   );
   await rejected(
@@ -969,7 +902,7 @@ try {
     () => client.query(
       `update ticket_authority.ticket_lifecycle_events
           set reason_code='tampered'
-        where ticket_id=$1 and command_type='ConfirmSettlement'`,
+        where ticket_id=$1 and command_type='RequestSettlement'`,
       [ticketId]
     ),
     /append-only/
@@ -982,6 +915,25 @@ try {
   check(
     "generic correlation-driven lifecycle mutation is retired",
     retiredGeneric.rows[0].retired === true
+  );
+  const retiredCompletionCommands = await client.query(
+    `select count(*)::int remaining
+       from pg_proc procedure
+       join pg_namespace namespace on namespace.oid=procedure.pronamespace
+      where namespace.nspname='ticket_authority'
+        and procedure.proname = any($1::text[])`,
+    [[
+      "confirm_settlement",
+      "post_ledger",
+      "apply_wallet",
+      "mark_settled",
+      "mark_commission_eligible",
+      "mark_rebate_eligible",
+    ]]
+  );
+  check(
+    "direct financial completion lifecycle commands are retired",
+    retiredCompletionCommands.rows[0].remaining === 0
   );
 
   const concurrentLifecycleArgs = [

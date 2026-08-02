@@ -23,6 +23,7 @@ builder.Services.AddSingleton<DurableSettlementRepository>();
 builder.Services.AddSingleton<SettlementInputIngestionRepository>();
 builder.Services.AddSingleton<SettlementExecutionRepository>();
 builder.Services.AddSingleton<FinancialInstructionRepository>();
+builder.Services.AddSingleton<TicketCompletionRepository>();
 builder.Services.AddSingleton<ResettlementRepository>();
 builder.Services.AddSingleton<SettlementPromotionRepository>();
 builder.Services.AddSingleton<SettlementLedgerServiceClient>();

@@ -5,6 +5,7 @@ namespace SettlementService.Application;
 
 public sealed class FinancialInstructionExecutionService(
     FinancialInstructionRepository repository,
+    TicketCompletionRepository ticketCompletionRepository,
     SettlementLedgerServiceClient ledgerClient,
     SettlementCreditWalletServiceClient creditClient)
 {
@@ -15,7 +16,15 @@ public sealed class FinancialInstructionExecutionService(
     {
         var context = await repository.GetExecutionContextAsync(request.InstructionId, cancellationToken)
             ?? throw new FinancialInstructionValidationException(["Financial instruction was not found."]);
-        return await ExecuteContextAsync(context, false, correlationId, cancellationToken);
+        var result = await ExecuteContextAsync(context, false, correlationId, cancellationToken);
+        if (result.Status != "Failed")
+        {
+            await ticketCompletionRepository.TryCompleteAsync(
+                context.SettlementRecord.SettlementId,
+                correlationId,
+                cancellationToken);
+        }
+        return result;
     }
 
     public async Task<FinancialInstructionSettlementExecutionResult> ExecuteSettlementAsync(
@@ -35,6 +44,14 @@ public sealed class FinancialInstructionExecutionService(
             results.Add(await ExecuteContextAsync(context, false, correlationId, cancellationToken));
         }
 
+        if (results.All(item => item.Status != "Failed"))
+        {
+            await ticketCompletionRepository.TryCompleteAsync(
+                request.SettlementId,
+                correlationId,
+                cancellationToken);
+        }
+
         return new FinancialInstructionSettlementExecutionResult(request.SettlementId, results, correlationId);
     }
 
@@ -50,7 +67,15 @@ public sealed class FinancialInstructionExecutionService(
 
         var context = await repository.GetExecutionContextAsync(request.InstructionId, cancellationToken)
             ?? throw new FinancialInstructionValidationException(["Financial instruction was not found."]);
-        return await ExecuteContextAsync(context, true, correlationId, cancellationToken);
+        var result = await ExecuteContextAsync(context, true, correlationId, cancellationToken);
+        if (result.Status != "Failed")
+        {
+            await ticketCompletionRepository.TryCompleteAsync(
+                context.SettlementRecord.SettlementId,
+                correlationId,
+                cancellationToken);
+        }
+        return result;
     }
 
     public async Task<IReadOnlyList<FinancialInstructionExecutionAttemptDto>> GetStateAsync(

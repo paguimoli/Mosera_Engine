@@ -979,6 +979,16 @@
       "reason": "Adds the sole typed Ticket Lifecycle Authority command stream, immutable versioned evidence, conflict-safe idempotency, authority-specific transitions, and retires generic correlation-driven status mutation."
     },
     {
+      "id": "104_add_financial_completion_authority",
+      "path": "scripts/migrations/local/104_add_financial_completion_authority.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ticket_completion_authority",
+        "ticket_authority"
+      ],
+      "reason": "Adds the single append-only financial Completion Authority, binds ticket settlement to matching Settlement, Ledger, and Wallet evidence, and makes completed tickets the sole Compensation input."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

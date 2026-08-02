@@ -24,9 +24,10 @@ export async function seedSettlementFixture(
     ticketId: string;
     amountMinor: number;
     balanceImpactMinor: number;
+    ticketLineId?: string;
     outcome?: "WIN" | "LOSS" | "PUSH" | "VOID";
     ledgerRequired?: boolean;
-    creditInstructionType?: "CREDIT_APPLY" | "CREDIT_REFUND";
+    creditInstructionType?: "CREDIT_APPLY" | "CREDIT_REFUND" | "CREDIT_NOOP";
     ledgerInstructionType?: "LEDGER_PAYOUT" | "LEDGER_REFUND" | "LEDGER_REVERSAL" | "LEDGER_NOOP";
     provenance?: Record<string, unknown>;
   }
@@ -36,7 +37,7 @@ export async function seedSettlementFixture(
   const settlementId = randomUUID();
   const mathCertificateId = randomUUID();
   const outcomeCertificateId = randomUUID();
-  const ticketLineId = randomUUID();
+  const ticketLineId = input.ticketLineId ?? randomUUID();
   const suffix = randomUUID();
   const settlementVersion = "settlement-policy:v1";
   const outcome = input.outcome ?? "WIN";
