@@ -22,6 +22,8 @@ var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
 var persistenceMode = string.IsNullOrWhiteSpace(databaseUrl) ? "in-memory" : "postgres";
 
 builder.Services.AddSingleton(serviceConfiguration);
+builder.Services.AddSingleton<IOperationalSecurityAuthority>(
+    new OperationalSecurityAuthority(databaseUrl));
 builder.Services.AddSingleton(new GameEngineProductionActivationOptions(
     serviceConfiguration.ProductionActivation.Enabled,
     serviceConfiguration.CanonicalOutcomePipelineEnabled,

@@ -19,7 +19,10 @@ public sealed record ManualCertifiedSubmissionRequest(
     string SubmissionEvidenceHash,
     DateTimeOffset SubmittedAt,
     Guid? SupersedesEvidenceId = null,
-    string? CorrectionReason = null);
+    string? CorrectionReason = null,
+    Guid? OperationalCommandId = null,
+    Guid? PrivilegedSessionId = null,
+    string? OperationalExecutorIdentityId = null);
 
 public sealed record ManualCertifiedNormalizedPayload(
     string ProviderId,

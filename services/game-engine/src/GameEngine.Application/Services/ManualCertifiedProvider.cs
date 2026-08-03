@@ -10,7 +10,8 @@ namespace GameEngine.Application.Services;
 public sealed class ManualCertifiedProvider(
     CanonicalOutcomeProviderAuthority providerAuthority,
     IGameDefinitionRepository gameDefinitions,
-    IGameDefinitionVersionRepository gameDefinitionVersions)
+    IGameDefinitionVersionRepository gameDefinitionVersions,
+    IOperationalSecurityAuthority operationalSecurityAuthority)
 {
     private const string NormalizationVersion = "1.0.0";
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -24,6 +25,12 @@ public sealed class ManualCertifiedProvider(
         ManualCertifiedSubmissionRequest request,
         CancellationToken cancellationToken)
     {
+        await operationalSecurityAuthority.ValidateAsync(
+            request.OperationalCommandId?.ToString(),
+            request.PrivilegedSessionId?.ToString(),
+            request.OperationalExecutorIdentityId,
+            "MANUAL_CERTIFIED_SUBMISSION",
+            cancellationToken);
         ValidateRequestIdentity(manifest, request);
         var registration = await providerAuthority.ResolveAsync(manifest, cancellationToken);
         if (registration.ProviderCategory != CanonicalOutcomeProviderCategory.ManualCertified)

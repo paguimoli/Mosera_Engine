@@ -3,7 +3,7 @@ import {
   appendExecutionEvidence,
   appendOperationalApproval,
   appendOperationalEvent,
-  authorizeOperationalCommand,
+  authorizeOperationalCommand as authorizeApprovalPolicy,
   canonicalHash,
   claimOperationalCommand,
   findSuccessfulOperationalResult,
@@ -13,6 +13,10 @@ import type {
   GovernedOperationResult,
   OperationalCommandRequest,
 } from "./operational-governance.types";
+import {
+  authorizeOperationalCommandSecurity,
+  resolvePrivilegedSessionId,
+} from "../operational-security/operational-security.service";
 import { randomUUID } from "node:crypto";
 
 export class OperationalGovernanceError extends Error {
@@ -47,7 +51,12 @@ export function resolveOperationalRequestMetadata(
     request.headers.get("x-idempotency-key")?.trim() ||
     `${commandType}:${correlationId}`;
 
-  return { correlationId, idempotencyKey, reason };
+  return {
+    correlationId,
+    idempotencyKey,
+    reason,
+    privilegedSessionId: resolvePrivilegedSessionId(request),
+  };
 }
 
 function canonicalScopeSnapshot(authContext: AuthContext) {
@@ -97,7 +106,12 @@ export async function executeGovernedOperation<
     const existing = await findSuccessfulOperationalResult<TResult>(command.commandId);
     if (existing !== null) return { command, result: existing, idempotent: true };
 
-    await authorizeOperationalCommand(command.commandId);
+    await authorizeOperationalCommandSecurity({
+      commandId: command.commandId,
+      authContext: request.authContext,
+      privilegedSessionId: request.privilegedSessionId,
+    });
+    await authorizeApprovalPolicy(command.commandId);
     await appendOperationalEvent({
       command,
       actorIdentityId: request.authContext.user.id,

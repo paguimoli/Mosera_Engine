@@ -1029,6 +1029,33 @@
       "reason": "Adds the single immutable BF-6.1 Operational Governance Authority for policy-driven authorization, approvals, command execution, evidence, audit, idempotency, and break-glass governance."
     },
     {
+      "id": "109_add_operational_security_authority",
+      "path": "scripts/migrations/local/109_add_operational_security_authority.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "operational_governance"
+      ],
+      "reason": "Hardens the canonical Operational Governance Authority with immutable privileged sessions, MFA evidence binding, separation of duties, break-glass controls, and production command validation."
+    },
+    {
+      "id": "110_fix_operational_security_validation_ambiguity",
+      "path": "scripts/migrations/local/110_fix_operational_security_validation_ambiguity.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "operational_governance"
+      ],
+      "reason": "Qualifies approval evidence fields in the canonical BF-6.2 production security validator without rewriting applied migration history."
+    },
+    {
+      "id": "111_bind_break_glass_approval_and_auth_revocation",
+      "path": "scripts/migrations/local/111_bind_break_glass_approval_and_auth_revocation.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "operational_governance"
+      ],
+      "reason": "Binds break-glass privileged sessions to independently approved governance commands and supports full underlying Auth Service session revocation."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

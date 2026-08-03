@@ -13,10 +13,15 @@ export type OperationalCommandType =
   | "PLATFORM_LIFECYCLE"
   | "BREAK_GLASS_LIFECYCLE"
   | "SESSION_REVOCATION"
-  | "LEDGER_REMEDIATION_APPROVAL_CAPTURE";
+  | "LEDGER_REMEDIATION_APPROVAL_CAPTURE"
+  | "GAME_ENGINE_PRODUCTION_ACTIVATION"
+  | "MANUAL_CERTIFIED_SUBMISSION"
+  | "OUTCOME_RECOVERY_EXECUTION"
+  | "CONFIGURATION_PUBLICATION";
 
 export type OperationalCommandRequest<TPayload extends Record<string, unknown>> = {
   authContext: AuthContext;
+  privilegedSessionId?: string | null;
   commandType: OperationalCommandType;
   affectedAuthority: string;
   targetType: string;

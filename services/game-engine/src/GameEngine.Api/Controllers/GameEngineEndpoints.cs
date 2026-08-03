@@ -1,5 +1,6 @@
 using GameEngine.Api.Configuration;
 using GameEngine.Api.Infrastructure;
+using GameEngine.Application.Interfaces;
 using GameEngine.Application.Services;
 using GameEngine.Domain.Model;
 
@@ -1254,7 +1255,8 @@ public static class GameEngineEndpoints
     private static async Task<IResult> RecoverCanonicalOutcomeRequestsAsync(
         HttpContext context,
         ServiceConfiguration configuration,
-        CanonicalOutcomeLifecycleAuthority lifecycleAuthority)
+        CanonicalOutcomeLifecycleAuthority lifecycleAuthority,
+        IOperationalSecurityAuthority operationalSecurityAuthority)
     {
         if (!configuration.CanonicalOutcomePipelineEnabled ||
             !configuration.CanonicalOutcomeRecoveryEnabled)
@@ -1266,6 +1268,13 @@ public static class GameEngineEndpoints
                 correlationId = context.GetCorrelationId()
             }, statusCode: 503);
         }
+
+        await operationalSecurityAuthority.ValidateAsync(
+            context.Request.Headers["x-operational-command-id"].FirstOrDefault(),
+            context.Request.Headers["x-privileged-session-id"].FirstOrDefault(),
+            context.Request.Headers["x-operational-executor-id"].FirstOrDefault(),
+            "OUTCOME_RECOVERY_EXECUTION",
+            context.RequestAborted);
 
         var result = await lifecycleAuthority.RecoverAsync(
             new CanonicalOutcomeRecoveryCommand(
@@ -1370,10 +1379,17 @@ public static class GameEngineEndpoints
     private static async Task<IResult> AdvanceProductionActivationAsync(
         GameEngineProductionActivationCommand command,
         HttpContext context,
-        GameEngineProductionActivationAuthority activationAuthority)
+        GameEngineProductionActivationAuthority activationAuthority,
+        IOperationalSecurityAuthority operationalSecurityAuthority)
     {
         try
         {
+            await operationalSecurityAuthority.ValidateAsync(
+                context.Request.Headers["x-operational-command-id"].FirstOrDefault(),
+                context.Request.Headers["x-privileged-session-id"].FirstOrDefault(),
+                context.Request.Headers["x-operational-executor-id"].FirstOrDefault(),
+                "GAME_ENGINE_PRODUCTION_ACTIVATION",
+                context.RequestAborted);
             var activationEvent = await activationAuthority.AdvanceAsync(
                 command,
                 context.RequestAborted);

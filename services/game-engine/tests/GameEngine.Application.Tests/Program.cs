@@ -1,4 +1,5 @@
 using GameEngine.Application.Services;
+using GameEngine.Application.Interfaces;
 using GameEngine.Domain.Model;
 using GameEngine.Domain.Randomness;
 using GameEngine.Infrastructure.Persistence;
@@ -964,7 +965,8 @@ var manualProviderRepository = new CanonicalCsprngTestRepository(
 var manualCertifiedProvider = new ManualCertifiedProvider(
     new CanonicalOutcomeProviderAuthority(manualProviderRepository),
     officialDefinitions,
-    officialDefinitionVersions);
+    officialDefinitionVersions,
+    new TestOperationalSecurityAuthority());
 var manualScheduledAt = DateTimeOffset.UtcNow.AddMinutes(-1);
 var manualManifest = new DrawExecutionManifest(
     Guid.NewGuid(),
@@ -1129,7 +1131,8 @@ var recoveryManualDefinitionVersions = new InMemoryGameDefinitionVersionReposito
 var recoveryManualProvider = new ManualCertifiedProvider(
     new CanonicalOutcomeProviderAuthority(recoveryManualRepository),
     recoveryManualDefinitions,
-    recoveryManualDefinitionVersions);
+    recoveryManualDefinitionVersions,
+    new TestOperationalSecurityAuthority());
 var recoveryManualManifest = invalidManualManifest with
 {
     ExecutionManifestId = Guid.NewGuid(),
@@ -4807,4 +4810,18 @@ sealed class CanonicalCsprngTestRepository(
             .OrderByDescending(item =>
                 claimsByExecution[item.ExecutionId].ExecutionVersion)
             .FirstOrDefault();
+}
+
+sealed class TestOperationalSecurityAuthority : IOperationalSecurityAuthority
+{
+    public Task ValidateAsync(
+        string? commandId,
+        string? privilegedSessionId,
+        string? executorIdentityId,
+        string expectedCommandType,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.CompletedTask;
+    }
 }

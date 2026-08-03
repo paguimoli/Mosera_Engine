@@ -1508,6 +1508,39 @@ for (const operation of ["request_command", "authorize_command", "readiness"]) {
     functionExists("operational_governance", operation)
   );
 }
+for (const table of [
+  "security_policy_versions",
+  "privileged_sessions",
+  "privileged_session_events",
+  "security_validation_evidence",
+]) {
+  addCheck(
+    `operational_security_table:${table}`,
+    existsRegclass(`operational_governance.${table}`)
+  );
+  addCheck(
+    `operational_security_immutable:${table}`,
+    triggerExists("operational_governance", table, `trg_${table}_immutable`)
+  );
+}
+for (const operation of ["privileged_session_active", "validate_command_security"]) {
+  addCheck(
+    `operational_security_function:${operation}`,
+    functionExists("operational_governance", operation)
+  );
+}
+addCheck(
+  "operational_security_function:break_glass_command_authorized",
+  functionExists("operational_governance", "break_glass_command_authorized")
+);
+addCheck(
+  "operational_security_break_glass_authorization_binding",
+  columnExists("operational_governance", "privileged_sessions", "authorization_command_id")
+);
+addCheck(
+  "operational_security_sod_trigger",
+  triggerExists("operational_governance", "command_approvals", "trg_command_approvals_sod")
+);
 addCheck(
   "ticket_execution_manifest_lineage_column",
   columnExists("ticket_authority", "tickets", "execution_manifest_id")

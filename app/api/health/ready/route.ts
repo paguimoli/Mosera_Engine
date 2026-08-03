@@ -15,15 +15,17 @@ import {
   getOperationalGovernanceReadiness,
   OperationalGovernanceRepositoryError,
 } from "@/src/domains/operational-governance/operational-governance.repository";
+import { checkOperationalSecurityReadiness } from "@/src/domains/operational-security/operational-security.repository";
 
 export const runtime = "nodejs";
 
 export async function GET() {
   try {
-    const [accountChecks, ticketChecks, operationalChecks] = await Promise.all([
+    const [accountChecks, ticketChecks, operationalChecks, operationalSecurityReady] = await Promise.all([
       getAccountScopeReadiness(),
       getTicketReadiness(),
       getOperationalGovernanceReadiness(),
+      checkOperationalSecurityReadiness(),
     ]);
     const platformMutationChecks = getPlatformMutationAuthorityChecks();
     const authorityConsolidationChecks = getAuthorityConsolidationReadiness();
@@ -35,6 +37,12 @@ export async function GET() {
         ...check,
         authority: "operational-governance",
       })),
+      {
+        checkName: "operational_security:canonical_authority",
+        ready: operationalSecurityReady,
+        issueCount: operationalSecurityReady ? 0 : 1,
+        authority: "operational-security",
+      },
       ...platformMutationChecks.map((check) => ({
         ...check,
         authority: "platform-mutation",
@@ -82,6 +90,7 @@ export async function GET() {
           operationalGovernanceAuthority: operationalChecks.every(
             (check) => check.ready
           ),
+          operationalSecurityAuthority: operationalSecurityReady,
           launchConfigurationFrozen: launchConfiguration.ready,
           creditOnlyLaunch: process.env.CREDIT_ONLY_LAUNCH_ENABLED === "true",
           cashierLaunchDisabled: process.env.CASHIER_LAUNCH_ENABLED === "false",
@@ -115,6 +124,7 @@ export async function GET() {
           legacyPlatformProductionMutationDisabled: false,
           coreAuthoritiesConsolidated: false,
           operationalGovernanceAuthority: false,
+          operationalSecurityAuthority: false,
           launchConfigurationFrozen: false,
           creditOnlyLaunch: false,
           cashierLaunchDisabled: false,
