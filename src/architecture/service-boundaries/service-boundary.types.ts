@@ -28,20 +28,26 @@ export type ServiceOwnedTable = {
 };
 
 export type ServiceCommand<TPayload = unknown> = {
+  contractVersion: string;
   service: ServiceName;
   commandType: string;
   payload: TPayload;
-  correlationId?: string | null;
-  idempotencyKey?: string | null;
+  correlationId: string;
+  causationId: string | null;
+  idempotencyKey: string;
 };
 
 export type ServiceEvent<TPayload = unknown> = {
+  contractVersion: string;
+  eventId: string;
   service: ServiceName;
   eventType: string;
   aggregateType: string;
   aggregateId: string;
   payload: TPayload;
-  correlationId?: string | null;
+  correlationId: string;
+  causationId: string | null;
+  idempotencyKey: string;
   occurredAt: string;
 };
 

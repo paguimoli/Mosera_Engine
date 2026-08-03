@@ -53,8 +53,8 @@ public static class LedgerEndpoints
             if (!durableLedgerService.MutationCapabilityEnabled)
             {
                 return Results.Json(
-                    new ErrorResponse(
-                        new ErrorDto(
+                    new LedgerErrorResponse(
+                        new LedgerErrorDto(
                             LedgerErrorCodes.InternalError,
                             "Ledger durable persistence is not configured."),
                         correlationId),
@@ -102,8 +102,8 @@ public static class LedgerEndpoints
             catch (DurableLedgerIdempotencyConflictException error)
             {
                 logger.LogWarning(error, "Ledger entry command failed idempotency conflict validation.");
-                return Results.Conflict(new ErrorResponse(
-                    new ErrorDto(
+                return Results.Conflict(new LedgerErrorResponse(
+                    new LedgerErrorDto(
                         LedgerErrorCodes.IdempotencyConflict,
                         "Idempotency key already exists for a different canonical ledger request."),
                     correlationId));
@@ -111,8 +111,8 @@ public static class LedgerEndpoints
             catch (LedgerPostingRequestConflictException error)
             {
                 logger.LogWarning(error, "Ledger posting request failed durable idempotency conflict validation.");
-                return Results.Conflict(new ErrorResponse(
-                    new ErrorDto(
+                return Results.Conflict(new LedgerErrorResponse(
+                    new LedgerErrorDto(
                         LedgerErrorCodes.IdempotencyConflict,
                         "Idempotency key already exists for a different durable Ledger posting request."),
                     correlationId));
@@ -121,8 +121,8 @@ public static class LedgerEndpoints
             {
                 logger.LogError(error, "Ledger posting result could not be proven.");
                 return Results.Json(
-                    new ErrorResponse(
-                        new ErrorDto(LedgerErrorCodes.UnknownResult, error.Message),
+                    new LedgerErrorResponse(
+                        new LedgerErrorDto(LedgerErrorCodes.UnknownResult, error.Message),
                         correlationId),
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
@@ -172,8 +172,8 @@ public static class LedgerEndpoints
             if (!durableLedgerService.MutationCapabilityEnabled)
             {
                 return Results.Json(
-                    new ErrorResponse(
-                        new ErrorDto(
+                    new LedgerErrorResponse(
+                        new LedgerErrorDto(
                             LedgerErrorCodes.InternalError,
                             "Ledger durable persistence is not configured."),
                         correlationId),
@@ -190,8 +190,8 @@ public static class LedgerEndpoints
                     context.RequestAborted).GetAwaiter().GetResult();
 
                 return result is null
-                    ? Results.NotFound(new ErrorResponse(
-                        new ErrorDto(
+                    ? Results.NotFound(new LedgerErrorResponse(
+                        new LedgerErrorDto(
                             LedgerErrorCodes.EntryNotFound,
                             "Ledger entry was not found."),
                         correlationId))
@@ -220,8 +220,8 @@ public static class LedgerEndpoints
             catch (DurableLedgerIdempotencyConflictException error)
             {
                 logger.LogWarning(error, "Ledger reversal command failed idempotency conflict validation.");
-                return Results.Conflict(new ErrorResponse(
-                    new ErrorDto(
+                return Results.Conflict(new LedgerErrorResponse(
+                    new LedgerErrorDto(
                         LedgerErrorCodes.IdempotencyConflict,
                         "Idempotency key already exists for a different canonical ledger reversal."),
                     correlationId));
@@ -229,8 +229,8 @@ public static class LedgerEndpoints
             catch (LedgerPostingRequestConflictException error)
             {
                 logger.LogWarning(error, "Ledger reversal request failed durable idempotency conflict validation.");
-                return Results.Conflict(new ErrorResponse(
-                    new ErrorDto(
+                return Results.Conflict(new LedgerErrorResponse(
+                    new LedgerErrorDto(
                         LedgerErrorCodes.IdempotencyConflict,
                         "Idempotency key already exists for a different durable Ledger reversal request."),
                     correlationId));
@@ -238,8 +238,8 @@ public static class LedgerEndpoints
             catch (DurableLedgerReversalConflictException error)
             {
                 logger.LogWarning(error, "Ledger reversal command failed reversal conflict validation.");
-                return Results.Conflict(new ErrorResponse(
-                    new ErrorDto(
+                return Results.Conflict(new LedgerErrorResponse(
+                    new LedgerErrorDto(
                         LedgerErrorCodes.ReversalNotAllowed,
                         error.Message),
                     correlationId));
@@ -256,8 +256,8 @@ public static class LedgerEndpoints
             {
                 logger.LogError(error, "Ledger reversal result could not be proven.");
                 return Results.Json(
-                    new ErrorResponse(
-                        new ErrorDto(LedgerErrorCodes.UnknownResult, error.Message),
+                    new LedgerErrorResponse(
+                        new LedgerErrorDto(LedgerErrorCodes.UnknownResult, error.Message),
                         correlationId),
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
@@ -279,8 +279,8 @@ public static class LedgerEndpoints
             if (!durableLedgerService.DurablePersistenceConfigured)
             {
                 return Results.Json(
-                    new ErrorResponse(
-                        new ErrorDto(
+                    new LedgerErrorResponse(
+                        new LedgerErrorDto(
                             LedgerErrorCodes.InternalError,
                             "Ledger durable persistence is not configured."),
                         correlationId),
@@ -292,8 +292,8 @@ public static class LedgerEndpoints
                 context.RequestAborted).GetAwaiter().GetResult();
 
             return ledgerEntry is null
-                ? Results.NotFound(new ErrorResponse(
-                    new ErrorDto(
+                ? Results.NotFound(new LedgerErrorResponse(
+                    new LedgerErrorDto(
                         LedgerErrorCodes.EntryNotFound,
                         "Ledger entry was not found."),
                     correlationId))
@@ -352,8 +352,8 @@ public static class LedgerEndpoints
             if (!durableLedgerService.DurablePersistenceConfigured)
             {
                 return Results.Json(
-                    new ErrorResponse(
-                        new ErrorDto(
+                    new LedgerErrorResponse(
+                        new LedgerErrorDto(
                             LedgerErrorCodes.InternalError,
                             "Ledger durable persistence is not configured."),
                         correlationId),
@@ -369,7 +369,7 @@ public static class LedgerEndpoints
 
             return Results.Ok(new LedgerEntriesResponse(
                 page.Entries,
-                new PaginationDto(resolvedLimit, page.NextCursor),
+                new LedgerPaginationDto(resolvedLimit, page.NextCursor),
                 correlationId));
         });
 
@@ -382,8 +382,8 @@ public static class LedgerEndpoints
                 requestId,
                 context.RequestAborted).GetAwaiter().GetResult();
             return request is null
-                ? Results.NotFound(new ErrorResponse(
-                    new ErrorDto(
+                ? Results.NotFound(new LedgerErrorResponse(
+                    new LedgerErrorDto(
                         LedgerErrorCodes.PostingRequestNotFound,
                         "Ledger posting request was not found."),
                     context.GetCorrelationId()))
@@ -423,16 +423,16 @@ public static class LedgerEndpoints
             }
             catch (LedgerPostingRequestNotFoundException)
             {
-                return Results.NotFound(new ErrorResponse(
-                    new ErrorDto(
+                return Results.NotFound(new LedgerErrorResponse(
+                    new LedgerErrorDto(
                         LedgerErrorCodes.PostingRequestNotFound,
                         "Ledger posting request was not found."),
                     context.GetCorrelationId()));
             }
             catch (LedgerUnknownResultException error)
             {
-                return Results.Conflict(new ErrorResponse(
-                    new ErrorDto(LedgerErrorCodes.UnknownResult, error.Message),
+                return Results.Conflict(new LedgerErrorResponse(
+                    new LedgerErrorDto(LedgerErrorCodes.UnknownResult, error.Message),
                     context.GetCorrelationId()));
             }
         });
@@ -453,16 +453,16 @@ public static class LedgerEndpoints
             }
             catch (LedgerPostingRequestNotFoundException)
             {
-                return Results.NotFound(new ErrorResponse(
-                    new ErrorDto(
+                return Results.NotFound(new LedgerErrorResponse(
+                    new LedgerErrorDto(
                         LedgerErrorCodes.PostingRequestNotFound,
                         "Ledger posting request was not found."),
                     context.GetCorrelationId()));
             }
             catch (LedgerUnknownResultException error)
             {
-                return Results.Conflict(new ErrorResponse(
-                    new ErrorDto(LedgerErrorCodes.UnknownResult, error.Message),
+                return Results.Conflict(new LedgerErrorResponse(
+                    new LedgerErrorDto(LedgerErrorCodes.UnknownResult, error.Message),
                     context.GetCorrelationId()));
             }
         });
@@ -520,8 +520,8 @@ public static class LedgerEndpoints
                     },
                     cancellationToken);
 
-                return Results.BadRequest(new ErrorResponse(
-                    new ErrorDto(
+                return Results.BadRequest(new LedgerErrorResponse(
+                    new LedgerErrorDto(
                         LedgerErrorCodes.ValidationFailed,
                         error.Message),
                     correlationId));
@@ -547,8 +547,8 @@ public static class LedgerEndpoints
                     cancellationToken);
 
                 return Results.Json(
-                    new ErrorResponse(
-                        new ErrorDto(
+                    new LedgerErrorResponse(
+                        new LedgerErrorDto(
                             LedgerErrorCodes.InternalError,
                             "Ledger shadow execution failed."),
                         correlationId),

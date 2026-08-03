@@ -1,8 +1,5 @@
 using GameEngine.Domain.DrawAuthorities;
 using GameEngine.Domain.Model;
-using IDrawAuthorityRepository = GameEngine.Application.Interfaces.IDrawAuthorityRepository;
-using IDrawAuthorityVersionRepository = GameEngine.Application.Interfaces.IDrawAuthorityVersionRepository;
-
 namespace GameEngine.Application.Services;
 
 public sealed class DrawAuthorityRegistry : IDrawAuthorityRegistry
@@ -12,15 +9,8 @@ public sealed class DrawAuthorityRegistry : IDrawAuthorityRegistry
     private readonly List<DrawAuthorityRegistryEntry> invalidAuthorities = [];
     private readonly List<DrawResultSubmissionDefinition> submissions = [];
     private readonly DrawAuthorityApprovalGate approvalGate = new();
-    private readonly IDrawAuthorityRepository? drawAuthorityRepository;
-    private readonly IDrawAuthorityVersionRepository? drawAuthorityVersionRepository;
-
-    public DrawAuthorityRegistry(
-        IDrawAuthorityRepository? drawAuthorityRepository = null,
-        IDrawAuthorityVersionRepository? drawAuthorityVersionRepository = null)
+    public DrawAuthorityRegistry()
     {
-        this.drawAuthorityRepository = drawAuthorityRepository;
-        this.drawAuthorityVersionRepository = drawAuthorityVersionRepository;
         providers =
         [
             new OfficialFeedProvider(),
@@ -30,7 +20,6 @@ public sealed class DrawAuthorityRegistry : IDrawAuthorityRegistry
         ];
 
         RegisterSeedAuthorities();
-        PersistAuthoritySnapshot();
     }
 
     public IReadOnlyCollection<DrawProviderMetadata> GetProviders()
@@ -238,36 +227,6 @@ public sealed class DrawAuthorityRegistry : IDrawAuthorityRegistry
         else
         {
             invalidAuthorities.Add(entry);
-        }
-    }
-
-    private void PersistAuthoritySnapshot()
-    {
-        if (drawAuthorityRepository is null || drawAuthorityVersionRepository is null)
-        {
-            return;
-        }
-
-        foreach (var entry in registeredAuthorities.Concat(invalidAuthorities))
-        {
-            var authority = new DrawAuthority(
-                entry.Authority.Id,
-                entry.Authority.Code,
-                entry.Authority.DisplayName,
-                entry.Authority.ProviderType,
-                entry.Authority.Status,
-                entry.Authority.ActiveVersionId);
-            var version = new DrawAuthorityVersion(
-                entry.Version.Id,
-                entry.Version.DrawAuthorityId,
-                entry.Version.Version,
-                entry.Version.Metadata.ProviderVersion,
-                entry.Version.Metadata.EvidenceHash,
-                entry.Authority.Status,
-                entry.Version.CreatedAt);
-
-            drawAuthorityRepository.UpsertAsync(authority, CancellationToken.None).GetAwaiter().GetResult();
-            drawAuthorityVersionRepository.UpsertAsync(version, CancellationToken.None).GetAwaiter().GetResult();
         }
     }
 

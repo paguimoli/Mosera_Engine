@@ -1,31 +1,65 @@
 # Backend Freeze Authority Ownership
 
-BF-0.1 freezes one production mutation boundary for each core business
-authority. Guarded service promotion, comparison, rollback, and shadow evidence
-remain available, but they are not parallel production authorities and may not
-be called around the configured boundary.
+BF-7.1 freezes one production owner, execution path, registration, and readiness
+source for every implemented business authority. Guarded comparison, rollback,
+replay, diagnostics, and migration evidence are not competing mutation paths.
 
-| Authority | Canonical production implementation | Retained compatibility |
+| Authority | Canonical owner | Execution boundary |
 | --- | --- | --- |
-| Financial | Ledger, Credit, and Settlement entrypoints over the canonical financial SQL contracts | Guarded service promotion and evidence only |
-| Draw | Game Engine canonical outcome publication, recovery, certification, and Settlement request pipeline | Read-only projections and local demonstration state |
-| Ticket | `ticket_authority` PostgreSQL functions through the canonical Ticket repository | Client-only local demonstration state |
-| Hierarchy | Canonical Hierarchy Authority over immutable Platform Management and governed Account persistence | Client-only tree presentation and deprecated Brand/Market reads |
-| Scope | Canonical Scope Resolver combining authenticated claims with authoritative Platform and Account relationships | None |
-| Operational | Authenticated operational access and authority approval services | Read-only rehearsal and promotion evidence |
+| Scope | Platform Service | Canonical Scope Resolver |
+| Hierarchy | Platform Service | Canonical Hierarchy Authority |
+| Financial | Ledger Service | Canonical Financial Authority entrypoints |
+| Funding Instrument | Wallet Service | Funding Instrument Authority |
+| Compensation | Commission Service | Compensation Authority |
+| Draw | Game Engine | Immutable Draw Authority |
+| Draw Orchestrator | Game Engine | Canonical Draw Orchestrator |
+| Outcome Provider | Game Engine | Canonical Outcome Provider Authority |
+| Internal CSPRNG Provider | Game Engine | Internal CSPRNG Provider |
+| Official Results Provider | Game Engine | Official Results Provider |
+| Manual Certified Provider | Game Engine | Manual Certified Provider |
+| Outcome | Game Engine | Canonical Outcome Authority |
+| Outcome Lifecycle | Game Engine | Canonical Outcome Lifecycle Authority |
+| Game Engine Production Activation | Game Engine | Production Activation Authority |
+| Ticket Acceptance | Ticket Service | `ticket_authority.accept_ticket` |
+| Effective Availability | Ticket Service | `ticket_authority.resolve_effective_availability` |
+| Ticket Liability | Ticket Service | `ticket_authority.evaluate_liability` |
+| Ticket Lifecycle | Ticket Service | Typed Ticket Lifecycle Authority |
+| Completion | Ticket Service | Financial Completion Authority |
+| Ticket Exception | Ticket Service | Ticket Exception Authority |
+| Operational Governance | Operational Service | Operational Governance Authority |
+| Operational Security | Operational Service | Operational Security Authority |
+| Operational Change | Operational Service | Operational Change Authority |
+
+The machine-readable ownership registry in
+`src/architecture/authorities/authority-consolidation.ts` records the exact
+registration, execution, and readiness source for each row. Application
+readiness reports `registered`, `ready`, `healthy`, `productionCapable`,
+`governed`, and `auditable` once per authority.
+
+## Retained Compatibility
+
+- Phase 22.6 Game Engine registry and scheduler endpoints remain read-only
+  diagnostics. Their durable repository registrations and background writes are
+  retired; canonical draw publication is the only production mutation path.
+- Client-only Ticket and hierarchy presentation state remains isolated from API,
+  worker, and authority execution paths.
+- Replay, shadow comparison, dry-run, and promotion evidence validate canonical
+  records but do not create a second authoritative result.
+- Historical migration contracts remain in place so existing immutable records
+  stay readable. Later migrations that add orchestration, lifecycle, or recovery
+  evidence extend those records rather than duplicate their authority.
 
 ## Rules
 
-- Public routes and workers call authority entrypoints, never persistence
-  adapters or alternate domain implementations.
-- Authority mode switches select exactly one guarded Financial implementation;
-  BF-0.1 does not promote or change any mode.
-- Legacy result, Ticket, Brand, and Market mutation contracts are retired.
-- Client-supplied tenant, hierarchy, Website, Market, Brand, or permission scope
-  is never authoritative.
-- Shadow and dry-run code may compare or record evidence but may not commit a
-  second production mutation.
-- Business behavior, immutable models, public compatibility reads, and
-  separately governed promotion/rollback controls remain unchanged.
+- Routes, workers, hosted services, and consumers call canonical authority
+  entrypoints, never alternate persistence adapters.
+- Client-supplied scope and funding choices are identifiers to validate, never
+  authority inputs.
+- Compatibility code may project or verify canonical state but cannot mutate it.
+- Every production authority has one declared owner, execution identity,
+  registration identity, and readiness source.
+- Adding a second registration or restoring a legacy draw repository to Game
+  Engine dependency injection fails cross-authority QA.
 
-`npm run qa:backend-authority-consolidation` enforces these ownership boundaries.
+`npm run qa:cross-authority-integrity` is the BF-7.1 ownership gate.
+`npm run qa:backend-authority-consolidation` remains the routing regression gate.

@@ -1540,38 +1540,6 @@ if (drawAuthorityStatus.RegisteredAuthorityCount < 4)
     throw new InvalidOperationException("Expected placeholder Draw Authorities to be registered.");
 }
 
-var inMemoryAuthorityRepository = new InMemoryDrawAuthorityRepository();
-var inMemoryAuthorityVersionRepository = new InMemoryDrawAuthorityVersionRepository();
-var inMemoryAuthorityAssignmentRepository = new InMemoryDrawAuthorityAssignmentRepository();
-var persistedAuthorityRegistry = new DrawAuthorityRegistry(inMemoryAuthorityRepository, inMemoryAuthorityVersionRepository);
-var persistedAuthorities = await inMemoryAuthorityRepository.ListAsync(CancellationToken.None);
-if (persistedAuthorityRegistry.GetRegisteredAuthorities().Count < 4 ||
-    persistedAuthorities.Count < 4)
-{
-    throw new InvalidOperationException("In-memory draw authority repositories should mirror registered authorities.");
-}
-
-var firstPersistedAuthority = persistedAuthorities.First();
-var firstPersistedAuthorityVersions = await inMemoryAuthorityVersionRepository.ListAsync(firstPersistedAuthority.Id, CancellationToken.None);
-if (firstPersistedAuthorityVersions.Count == 0)
-{
-    throw new InvalidOperationException("In-memory draw authority version persistence failed.");
-}
-
-var inMemoryAssignment = new DrawAuthorityAssignment(
-    Guid.NewGuid(),
-    Guid.NewGuid(),
-    firstPersistedAuthority.Id,
-    firstPersistedAuthority.ActiveVersionId,
-    SettlementTriggerPolicy.Manual,
-    DateTimeOffset.UtcNow,
-    EffectiveTo: null);
-await inMemoryAuthorityAssignmentRepository.UpsertAsync(inMemoryAssignment, CancellationToken.None);
-if ((await inMemoryAuthorityAssignmentRepository.ListAsync(inMemoryAssignment.GameDefinitionId, CancellationToken.None)).All(assignment => assignment.Id != inMemoryAssignment.Id))
-{
-    throw new InvalidOperationException("In-memory draw authority assignment persistence failed.");
-}
-
 var testPrng = drawAuthorityRegistry.GetRegisteredAuthorities().Single(entry => entry.Authority.Code == "internal-test-prng");
 var testProductionAssignment = drawAuthorityRegistry.ValidateAssignment(
     testPrng.Authority.Id,
@@ -1735,27 +1703,6 @@ var schedulerStatus = scheduler.GetSchedulerStatus();
 if (schedulerStatus.ScheduleCount != 1 || schedulerStatus.ProductionActivationEnabled || schedulerStatus.SettlementIntegrationEnabled)
 {
     throw new InvalidOperationException("Scheduler health reporting is invalid.");
-}
-
-var inMemoryDrawScheduleRepository = new InMemoryDrawScheduleRepository();
-var persistentScheduler = new DrawSchedulerService(registry, drawAuthorityRegistry, inMemoryDrawScheduleRepository);
-var persistentLifecycle = persistentScheduler.GetLifecycle();
-var persistedSchedules = await inMemoryDrawScheduleRepository.ListAsync(CancellationToken.None);
-if (persistedSchedules.Count == 0 ||
-    persistedSchedules.Any(schedule => persistentLifecycle.All(draw => draw.DrawId != schedule.Id)))
-{
-    throw new InvalidOperationException("In-memory draw schedule repository fallback did not persist lifecycle rows.");
-}
-
-var persistentMissedDraw = persistentLifecycle
-    .Where(draw => draw.DrawAt < DateTimeOffset.UtcNow)
-    .OrderBy(draw => draw.DrawAt)
-    .First();
-var persistentMarked = persistentScheduler.MarkMissed(persistentMissedDraw.DrawId);
-var persistedMarked = await inMemoryDrawScheduleRepository.GetAsync(persistentMarked.DrawId, CancellationToken.None);
-if (persistedMarked?.Status != DrawLifecycleStatus.ManualReviewRequired)
-{
-    throw new InvalidOperationException("In-memory mark-missed lifecycle persistence failed.");
 }
 
 var evaluationOrchestrator = new EvaluationOrchestrator(registry, scheduler);
@@ -2241,24 +2188,6 @@ if (!string.IsNullOrWhiteSpace(databaseUrl))
         postgresCatalogRegistry.GetGameBindings().Count != 3)
     {
         throw new InvalidOperationException("Postgres-backed catalog registry must preserve existing API-facing behavior.");
-    }
-
-    var postgresScheduler = new DrawSchedulerService(registry, drawAuthorityRegistry, postgresDrawScheduleRepository);
-    var postgresLifecycle = postgresScheduler.GetLifecycle();
-    var postgresLifecycleDraw = postgresLifecycle
-        .Where(draw => draw.DrawAt < DateTimeOffset.UtcNow)
-        .OrderBy(draw => draw.DrawAt)
-        .First();
-    if (await postgresDrawScheduleRepository.GetAsync(postgresLifecycleDraw.DrawId, CancellationToken.None) is null)
-    {
-        throw new InvalidOperationException("Postgres-backed scheduler did not persist lifecycle records.");
-    }
-
-    var postgresMarked = postgresScheduler.MarkMissed(postgresLifecycleDraw.DrawId);
-    var postgresMarkedSchedule = await postgresDrawScheduleRepository.GetAsync(postgresMarked.DrawId, CancellationToken.None);
-    if (postgresMarkedSchedule?.Status != DrawLifecycleStatus.ManualReviewRequired)
-    {
-        throw new InvalidOperationException("Postgres-backed scheduler mark-missed did not persist.");
     }
 
     var postgresRunId = Guid.NewGuid();

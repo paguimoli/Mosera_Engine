@@ -74,8 +74,8 @@ public static class CanonicalWalletOperationEndpoints
             if (!repository.Configured)
             {
                 return Results.Json(
-                    new ErrorResponse(
-                        new ErrorDto(CreditWalletErrorCodes.InternalError, "Canonical wallet persistence is unavailable."),
+                    new CreditWalletErrorResponse(
+                        new CreditWalletErrorDto(CreditWalletErrorCodes.InternalError, "Canonical wallet persistence is unavailable."),
                         context.GetCorrelationId()),
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
@@ -91,20 +91,20 @@ public static class CanonicalWalletOperationEndpoints
             }
             catch (CanonicalWalletOperationConflictException error)
             {
-                return Results.Conflict(new ErrorResponse(
-                    new ErrorDto(CreditWalletErrorCodes.DuplicateIdempotencyKey, error.Message),
+                return Results.Conflict(new CreditWalletErrorResponse(
+                    new CreditWalletErrorDto(CreditWalletErrorCodes.DuplicateIdempotencyKey, error.Message),
                     context.GetCorrelationId()));
             }
             catch (CanonicalWalletOperationDisabledException error)
             {
-                return Results.UnprocessableEntity(new ErrorResponse(
-                    new ErrorDto(CreditWalletErrorCodes.NotImplemented, error.Message),
+                return Results.UnprocessableEntity(new CreditWalletErrorResponse(
+                    new CreditWalletErrorDto(CreditWalletErrorCodes.NotImplemented, error.Message),
                     context.GetCorrelationId()));
             }
             catch (CanonicalWalletOperationValidationException error)
             {
-                return Results.BadRequest(new ErrorResponse(
-                    new ErrorDto(CreditWalletErrorCodes.ValidationFailed, error.Message),
+                return Results.BadRequest(new CreditWalletErrorResponse(
+                    new CreditWalletErrorDto(CreditWalletErrorCodes.ValidationFailed, error.Message),
                     context.GetCorrelationId()));
             }
             catch (Exception error) when (error is Npgsql.NpgsqlException or InvalidOperationException or TimeoutException)
@@ -112,8 +112,8 @@ public static class CanonicalWalletOperationEndpoints
                 loggerFactory.CreateLogger("CanonicalWalletOperationEndpoints")
                     .LogWarning(error, "Canonical wallet operation persistence failed.");
                 return Results.Json(
-                    new ErrorResponse(
-                        new ErrorDto(CreditWalletErrorCodes.InternalError, "Canonical wallet operation is unavailable."),
+                    new CreditWalletErrorResponse(
+                        new CreditWalletErrorDto(CreditWalletErrorCodes.InternalError, "Canonical wallet operation is unavailable."),
                         context.GetCorrelationId()),
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }

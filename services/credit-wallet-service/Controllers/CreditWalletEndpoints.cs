@@ -570,8 +570,8 @@ public static class CreditWalletEndpoints
                 },
                 cancellationToken);
 
-            return Results.BadRequest(new ErrorResponse(
-                new ErrorDto(
+            return Results.BadRequest(new CreditWalletErrorResponse(
+                new CreditWalletErrorDto(
                     CreditWalletErrorCodes.ValidationFailed,
                     error.Message),
                 correlationId));
@@ -597,8 +597,8 @@ public static class CreditWalletEndpoints
                 cancellationToken);
 
             return Results.Json(
-                new ErrorResponse(
-                    new ErrorDto(
+                new CreditWalletErrorResponse(
+                    new CreditWalletErrorDto(
                         CreditWalletErrorCodes.InternalError,
                         "Credit shadow execution failed."),
                     correlationId),
@@ -630,15 +630,15 @@ public static class CreditWalletEndpoints
         }
         catch (DurableCreditWalletDomainException error)
         {
-            return Results.BadRequest(new ErrorResponse(
-                new ErrorDto(error.Code, error.Message),
+            return Results.BadRequest(new CreditWalletErrorResponse(
+                new CreditWalletErrorDto(error.Code, error.Message),
                 context.GetCorrelationId()));
         }
         catch (Npgsql.PostgresException error)
         {
             var mapped = MapPostgresCreditError(error.MessageText);
-            return Results.BadRequest(new ErrorResponse(
-                new ErrorDto(mapped.Code, mapped.Message),
+            return Results.BadRequest(new CreditWalletErrorResponse(
+                new CreditWalletErrorDto(mapped.Code, mapped.Message),
                 context.GetCorrelationId()));
         }
         catch (Exception error) when (error is DurableCreditWalletRepositoryException or Npgsql.NpgsqlException or InvalidOperationException or TimeoutException)
@@ -648,8 +648,8 @@ public static class CreditWalletEndpoints
                 .LogWarning(error, "Credit wallet durable mutation failed.");
 
             return Results.Json(
-                new ErrorResponse(
-                    new ErrorDto(
+                new CreditWalletErrorResponse(
+                    new CreditWalletErrorDto(
                         CreditWalletErrorCodes.InternalError,
                         "Credit wallet durable mutation is unavailable."),
                     context.GetCorrelationId()),
@@ -713,8 +713,8 @@ public static class CreditWalletEndpoints
     {
         _ = service;
         return Results.Json(
-            new ErrorResponse(
-                new ErrorDto(
+            new CreditWalletErrorResponse(
+                new CreditWalletErrorDto(
                     CreditWalletErrorCodes.InternalError,
                     reason),
                 context.GetCorrelationId()),
@@ -723,8 +723,8 @@ public static class CreditWalletEndpoints
 
     private static IResult NotFound(HttpContext context, Guid playerId)
     {
-        return Results.NotFound(new ErrorResponse(
-            new ErrorDto(
+        return Results.NotFound(new CreditWalletErrorResponse(
+            new CreditWalletErrorDto(
                 CreditWalletErrorCodes.ReservationNotFound,
                 "Credit wallet was not found for the requested player.",
                 new Dictionary<string, object?>

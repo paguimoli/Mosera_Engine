@@ -50,6 +50,8 @@ public static class HealthEndpoints
             {
                 status = ready ? "ok" : "error",
                 service = configuration.ServiceName,
+                contractVersion = "1.0.0",
+                authorityOwner = "Credit Wallet Authority",
                 timestamp = DateTimeOffset.UtcNow,
                 dependencies = new
                 {
@@ -101,6 +103,8 @@ public static class HealthEndpoints
                 ready ? "ok" : "error",
                 configuration.ServiceName,
                 "0.1.0",
+                "1.0.0",
+                "Credit Wallet Authority",
                 DateTimeOffset.UtcNow,
                 dependencies,
                 new CreditWalletCapabilityDto(

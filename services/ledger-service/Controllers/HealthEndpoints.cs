@@ -54,6 +54,8 @@ public static class HealthEndpoints
             {
                 status = ready ? "ok" : "error",
                 service = configuration.ServiceName,
+                contractVersion = "1.0.0",
+                authorityOwner = "Ledger Authority",
                 timestamp = DateTimeOffset.UtcNow,
                 dependencies = new
                 {
@@ -142,6 +144,8 @@ public static class HealthEndpoints
                 ready ? "ok" : "error",
                 configuration.ServiceName,
                 "0.1.0",
+                "1.0.0",
+                "Ledger Authority",
                 DateTimeOffset.UtcNow,
                 dependencies,
                 new LedgerCapabilityMarkers(

@@ -24,14 +24,14 @@ public static class SettlementInputIngestionEndpoints
             }
             catch (SettlementInputIngestionConflictException error)
             {
-                return Results.Conflict(new ErrorResponse(
-                    new ErrorDto("SETTLEMENT_INPUT_INGESTION_CONFLICT", error.Message),
+                return Results.Conflict(new SettlementErrorResponse(
+                    new SettlementErrorDto("SETTLEMENT_INPUT_INGESTION_CONFLICT", error.Message),
                     context.GetCorrelationId()));
             }
             catch (SettlementInputIngestionValidationException error)
             {
-                return Results.BadRequest(new ErrorResponse(
-                    new ErrorDto("SETTLEMENT_INPUT_INGESTION_VALIDATION_FAILED", string.Join(" ", error.Errors)),
+                return Results.BadRequest(new SettlementErrorResponse(
+                    new SettlementErrorDto("SETTLEMENT_INPUT_INGESTION_VALIDATION_FAILED", string.Join(" ", error.Errors)),
                     context.GetCorrelationId()));
             }
             catch (Exception error) when (error is Npgsql.NpgsqlException or InvalidOperationException or TimeoutException)
@@ -41,8 +41,8 @@ public static class SettlementInputIngestionEndpoints
                     .LogWarning(error, "SettlementInput ingestion request failed.");
 
                 return Results.Json(
-                    new ErrorResponse(
-                        new ErrorDto(
+                    new SettlementErrorResponse(
+                        new SettlementErrorDto(
                             "SETTLEMENT_INPUT_INGESTION_UNAVAILABLE",
                             "SettlementInput ingestion is unavailable."),
                         context.GetCorrelationId()),

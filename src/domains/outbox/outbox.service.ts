@@ -17,6 +17,9 @@ import type {
   OutboxEvent,
 } from "./outbox.types";
 import {
+  createPostgresOutboxEvent,
+  listPendingPostgresOutboxEvents,
+  listRecentPostgresOutboxEvents,
   listDispatchablePostgresOutboxEvents,
   markPostgresOutboxEventDeadLetter,
   markPostgresOutboxEventFailed,
@@ -30,13 +33,17 @@ function shouldUseDurablePostgresOutbox() {
 export async function createOutboxEvent(
   input: CreateOutboxEventInput
 ): Promise<OutboxEvent> {
-  return createOutboxEventRecord(input);
+  return shouldUseDurablePostgresOutbox()
+    ? createPostgresOutboxEvent(input)
+    : createOutboxEventRecord(input);
 }
 
 export async function listPendingOutboxEvents(
   input: ListPendingOutboxEventsInput = {}
 ): Promise<OutboxEvent[]> {
-  return listPendingOutboxEventRecords(input);
+  return shouldUseDurablePostgresOutbox()
+    ? listPendingPostgresOutboxEvents(input)
+    : listPendingOutboxEventRecords(input);
 }
 
 export async function listDispatchableOutboxEvents(
@@ -51,7 +58,9 @@ export async function listDispatchableOutboxEvents(
 export async function listRecentOutboxEvents(
   input: ListRecentOutboxEventsInput = {}
 ): Promise<OutboxEvent[]> {
-  return listRecentOutboxEventRecords(input);
+  return shouldUseDurablePostgresOutbox()
+    ? listRecentPostgresOutboxEvents(input)
+    : listRecentOutboxEventRecords(input);
 }
 
 export async function markOutboxEventPublished(

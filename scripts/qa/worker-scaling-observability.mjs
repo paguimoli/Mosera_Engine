@@ -66,29 +66,12 @@ async function assertAdminEndpoint(path, payloadKey) {
   return payload[payloadKey];
 }
 
-async function triggerWorkerObservation() {
-  const { response, payload } = await requestJson("/api/workers/outbox-dispatch", {
-    method: "POST",
-    body: JSON.stringify({ limit: 1 }),
-  });
-
-  if (!response.ok || !payload.success) {
-    fail("Unable to trigger outbox dispatcher for worker observation.", {
-      status: response.status,
-      error: payload.error ?? "unknown",
-    });
-  }
-
-  pass("Outbox dispatcher executed for worker observation.");
-}
-
 async function main() {
   if (!sessionToken) {
     fail("QA_ADMIN_SESSION_TOKEN or OPS_ADMIN_SESSION_TOKEN is required.");
   }
 
   await assertAuthRequired();
-  await triggerWorkerObservation();
 
   const metrics = await assertAdminEndpoint("/api/operations/metrics", "metrics");
   const workers = await assertAdminEndpoint("/api/operations/workers", "workers");

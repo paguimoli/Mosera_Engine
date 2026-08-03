@@ -46,13 +46,16 @@ async function main() {
     "src/architecture/service-boundaries/service-ownership.map.ts"
   );
   check(
-    "all six core authorities have one declared owner",
-    authorityNames.length === 6 &&
-      new Set(authorityNames).size === 6 &&
+    "all Backend Freeze authorities have one declared owner and execution path",
+    authorityNames.length === 23 &&
+      new Set(authorityNames).size === 23 &&
       coreAuthorityOwnership.every(
         (ownership) =>
           ownership.canonicalOwner.length > 0 &&
-          ownership.productionBoundary.length > 0
+          ownership.registration.file.length > 0 &&
+          ownership.execution.file.length > 0 &&
+          ownership.execution.symbol.length > 0 &&
+          ownership.readiness.file.length > 0
       ),
     { authorityNames }
   );
@@ -68,13 +71,27 @@ async function main() {
       ownershipMap.includes(
         '"OPERATIONAL_SERVICE", name: "authority_approval_records"'
       ) &&
+      ownershipMap.includes(
+        '"GAME_ENGINE_SERVICE", name: "game_engine.outcome_provider_executions"'
+      ) &&
+      ownershipMap.includes(
+        '"TICKET_SERVICE", name: "ticket_authority.availability_decisions"'
+      ) &&
+      ownershipMap.includes(
+        '"OPERATIONAL_SERVICE", name: "operational_governance.change_requests"'
+      ) &&
       !ownershipMap.includes(
         '"SETTLEMENT_SERVICE", name: "tickets", kind: "future"'
       )
   );
   check(
     "authority consolidation readiness is fail-closed and complete",
-    getAuthorityConsolidationReadiness().every((item) => item.ready),
+    getAuthorityConsolidationReadiness().length === 23 &&
+      getAuthorityConsolidationReadiness().every(
+        (item) =>
+          item.ready && item.registered && item.healthy &&
+          item.productionCapable && item.governed && item.auditable
+      ),
     { readiness: getAuthorityConsolidationReadiness() }
   );
 
@@ -129,6 +146,26 @@ async function main() {
       gameEngineEndpoints.includes('MapPost("/outcome-publications"') &&
       gameEngineEndpoints.includes('MapPost("/outcome-settlement-requests"') &&
       drawWorker.includes("game_engine.outcome_settlement_requests")
+  );
+
+  const gameEngineProgram = await source(
+    "services/game-engine/src/GameEngine.Api/Program.cs"
+  );
+  const legacyDrawRegistry = await source(
+    "services/game-engine/src/GameEngine.Application/Services/DrawAuthorityRegistry.cs"
+  );
+  const legacyDrawScheduler = await source(
+    "services/game-engine/src/GameEngine.Application/Services/DrawSchedulerService.cs"
+  );
+  check(
+    "legacy Draw diagnostics cannot register or write durable authority repositories",
+      !gameEngineProgram.includes("IDrawAuthorityRepository") &&
+      !gameEngineProgram.includes("IDrawAuthorityVersionRepository") &&
+      !gameEngineProgram.includes("IDrawAuthorityAssignmentRepository") &&
+      gameEngineProgram.includes("IDrawScheduleRepository") &&
+      !legacyDrawRegistry.includes("PersistAuthoritySnapshot") &&
+      legacyDrawScheduler.includes("PersistLifecycleSnapshot") &&
+      legacyDrawScheduler.includes("PersistLifecycleRecord")
   );
 
   const ticketRoute = await source("app/api/tickets/route.ts");
@@ -187,7 +224,10 @@ async function main() {
     promotionRoute.includes('requirePermission(request, "system.admin")') &&
       promotionRoute.includes("authority-approval.service") &&
       breakGlassRoute.includes('requirePermission(request, "system.admin")') &&
-      breakGlassRoute.includes("operational-access.service")
+      breakGlassRoute.includes("operational-access.service") &&
+      authorityNames.includes("OPERATIONAL_GOVERNANCE") &&
+      authorityNames.includes("OPERATIONAL_SECURITY") &&
+      authorityNames.includes("OPERATIONAL_CHANGE")
   );
 
   const failed = checks.filter((item) => item.status === "FAIL");

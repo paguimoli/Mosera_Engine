@@ -69,6 +69,8 @@ app.MapGet("/health", () => Results.Ok(new
 {
     status = "ok",
     service = "auth-service",
+    contractVersion = "1.0.0",
+    authorityOwner = "Authentication Authority",
     productionAuthenticationEnabled = true,
     productionTokenIssuanceEnabled = true,
     nextJsCutoverEnabled = false,
@@ -79,6 +81,8 @@ app.MapGet("/health/live", () => Results.Ok(new
 {
     status = "ok",
     service = "auth-service",
+    contractVersion = "1.0.0",
+    authorityOwner = "Authentication Authority",
     check = "live",
     timestamp = DateTimeOffset.UtcNow
 }));
@@ -95,6 +99,8 @@ async Task<IResult> ReadyResult(
     {
         status = ready ? "ready" : "not_ready",
         service = "auth-service",
+        contractVersion = "1.0.0",
+        authorityOwner = "Authentication Authority",
         architectureOnly = false,
         runtimeScope = "login-session-access-token",
         productionTokenIssuanceEnabled = true,

@@ -1,7 +1,9 @@
 import { Pool, type QueryResultRow } from "pg";
 
 import type {
+  CreateOutboxEventInput,
   ListPendingOutboxEventsInput,
+  ListRecentOutboxEventsInput,
   MarkOutboxEventDeadLetterInput,
   MarkOutboxEventFailedInput,
   MarkOutboxEventPublishedInput,
@@ -37,6 +39,63 @@ function getPool() {
     max: 4,
   });
   return pool;
+}
+
+export async function createPostgresOutboxEvent(
+  input: CreateOutboxEventInput
+): Promise<OutboxEvent> {
+  const result = await getPool().query<OutboxRow>(
+    `
+insert into public.outbox_events (
+  event_type,
+  aggregate_type,
+  aggregate_id,
+  payload,
+  status,
+  correlation_id,
+  next_attempt_at
+)
+values ($1, $2, $3, $4::jsonb, 'PENDING', $5, $6)
+returning *
+`,
+    [
+      input.eventType,
+      input.aggregateType,
+      input.aggregateId,
+      JSON.stringify(input.payload ?? {}),
+      input.correlationId ?? null,
+      input.nextAttemptAt ? new Date(input.nextAttemptAt) : null,
+    ]
+  );
+  const row = result.rows[0];
+  if (!row) throw new Error("Outbox event was not persisted.");
+  return mapRow(row);
+}
+
+export async function listPendingPostgresOutboxEvents(
+  input: ListPendingOutboxEventsInput = {}
+): Promise<OutboxEvent[]> {
+  return listDispatchablePostgresOutboxEvents(input);
+}
+
+export async function listRecentPostgresOutboxEvents(
+  input: ListRecentOutboxEventsInput = {}
+): Promise<OutboxEvent[]> {
+  const limit = Math.min(Math.max(input.limit ?? 50, 1), 250);
+  const values: unknown[] = [limit];
+  const statusClause = input.status ? "where status = $2" : "";
+  if (input.status) values.push(input.status);
+  const result = await getPool().query<OutboxRow>(
+    `
+select *
+from public.outbox_events
+${statusClause}
+order by created_at desc, id desc
+limit $1
+`,
+    values
+  );
+  return result.rows.map(mapRow);
 }
 
 function mapRow(row: OutboxRow): OutboxEvent {

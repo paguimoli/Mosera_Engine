@@ -8,6 +8,7 @@ import {
 } from "@/src/domains/operations/worker-observability.service";
 import { createQueuePublisher } from "@/src/lib/queue/queue.publisher-factory";
 import type { QueuePublisher } from "@/src/lib/queue/queue.types";
+import { CANONICAL_EVENT_CONTRACT_VERSION } from "@/src/lib/queue/queue.types";
 import { resolveQueueTopologyForEvent } from "@/src/lib/queue/queue-topology";
 import {
   listDispatchableOutboxEvents,
@@ -41,10 +42,17 @@ async function publishOutboxEvent(
   await publisher.publish({
     id: event.id,
     type: event.eventType,
+    contractVersion: CANONICAL_EVENT_CONTRACT_VERSION,
     payload: event.payload,
+    idempotencyKey: event.id,
     correlationId: event.correlationId ?? null,
+    causationId:
+      typeof event.payload.causationId === "string"
+        ? event.payload.causationId
+        : null,
     aggregateType: event.aggregateType,
     aggregateId: event.aggregateId,
+    occurredAt: event.createdAt,
   });
 }
 

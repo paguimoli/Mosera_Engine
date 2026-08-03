@@ -4,7 +4,7 @@ import {
   listAuthorityApprovalRecords,
 } from "../authority-approval/authority-approval.repository";
 import type { AuthorityApprovalRecord } from "../authority-approval/authority-approval.types";
-import { createOutboxEvent } from "../outbox/outbox.repository";
+import { createOutboxEvent } from "../outbox/outbox.service";
 import { getLedgerReferenceRemediationReport } from "../platform-evidence/platform-evidence.service";
 import type {
   LedgerReferenceAuditIssue,

@@ -4,19 +4,19 @@ namespace CreditWalletService.Application;
 
 public sealed class CreditWalletContractService
 {
-    public ErrorResponse CreateNotImplementedError(string correlationId)
+    public CreditWalletErrorResponse CreateNotImplementedError(string correlationId)
     {
-        return new ErrorResponse(
-            new ErrorDto(
+        return new CreditWalletErrorResponse(
+            new CreditWalletErrorDto(
                 CreditWalletErrorCodes.NotImplemented,
                 "Credit Wallet Service contract surface is available, but production credit operations are not implemented here yet."),
             correlationId);
     }
 
-    public ErrorResponse CreateMissingIdempotencyKeyError(string correlationId)
+    public CreditWalletErrorResponse CreateMissingIdempotencyKeyError(string correlationId)
     {
-        return new ErrorResponse(
-            new ErrorDto(
+        return new CreditWalletErrorResponse(
+            new CreditWalletErrorDto(
                 CreditWalletErrorCodes.ValidationFailed,
                 "Idempotency-Key header is required for credit wallet command endpoints.",
                 new Dictionary<string, object?>
@@ -26,13 +26,13 @@ public sealed class CreditWalletContractService
             correlationId);
     }
 
-    public ErrorResponse CreateValidationError(
+    public CreditWalletErrorResponse CreateValidationError(
         string correlationId,
         string message,
         string field)
     {
-        return new ErrorResponse(
-            new ErrorDto(
+        return new CreditWalletErrorResponse(
+            new CreditWalletErrorDto(
                 CreditWalletErrorCodes.ValidationFailed,
                 message,
                 new Dictionary<string, object?>
@@ -42,21 +42,21 @@ public sealed class CreditWalletContractService
             correlationId);
     }
 
-    public bool HasPositiveMoney(MoneyDto? money)
+    public bool HasPositiveMoney(CreditWalletMoneyDto? money)
     {
         return money is not null
             && money.Amount > 0
             && IsIso4217Currency(money.Currency);
     }
 
-    public bool HasNonNegativeMoney(MoneyDto? money)
+    public bool HasNonNegativeMoney(CreditWalletMoneyDto? money)
     {
         return money is not null
             && money.Amount >= 0
             && IsIso4217Currency(money.Currency);
     }
 
-    public bool HasNonZeroMoney(MoneyDto? money)
+    public bool HasNonZeroMoney(CreditWalletMoneyDto? money)
     {
         return money is not null
             && money.Amount != 0

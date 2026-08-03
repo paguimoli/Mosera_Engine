@@ -64,12 +64,12 @@ public enum SettlementOutcome
     REFUND
 }
 
-public sealed record MoneyDto(long Amount, string Currency);
+public sealed record CreditWalletMoneyDto(long Amount, string Currency);
 
 public sealed record ReferenceDto(string? Type, string? Id);
 
 public sealed record SetCreditLimitRequest(
-    MoneyDto Limit,
+    CreditWalletMoneyDto Limit,
     string ReasonCode,
     Guid ActorId,
     string? SourceService,
@@ -79,7 +79,7 @@ public sealed record SetCreditLimitRequest(
 public sealed record AllocateCreditRequest(
     AllocationTargetType TargetType,
     Guid TargetId,
-    MoneyDto Allocation,
+    CreditWalletMoneyDto Allocation,
     string ReasonCode,
     Guid ActorId,
     string? SourceService,
@@ -87,7 +87,7 @@ public sealed record AllocateCreditRequest(
     IReadOnlyDictionary<string, object?>? Metadata);
 
 public sealed record ReallocateCreditRequest(
-    MoneyDto NewAllocation,
+    CreditWalletMoneyDto NewAllocation,
     string ReasonCode,
     Guid ActorId,
     string? SourceService,
@@ -97,7 +97,7 @@ public sealed record ReallocateCreditRequest(
 public sealed record ReserveExposureRequest(
     Guid TicketId,
     Guid? ReservationId,
-    MoneyDto Amount,
+    CreditWalletMoneyDto Amount,
     Guid? MarketId,
     Guid? DrawId,
     string? SourceService,
@@ -106,7 +106,7 @@ public sealed record ReserveExposureRequest(
 public sealed record ReleaseExposureRequest(
     Guid ReservationId,
     Guid TicketId,
-    MoneyDto ReleaseAmount,
+    CreditWalletMoneyDto ReleaseAmount,
     string ReasonCode,
     string? SourceService,
     IReadOnlyDictionary<string, object?>? Metadata);
@@ -116,15 +116,15 @@ public sealed record SettleCreditRequest(
     Guid SettlementBatchId,
     Guid ReservationId,
     Guid TicketId,
-    MoneyDto ReleaseAmount,
-    MoneyDto BalanceImpact,
+    CreditWalletMoneyDto ReleaseAmount,
+    CreditWalletMoneyDto BalanceImpact,
     SettlementOutcome Outcome,
     string? SourceService,
     IReadOnlyDictionary<string, object?>? Metadata);
 
 public sealed record AdjustCreditRequest(
     CreditAdjustmentType AdjustmentType,
-    MoneyDto Amount,
+    CreditWalletMoneyDto Amount,
     string ReasonCode,
     Guid ActorId,
     string? SourceService,
@@ -135,10 +135,10 @@ public sealed record AdjustCreditRequest(
 public sealed record CreditWalletDto(
     Guid PlayerId,
     Guid CreditWalletId,
-    MoneyDto CreditLimit,
-    MoneyDto Balance,
-    MoneyDto PendingExposure,
-    MoneyDto AvailableCredit,
+    CreditWalletMoneyDto CreditLimit,
+    CreditWalletMoneyDto Balance,
+    CreditWalletMoneyDto PendingExposure,
+    CreditWalletMoneyDto AvailableCredit,
     CreditWalletStatus Status,
     HierarchyModel HierarchyModel,
     string CorrelationId);
@@ -146,10 +146,10 @@ public sealed record CreditWalletDto(
 public sealed record CreditWalletSummaryDto(
     Guid PlayerId,
     Guid CreditWalletId,
-    MoneyDto CreditLimit,
-    MoneyDto Balance,
-    MoneyDto PendingExposure,
-    MoneyDto AvailableCredit,
+    CreditWalletMoneyDto CreditLimit,
+    CreditWalletMoneyDto Balance,
+    CreditWalletMoneyDto PendingExposure,
+    CreditWalletMoneyDto AvailableCredit,
     CreditWalletStatus Status,
     HierarchyModel HierarchyModel,
     string CorrelationId);
@@ -157,8 +157,8 @@ public sealed record CreditWalletSummaryDto(
 public sealed record CreditExposureReservationDto(
     Guid ReservationId,
     string TicketId,
-    MoneyDto Amount,
-    MoneyDto RemainingExposure,
+    CreditWalletMoneyDto Amount,
+    CreditWalletMoneyDto RemainingExposure,
     string Status,
     string? CorrelationId,
     DateTimeOffset CreatedAt);
@@ -167,11 +167,11 @@ public sealed record CreditReservationDto(
     Guid ReservationId,
     Guid PlayerId,
     string TicketId,
-    MoneyDto Amount,
-    MoneyDto ReservedAmount,
-    MoneyDto ReleasedAmount,
-    MoneyDto SettledAmount,
-    MoneyDto RemainingExposure,
+    CreditWalletMoneyDto Amount,
+    CreditWalletMoneyDto ReservedAmount,
+    CreditWalletMoneyDto ReleasedAmount,
+    CreditWalletMoneyDto SettledAmount,
+    CreditWalletMoneyDto RemainingExposure,
     string Status,
     string IdempotencyKey,
     string? CorrelationId,
@@ -187,10 +187,10 @@ public sealed record CreditSettlementApplicationDto(
     Guid PlayerId,
     string TicketId,
     string SettlementId,
-    MoneyDto ReleaseAmount,
-    MoneyDto BalanceImpact,
-    MoneyDto BalanceBefore,
-    MoneyDto BalanceAfter,
+    CreditWalletMoneyDto ReleaseAmount,
+    CreditWalletMoneyDto BalanceImpact,
+    CreditWalletMoneyDto BalanceBefore,
+    CreditWalletMoneyDto BalanceAfter,
     string OperationType,
     string IdempotencyKey,
     string? CorrelationId,
@@ -198,7 +198,7 @@ public sealed record CreditSettlementApplicationDto(
 
 public sealed record CreditExposureDto(
     Guid PlayerId,
-    MoneyDto PendingExposure,
+    CreditWalletMoneyDto PendingExposure,
     IReadOnlyList<CreditExposureReservationDto> Reservations,
     string CorrelationId);
 
@@ -206,7 +206,7 @@ public sealed record CreditWalletTransactionDto(
     string Id,
     string TransactionType,
     string TicketId,
-    MoneyDto Amount,
+    CreditWalletMoneyDto Amount,
     string Status,
     string? ReferenceId,
     string? CorrelationId,
@@ -215,16 +215,16 @@ public sealed record CreditWalletTransactionDto(
 public sealed record CreditWalletTransactionsDto(
     Guid PlayerId,
     IReadOnlyList<CreditWalletTransactionDto> Transactions,
-    PaginationDto Pagination,
+    CreditWalletPaginationDto Pagination,
     string CorrelationId);
 
 public sealed record CreditReconciliationReservationDto(
     Guid ReservationId,
     string TicketId,
-    MoneyDto ReservedAmount,
-    MoneyDto ReleasedAmount,
-    MoneyDto SettledAmount,
-    MoneyDto RemainingExposure,
+    CreditWalletMoneyDto ReservedAmount,
+    CreditWalletMoneyDto ReleasedAmount,
+    CreditWalletMoneyDto SettledAmount,
+    CreditWalletMoneyDto RemainingExposure,
     string Status,
     DateTimeOffset CreatedAt);
 
@@ -233,10 +233,10 @@ public sealed record CreditReconciliationSettlementApplicationDto(
     Guid ReservationId,
     string TicketId,
     string SettlementId,
-    MoneyDto ReleaseAmount,
-    MoneyDto BalanceImpact,
-    MoneyDto BalanceBefore,
-    MoneyDto BalanceAfter,
+    CreditWalletMoneyDto ReleaseAmount,
+    CreditWalletMoneyDto BalanceImpact,
+    CreditWalletMoneyDto BalanceBefore,
+    CreditWalletMoneyDto BalanceAfter,
     string OperationType,
     DateTimeOffset CreatedAt);
 
@@ -249,21 +249,23 @@ public sealed record CreditReconciliationDiscrepancyDto(
 public sealed record CreditWalletReconciliationDto(
     Guid PlayerId,
     Guid CreditWalletId,
-    MoneyDto Balance,
-    MoneyDto PendingExposure,
-    MoneyDto AvailableCredit,
+    CreditWalletMoneyDto Balance,
+    CreditWalletMoneyDto PendingExposure,
+    CreditWalletMoneyDto AvailableCredit,
     IReadOnlyList<CreditReconciliationReservationDto> Reservations,
     IReadOnlyList<CreditReconciliationSettlementApplicationDto> SettlementApplications,
     IReadOnlyList<CreditReconciliationDiscrepancyDto> DetectedDiscrepancies,
     string CorrelationId,
     DateTimeOffset GeneratedAtUtc);
 
-public sealed record PaginationDto(int Limit, string? NextCursor);
+public sealed record CreditWalletPaginationDto(int Limit, string? NextCursor);
 
 public sealed record CreditWalletHealthResponse(
     string Status,
     string Service,
     string Version,
+    string ContractVersion,
+    string AuthorityOwner,
     DateTimeOffset Timestamp,
     IReadOnlyDictionary<string, string> Dependencies,
     CreditWalletCapabilityDto Capabilities,
@@ -354,11 +356,11 @@ public sealed record CreditShadowExecuteResponse(
     IReadOnlyList<CreditShadowMismatchDto> Mismatches,
     string CorrelationId);
 
-public sealed record ErrorResponse(
-    ErrorDto Error,
+public sealed record CreditWalletErrorResponse(
+    CreditWalletErrorDto Error,
     string CorrelationId);
 
-public sealed record ErrorDto(
+public sealed record CreditWalletErrorDto(
     string Code,
     string Message,
     IReadOnlyDictionary<string, object?>? Details = null);

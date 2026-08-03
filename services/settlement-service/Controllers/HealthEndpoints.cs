@@ -15,6 +15,8 @@ public static class HealthEndpoints
             {
                 status = "ok",
                 service = configuration.ServiceName,
+                contractVersion = "1.0.0",
+                authorityOwner = "Settlement Authority",
                 environment = configuration.Environment,
                 timestamp = DateTimeOffset.UtcNow,
                 correlationId = context.GetCorrelationId()
@@ -27,6 +29,8 @@ public static class HealthEndpoints
             {
                 status = "ok",
                 service = configuration.ServiceName,
+                contractVersion = "1.0.0",
+                authorityOwner = "Settlement Authority",
                 timestamp = DateTimeOffset.UtcNow,
                 correlationId = context.GetCorrelationId()
             });
@@ -99,6 +103,8 @@ public static class HealthEndpoints
                 ready ? "ok" : "error",
                 configuration.ServiceName,
                 "0.1.0",
+                "1.0.0",
+                "Settlement Authority",
                 DateTimeOffset.UtcNow,
                 dependencies,
                 new SettlementPersistenceCapabilityDto(

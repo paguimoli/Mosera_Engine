@@ -1,7 +1,11 @@
 import * as amqp from "amqplib";
 import type { Channel, ChannelModel } from "amqplib";
 
-import type { QueueMessage, QueuePublisher } from "../queue.types";
+import {
+  CANONICAL_EVENT_CONTRACT_VERSION,
+  type QueueMessage,
+  type QueuePublisher,
+} from "../queue.types";
 import { getRabbitMqQueueConfig } from "./rabbitmq.config";
 import { resolveRabbitMqRouting } from "./rabbitmq.routing";
 
@@ -10,6 +14,14 @@ export class RabbitMqQueuePublisher implements QueuePublisher {
   private channel: Channel | null = null;
 
   async publish(message: QueueMessage): Promise<void> {
+    if (
+      !message.id?.trim() ||
+      message.contractVersion !== CANONICAL_EVENT_CONTRACT_VERSION ||
+      message.idempotencyKey !== message.id ||
+      !message.occurredAt
+    ) {
+      throw new Error("Canonical event envelope is incomplete or unsupported.");
+    }
     const channel = await this.getChannel();
     const config = getRabbitMqQueueConfig();
     const routing = resolveRabbitMqRouting(message.type);
@@ -43,6 +55,9 @@ export class RabbitMqQueuePublisher implements QueuePublisher {
           aggregateType: message.aggregateType ?? undefined,
           aggregateId: message.aggregateId ?? undefined,
           eventType: message.type,
+          contractVersion: message.contractVersion,
+          idempotencyKey: message.idempotencyKey,
+          causationId: message.causationId ?? undefined,
           workloadCategory: routing.workloadCategory,
         },
         messageId: message.id,

@@ -8,10 +8,7 @@ This phase is operational hardening only. It does not change authority ownership
 
 ## Root Cause
 
-The platform already had:
-
-- a one-shot authenticated outbox dispatch endpoint
-- reusable worker consumer scripts
+The platform already had reusable worker consumer scripts.
 - RabbitMQ queue topology
 - worker heartbeat persistence
 
@@ -32,6 +29,8 @@ The runtime image now contains the worker script sources needed by the existing 
 - `worker-reporting`
 
 The dispatcher uses the existing outbox dispatch service and RabbitMQ publisher. It publishes only append-only outbox events that are already eligible for dispatch.
+
+The former one-shot authenticated dispatch endpoint was retired during BF-7.3. The dedicated dispatcher container is the only production execution path; observability remains read-only through the operations endpoints.
 
 Default dispatcher settings:
 

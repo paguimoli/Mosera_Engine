@@ -168,8 +168,8 @@ public sealed class DurableLedgerService
             entry.AccountId,
             entry.TransactionType,
             entry.Direction,
-            new MoneyDto(entry.Amount, entry.CurrencyCode),
-            new MoneyDto(entry.BalanceAfter, entry.CurrencyCode),
+            new LedgerMoneyDto(entry.Amount, entry.CurrencyCode),
+            new LedgerMoneyDto(entry.BalanceAfter, entry.CurrencyCode),
             entry.ReferenceType is null && entry.ReferenceId is null
                 ? null
                 : new LedgerReferenceDto(entry.ReferenceType, entry.ReferenceId),

@@ -11,6 +11,7 @@ import {
 import { getLaunchConfigurationReadiness } from "@/src/domains/launch-configuration/launch-configuration";
 import { getPlatformMutationAuthorityChecks } from "@/src/domains/platform-management/platform-mutation-authority";
 import { getAuthorityConsolidationReadiness } from "@/src/architecture/authorities/authority-consolidation";
+import { getCrossServiceContractReadiness } from "@/src/architecture/service-boundaries/cross-service-contracts";
 import {
   getOperationalGovernanceReadiness,
   OperationalGovernanceRepositoryError,
@@ -31,6 +32,7 @@ export async function GET() {
     ]);
     const platformMutationChecks = getPlatformMutationAuthorityChecks();
     const authorityConsolidationChecks = getAuthorityConsolidationReadiness();
+    const contractIntegrity = getCrossServiceContractReadiness();
     const launchConfiguration = getLaunchConfigurationReadiness();
     const checks = [
       ...accountChecks.map((check) => ({ ...check, authority: "account" })),
@@ -93,6 +95,17 @@ export async function GET() {
           coreAuthoritiesConsolidated: authorityConsolidationChecks.every(
             (check) => check.ready
           ),
+          crossAuthorityIntegrity: authorityConsolidationChecks.every(
+            (check) =>
+              check.registered &&
+              check.healthy &&
+              check.productionCapable &&
+              check.governed &&
+              check.auditable
+          ),
+          crossServiceContractIntegrity: contractIntegrity.ready,
+          repositoryWorkerSqlIntegrity:
+            contractIntegrity.uniqueImplementations,
           operationalGovernanceAuthority: operationalChecks.every(
             (check) => check.ready
           ),
@@ -107,6 +120,8 @@ export async function GET() {
           version: launchConfiguration.version,
           fingerprint: launchConfiguration.fingerprint,
         },
+        authorityOwnership: authorityConsolidationChecks,
+        contractIntegrity,
         checks,
       },
       { status: ready ? 200 : 503 }
@@ -130,6 +145,9 @@ export async function GET() {
           canonicalPlatformMutationAuthority: false,
           legacyPlatformProductionMutationDisabled: false,
           coreAuthoritiesConsolidated: false,
+          crossAuthorityIntegrity: false,
+          crossServiceContractIntegrity: false,
+          repositoryWorkerSqlIntegrity: false,
           operationalGovernanceAuthority: false,
           operationalSecurityAuthority: false,
           operationalChangeAuthority: false,

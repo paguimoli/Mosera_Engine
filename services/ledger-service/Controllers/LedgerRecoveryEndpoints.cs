@@ -28,8 +28,8 @@ public static class LedgerRecoveryEndpoints
             }
             catch (Exception error) when (error is LedgerUnknownResultException or LedgerJournalException or LedgerRecoveryException)
             {
-                return Results.Conflict(new ErrorResponse(
-                    new ErrorDto(LedgerErrorCodes.UnknownResult, error.Message), context.GetCorrelationId()));
+                return Results.Conflict(new LedgerErrorResponse(
+                    new LedgerErrorDto(LedgerErrorCodes.UnknownResult, error.Message), context.GetCorrelationId()));
             }
         });
 

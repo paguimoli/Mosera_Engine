@@ -1,127 +1,50 @@
 # Ledger Service Contract
 
-## Purpose
+## Authority
 
-This contract defines the internal Ledger boundary that will later map to an extracted Ledger Service. Production traffic remains in the monolith in Phase 13.1.
-
-## Ownership
-
-Ledger owns:
-
-- Financial ledger posting interface.
-- Financial ledger reversal interface.
-- Ledger transaction query interface.
-- Ledger audit trail access.
-- Ledger event contract and audit traceability.
-
-Ledger does not own wallet policy, cashier lifecycle, settlement result calculation, player lifecycle, commission calculation, accounting weekly close, or authentication.
+Ledger Service owns the canonical `ledger.posting.v1` HTTP boundary. Contract
+version is `1.0.0`; service implementation version is reported separately.
+Settlement and the Financial Platform are consumers and may not redefine
+posting, reversal, balance, journal, or idempotency behavior.
 
 ## Commands
 
 ### Post Ledger Entry
 
-Internal entry point: `postLedgerEntry`
-
-Input:
-
-- `walletId`
-- `transactionType`
-- `direction`
-- `amount`
-- optional reference
-- optional `idempotencyKey`
-- optional `metadata`
-
-Output:
-
-- Immutable ledger entry with calculated `balanceAfter`.
-
-Requirements:
-
-- Amount uses integer minor units.
-- Caller does not calculate `balanceAfter`.
-- Ledger insert and wallet materialized balance update remain atomic through `post_financial_ledger_entry`.
-- Duplicate idempotency keys return the existing ledger entry as success.
-
-Events:
-
-- Existing financial outbox events where integrated by caller.
-
-Failure modes:
-
-- Invalid amount.
-- Invalid direction or transaction type.
-- Wallet not found.
-- Wallet inactive.
-- Persistence failure.
-
-Retry safety:
-
-- Safe when `idempotencyKey` is supplied.
-
-External endpoint mapping:
-
-- `POST /v1/ledger/entries`
+`POST /v1/ledger/entries` accepts the canonical `CreateLedgerEntryRequest` and
+returns `LedgerEntryResponse`. `POST /v1/ledger/entries/{id}/reverse` accepts the
+canonical reversal contract. Requests carry `Idempotency-Key` and
+`x-correlation-id`; financial instruction identity supplies causation.
 
 ### Reverse Ledger Entry
 
-Internal entry point: `reverseLedgerEntry`
+Reversal uses the same versioned Ledger boundary and returns an immutable
+opposing entry linked to the original entry and hash.
 
-Input:
+Ledger validates canonical request hashes, currency, account role, posting rule,
+and immutable references. It calculates balances and balanced journal entries
+inside its durable transaction. Callers never calculate `balanceAfter`.
 
-- `ledgerEntryId`
-- `reason`
-- optional `actorUserId`
-
-Output:
-
-- Reversal ledger entry.
-
-Requirements:
-
-- Reversals are append-only.
-- Original ledger rows are never updated or deleted.
-
-External endpoint mapping:
-
-- `POST /v1/ledger/entries/{ledgerEntryId}/reverse`
+## Queries
 
 ### Get Ledger Transaction
 
-Internal entry point: `getLedgerTransaction`
+- `GET /v1/ledger/entries/{id}` returns the immutable entry.
+- Posting request, attempt, recovery, replay, reconciliation, and audit queries
+  expose Ledger-owned evidence without transferring mutation authority.
+- `GET /v1/ledger/health` reports readiness, contract version, and authority
+  owner.
 
-Input:
+## Guarantees
 
-- `ledgerEntryId`
+- Duplicate identical idempotency requests return existing evidence.
+- Conflicting idempotency payloads fail closed.
+- Corrections use append-only reversal entries.
+- Correlation is preserved across HTTP, persistence, outbox, RabbitMQ, workers,
+  and logs.
+- Retry, recovery, and replay use the original canonical request identity.
+- Ledger owns its request and response DTOs; consumers serialize the documented
+  wire contract without defining a competing authority.
 
-Output:
-
-- Ledger entry or `null`.
-
-External endpoint mapping:
-
-- `GET /v1/ledger/entries/{ledgerEntryId}`
-
-### Get Ledger Audit Trail
-
-Internal entry point: `getLedgerAuditTrail`
-
-Input:
-
-- `ledgerEntryId`
-
-Output:
-
-- Reconstructable audit trail including source records, outbox events, and gaps.
-
-External endpoint mapping:
-
-- `GET /v1/ledger/entries/{ledgerEntryId}/audit`
-
-## Correlation And Actor Requirements
-
-Financial posting callers should supply correlation IDs through metadata or the enclosing workflow. Actor IDs should be supplied for manual adjustments and reversals when available.
-
-## Extraction Notes
-
-The first extracted Ledger Service must wrap the existing hardened SQL RPCs. It must not independently calculate balances.
+The complete service-boundary registry is maintained in
+`src/architecture/service-boundaries/cross-service-contracts.ts`.

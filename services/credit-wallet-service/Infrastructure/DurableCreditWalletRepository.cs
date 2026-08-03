@@ -209,10 +209,10 @@ from public.apply_credit_settlement(
         return new CreditWalletSummaryDto(
             resolvedPlayerId,
             walletId,
-            new MoneyDto(GetJsonInt64(root, "creditLimit"), currency),
-            new MoneyDto(GetJsonInt64(root, "balance"), currency),
-            new MoneyDto(GetJsonInt64(root, "pendingExposure"), currency),
-            new MoneyDto(GetJsonInt64(root, "availableCredit"), currency),
+            new CreditWalletMoneyDto(GetJsonInt64(root, "creditLimit"), currency),
+            new CreditWalletMoneyDto(GetJsonInt64(root, "balance"), currency),
+            new CreditWalletMoneyDto(GetJsonInt64(root, "pendingExposure"), currency),
+            new CreditWalletMoneyDto(GetJsonInt64(root, "availableCredit"), currency),
             CreditWalletStatus.ACTIVE,
             HierarchyModel.NORTH_AMERICAN,
             correlationId);
@@ -326,7 +326,7 @@ limit @limit offset @offset;
         return new CreditWalletTransactionsDto(
             summary.PlayerId,
             transactions,
-            new PaginationDto(limit, nextCursor),
+            new CreditWalletPaginationDto(limit, nextCursor),
             correlationId);
     }
 
@@ -434,8 +434,8 @@ order by created_at asc, id asc;
             reservations.Add(new CreditExposureReservationDto(
                 reader.GetGuid(0),
                 reader.GetString(1),
-                new MoneyDto(GetInt64(reader, 2), reader.GetString(3)),
-                new MoneyDto(GetInt64(reader, 4), reader.GetString(3)),
+                new CreditWalletMoneyDto(GetInt64(reader, 2), reader.GetString(3)),
+                new CreditWalletMoneyDto(GetInt64(reader, 4), reader.GetString(3)),
                 reader.GetString(5),
                 reader.IsDBNull(6) ? null : reader.GetString(6),
                 reader.GetFieldValue<DateTimeOffset>(7)));
@@ -474,10 +474,10 @@ order by created_at asc, id asc;
             reservations.Add(new CreditReconciliationReservationDto(
                 reader.GetGuid(0),
                 reader.GetString(1),
-                new MoneyDto(GetInt64(reader, 2), currency),
-                new MoneyDto(GetInt64(reader, 3), currency),
-                new MoneyDto(GetInt64(reader, 4), currency),
-                new MoneyDto(GetInt64(reader, 5), currency),
+                new CreditWalletMoneyDto(GetInt64(reader, 2), currency),
+                new CreditWalletMoneyDto(GetInt64(reader, 3), currency),
+                new CreditWalletMoneyDto(GetInt64(reader, 4), currency),
+                new CreditWalletMoneyDto(GetInt64(reader, 5), currency),
                 reader.GetString(7),
                 reader.GetFieldValue<DateTimeOffset>(8)));
         }
@@ -519,10 +519,10 @@ order by created_at asc, id asc;
                 reader.GetGuid(1),
                 reader.GetString(2),
                 reader.GetString(3),
-                new MoneyDto(GetInt64(reader, 4), currency),
-                new MoneyDto(GetInt64(reader, 5), currency),
-                new MoneyDto(GetInt64(reader, 6), currency),
-                new MoneyDto(GetInt64(reader, 7), currency),
+                new CreditWalletMoneyDto(GetInt64(reader, 4), currency),
+                new CreditWalletMoneyDto(GetInt64(reader, 5), currency),
+                new CreditWalletMoneyDto(GetInt64(reader, 6), currency),
+                new CreditWalletMoneyDto(GetInt64(reader, 7), currency),
                 reader.GetString(9),
                 reader.GetFieldValue<DateTimeOffset>(10)));
         }
@@ -628,7 +628,7 @@ order by created_at asc, id asc;
             reader.GetString(0),
             reader.GetString(1),
             reader.GetString(2),
-            new MoneyDto(GetInt64(reader, 3), currency),
+            new CreditWalletMoneyDto(GetInt64(reader, 3), currency),
             reader.GetString(4),
             reader.IsDBNull(5) ? null : reader.GetString(5),
             reader.IsDBNull(6) ? null : reader.GetString(6),
@@ -643,11 +643,11 @@ order by created_at asc, id asc;
             reader.GetGuid(0),
             reader.GetGuid(1),
             reader.GetString(2),
-            new MoneyDto(GetInt64(reader, 3), currency),
-            new MoneyDto(GetInt64(reader, 6), currency),
-            new MoneyDto(GetInt64(reader, 7), currency),
-            new MoneyDto(GetInt64(reader, 8), currency),
-            new MoneyDto(GetInt64(reader, 9), currency),
+            new CreditWalletMoneyDto(GetInt64(reader, 3), currency),
+            new CreditWalletMoneyDto(GetInt64(reader, 6), currency),
+            new CreditWalletMoneyDto(GetInt64(reader, 7), currency),
+            new CreditWalletMoneyDto(GetInt64(reader, 8), currency),
+            new CreditWalletMoneyDto(GetInt64(reader, 9), currency),
             reader.GetString(5),
             reader.GetString(10),
             reader.IsDBNull(11) ? null : reader.GetString(11),
@@ -668,10 +668,10 @@ order by created_at asc, id asc;
             reader.GetGuid(2),
             reader.GetString(3),
             reader.GetString(4),
-            new MoneyDto(GetInt64(reader, 5), currency),
-            new MoneyDto(GetInt64(reader, 6), currency),
-            new MoneyDto(GetInt64(reader, 7), currency),
-            new MoneyDto(GetInt64(reader, 9), currency),
+            new CreditWalletMoneyDto(GetInt64(reader, 5), currency),
+            new CreditWalletMoneyDto(GetInt64(reader, 6), currency),
+            new CreditWalletMoneyDto(GetInt64(reader, 7), currency),
+            new CreditWalletMoneyDto(GetInt64(reader, 9), currency),
             reader.GetString(10),
             reader.GetString(11),
             reader.IsDBNull(12) ? null : reader.GetString(12),

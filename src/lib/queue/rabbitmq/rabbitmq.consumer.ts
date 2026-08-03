@@ -8,7 +8,10 @@ import {
   safeRecordWorkerProcessingMetric,
 } from "@/src/domains/operations/worker-observability.service";
 import { logger } from "@/src/lib/observability/logger";
-import type { QueueMessage } from "../queue.types";
+import {
+  CANONICAL_EVENT_CONTRACT_VERSION,
+  type QueueMessage,
+} from "../queue.types";
 import { getRabbitMqQueueConfig } from "./rabbitmq.config";
 import type { RabbitMqRouting } from "./rabbitmq.routing";
 
@@ -121,6 +124,14 @@ export class RabbitMqQueueConsumer {
           message = JSON.parse(
             rawMessage.content.toString()
           ) as QueueMessage;
+          if (
+            !message.id?.trim() ||
+            message.contractVersion !== CANONICAL_EVENT_CONTRACT_VERSION ||
+            message.idempotencyKey !== message.id ||
+            !message.occurredAt
+          ) {
+            throw new Error("Canonical event envelope is incomplete or unsupported.");
+          }
         } catch (error) {
           const metadata = getMessageMetadata(rawMessage);
 

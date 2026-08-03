@@ -16,6 +16,8 @@ public static class GameEngineEndpoints
             {
                 status = "ok",
                 service = configuration.ServiceName,
+                contractVersion = "1.0.0",
+                authorityOwner = "Game Engine Authority",
                 environment = configuration.Environment,
                 productionGameLogicEnabled = false,
                 productionActivationConfigured = configuration.ProductionActivation.Enabled,
@@ -31,6 +33,8 @@ public static class GameEngineEndpoints
             {
                 status = "ok",
                 service = configuration.ServiceName,
+                contractVersion = "1.0.0",
+                authorityOwner = "Game Engine Authority",
                 check = "live",
                 timestamp = DateTimeOffset.UtcNow,
                 correlationId = context.GetCorrelationId()
@@ -1107,6 +1111,8 @@ public static class GameEngineEndpoints
         {
             status = ready ? "ready" : "not_ready",
             service = configuration.ServiceName,
+            contractVersion = "1.0.0",
+            authorityOwner = "Game Engine Authority",
             schema = configuration.Schema.SchemaName,
             dependencies = dependencies.ToDictionary(
                 dependency => dependency.Name,

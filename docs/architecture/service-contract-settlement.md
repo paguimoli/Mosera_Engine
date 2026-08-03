@@ -35,6 +35,8 @@ balance and credit-exposure authority.
 
 ## Canonical Flow
 
+### Execute Settlement
+
 The canonical decision path is:
 
 ```text
@@ -80,6 +82,16 @@ Ledger executes first. Credit execution is blocked until required Ledger
 evidence exists. Target calls use deterministic idempotency keys. Unknown
 results require verification before retry, and failed instructions require a
 governed retry. Settlement never writes Ledger or Credit Wallet tables.
+
+### Resume Settlement
+
+Resume and recovery continue only missing instruction work from immutable
+attempt evidence. Completed instructions are never reposted.
+
+### Apply Settlement Results
+
+Application is complete only after canonical Ledger and Credit Wallet target
+evidence is reconciled to the SettlementRecord and its instruction set.
 
 The Ledger and Credit Wallet authorities own their financial outbox events.
 Settlement owns only its decision event.

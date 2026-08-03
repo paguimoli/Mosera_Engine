@@ -56,7 +56,7 @@ public enum LedgerTransactionType
     REVERSAL
 }
 
-public sealed record MoneyDto(long Amount, string Currency);
+public sealed record LedgerMoneyDto(long Amount, string Currency);
 
 public sealed record LedgerReferenceDto(string? Type, string? Id);
 
@@ -70,7 +70,7 @@ public sealed record CreateLedgerEntryRequest(
     Guid? SettlementRecordId,
     LedgerTransactionType TransactionType,
     LedgerDirection Direction,
-    MoneyDto Money,
+    LedgerMoneyDto Money,
     int MinorUnitPrecision,
     string CanonicalRequestHash,
     DateTimeOffset EffectiveAt,
@@ -88,7 +88,7 @@ public sealed record ReverseLedgerEntryRequest(
     Guid WalletId,
     Guid LedgerAccountId,
     LedgerDirection Direction,
-    MoneyDto Money,
+    LedgerMoneyDto Money,
     string InstructionId,
     string InstructionType,
     string InstructionHash,
@@ -109,8 +109,8 @@ public sealed record LedgerEntryDto(
     Guid AccountId,
     LedgerTransactionType TransactionType,
     LedgerDirection Direction,
-    MoneyDto Money,
-    MoneyDto BalanceAfter,
+    LedgerMoneyDto Money,
+    LedgerMoneyDto BalanceAfter,
     LedgerReferenceDto? Reference,
     string? IdempotencyKey,
     string? CanonicalRequestHash,
@@ -130,15 +130,17 @@ public sealed record LedgerEntryResponse(
 
 public sealed record LedgerEntriesResponse(
     IReadOnlyList<LedgerEntryDto> Entries,
-    PaginationDto Pagination,
+    LedgerPaginationDto Pagination,
     string CorrelationId);
 
-public sealed record PaginationDto(int Limit, string? NextCursor);
+public sealed record LedgerPaginationDto(int Limit, string? NextCursor);
 
 public sealed record LedgerHealthResponse(
     string Status,
     string Service,
     string Version,
+    string ContractVersion,
+    string AuthorityOwner,
     DateTimeOffset Timestamp,
     IReadOnlyDictionary<string, string> Dependencies,
     LedgerCapabilityMarkers Capabilities,
@@ -224,7 +226,7 @@ public sealed record LedgerPostingRequestDto(
     Guid WalletId,
     Guid? LedgerAccountId,
     LedgerDirection Direction,
-    MoneyDto Money,
+    LedgerMoneyDto Money,
     int MinorUnitPrecision,
     LedgerTransactionType TransactionType,
     string IdempotencyKey,
@@ -344,11 +346,11 @@ public sealed record LedgerShadowExecuteResponse(
     IReadOnlyList<LedgerShadowMismatchDto> Mismatches,
     string CorrelationId);
 
-public sealed record ErrorResponse(
-    ErrorDto Error,
+public sealed record LedgerErrorResponse(
+    LedgerErrorDto Error,
     string CorrelationId);
 
-public sealed record ErrorDto(
+public sealed record LedgerErrorDto(
     string Code,
     string Message,
     IReadOnlyDictionary<string, object?>? Details = null);

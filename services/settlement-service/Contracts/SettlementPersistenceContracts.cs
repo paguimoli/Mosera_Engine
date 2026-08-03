@@ -280,9 +280,9 @@ public sealed record SettlementPersistenceCapabilityDto(
     bool ResettlementCapabilityPresent,
     IReadOnlyList<string> QaCapabilityMarkers);
 
-public sealed record ErrorDto(string Code, string Message);
+public sealed record SettlementErrorDto(string Code, string Message);
 
-public sealed record ErrorResponse(ErrorDto Error, string CorrelationId);
+public sealed record SettlementErrorResponse(SettlementErrorDto Error, string CorrelationId);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(IReadOnlyDictionary<string, object?>))]

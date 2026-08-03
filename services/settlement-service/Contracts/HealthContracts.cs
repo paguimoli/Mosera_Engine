@@ -4,6 +4,8 @@ public sealed record SettlementHealthResponse(
     string Status,
     string Service,
     string Version,
+    string ContractVersion,
+    string AuthorityOwner,
     DateTimeOffset Timestamp,
     IReadOnlyDictionary<string, string> Dependencies,
     SettlementPersistenceCapabilityDto Capabilities,

@@ -26,19 +26,19 @@ public sealed class LedgerContractService
             ["USD"] = 2
         };
 
-    public ErrorResponse CreateNotImplementedError(string correlationId)
+    public LedgerErrorResponse CreateNotImplementedError(string correlationId)
     {
-        return new ErrorResponse(
-            new ErrorDto(
+        return new LedgerErrorResponse(
+            new LedgerErrorDto(
                 LedgerErrorCodes.NotImplemented,
                 "Ledger Service contract surface is available, but production ledger posting is not implemented here yet."),
             correlationId);
     }
 
-    public ErrorResponse CreateMissingIdempotencyKeyError(string correlationId)
+    public LedgerErrorResponse CreateMissingIdempotencyKeyError(string correlationId)
     {
-        return new ErrorResponse(
-            new ErrorDto(
+        return new LedgerErrorResponse(
+            new LedgerErrorDto(
                 LedgerErrorCodes.ValidationFailed,
                 "Idempotency-Key header is required for ledger command endpoints.",
                 new Dictionary<string, object?>
@@ -48,13 +48,13 @@ public sealed class LedgerContractService
             correlationId);
     }
 
-    public ErrorResponse CreateValidationError(
+    public LedgerErrorResponse CreateValidationError(
         string correlationId,
         string message,
         string field)
     {
-        return new ErrorResponse(
-            new ErrorDto(
+        return new LedgerErrorResponse(
+            new LedgerErrorDto(
                 LedgerErrorCodes.ValidationFailed,
                 message,
                 new Dictionary<string, object?>
@@ -64,7 +64,7 @@ public sealed class LedgerContractService
             correlationId);
     }
 
-    public bool HasValidMoney(MoneyDto? money)
+    public bool HasValidMoney(LedgerMoneyDto? money)
     {
         return money is not null
             && money.Amount > 0

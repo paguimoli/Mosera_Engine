@@ -72,9 +72,6 @@ builder.Services.AddSingleton<GameEngineProductionActivationAuthority>();
 if (string.IsNullOrWhiteSpace(databaseUrl))
 {
     builder.Services.AddSingleton<IDrawScheduleRepository, InMemoryDrawScheduleRepository>();
-    builder.Services.AddSingleton<IDrawAuthorityRepository, InMemoryDrawAuthorityRepository>();
-    builder.Services.AddSingleton<IDrawAuthorityVersionRepository, InMemoryDrawAuthorityVersionRepository>();
-    builder.Services.AddSingleton<IDrawAuthorityAssignmentRepository, InMemoryDrawAuthorityAssignmentRepository>();
     builder.Services.AddSingleton<IGameModuleRepository, InMemoryGameModuleRepository>();
     builder.Services.AddSingleton<IGameModuleVersionRepository, InMemoryGameModuleVersionRepository>();
     builder.Services.AddSingleton<IGameDefinitionRepository, InMemoryGameDefinitionRepository>();
@@ -102,9 +99,6 @@ if (string.IsNullOrWhiteSpace(databaseUrl))
 else
 {
     builder.Services.AddSingleton<IDrawScheduleRepository>(_ => new PostgresDrawScheduleRepository(databaseUrl));
-    builder.Services.AddSingleton<IDrawAuthorityRepository>(_ => new PostgresDrawAuthorityRepository(databaseUrl));
-    builder.Services.AddSingleton<IDrawAuthorityVersionRepository>(_ => new PostgresDrawAuthorityVersionRepository(databaseUrl));
-    builder.Services.AddSingleton<IDrawAuthorityAssignmentRepository>(_ => new PostgresDrawAuthorityAssignmentRepository(databaseUrl));
     builder.Services.AddSingleton<IGameModuleRepository>(_ => new PostgresGameModuleRepository(databaseUrl));
     builder.Services.AddSingleton<IGameModuleVersionRepository>(_ => new PostgresGameModuleVersionRepository(databaseUrl));
     builder.Services.AddSingleton<IGameDefinitionRepository>(_ => new PostgresGameDefinitionRepository(databaseUrl));

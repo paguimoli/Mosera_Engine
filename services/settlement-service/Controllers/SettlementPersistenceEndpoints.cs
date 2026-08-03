@@ -27,8 +27,8 @@ public static class SettlementPersistenceEndpoints
             var validationErrors = ValidateResettlement(request);
             if (validationErrors.Count > 0)
             {
-                return Results.BadRequest(new ErrorResponse(
-                    new ErrorDto("SETTLEMENT_RESETTLEMENT_VALIDATION_FAILED", string.Join(" ", validationErrors)),
+                return Results.BadRequest(new SettlementErrorResponse(
+                    new SettlementErrorDto("SETTLEMENT_RESETTLEMENT_VALIDATION_FAILED", string.Join(" ", validationErrors)),
                     context.GetCorrelationId()));
             }
 
@@ -37,8 +37,8 @@ public static class SettlementPersistenceEndpoints
                 var originalRun = await repository.GetRunAsync(request.OriginalRunId.Trim(), context.RequestAborted);
                 if (originalRun is null || originalRun.Status != "completed")
                 {
-                    return Results.NotFound(new ErrorResponse(
-                        new ErrorDto("SETTLEMENT_ORIGINAL_RUN_NOT_FOUND", "Original completed settlement run was not found."),
+                    return Results.NotFound(new SettlementErrorResponse(
+                        new SettlementErrorDto("SETTLEMENT_ORIGINAL_RUN_NOT_FOUND", "Original completed settlement run was not found."),
                         context.GetCorrelationId()));
                 }
 
@@ -165,8 +165,8 @@ public static class SettlementPersistenceEndpoints
             }
             catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.UniqueViolation)
             {
-                return Results.Conflict(new ErrorResponse(
-                    new ErrorDto("SETTLEMENT_RESETTLEMENT_DUPLICATE_SCOPE", error.MessageText),
+                return Results.Conflict(new SettlementErrorResponse(
+                    new SettlementErrorDto("SETTLEMENT_RESETTLEMENT_DUPLICATE_SCOPE", error.MessageText),
                     context.GetCorrelationId()));
             }
             catch (Exception error) when (error is DurableSettlementRepositoryException or SettlementIntegrationException or NpgsqlException or TimeoutException or InvalidOperationException)
@@ -176,8 +176,8 @@ public static class SettlementPersistenceEndpoints
                     .LogWarning(error, "Settlement durable resettlement dry-run request failed.");
 
                 return Results.Json(
-                    new ErrorResponse(
-                        new ErrorDto(
+                    new SettlementErrorResponse(
+                        new SettlementErrorDto(
                             "SETTLEMENT_RESETTLEMENT_UNAVAILABLE",
                             "Settlement durable resettlement dry run is unavailable."),
                         context.GetCorrelationId()),
@@ -199,8 +199,8 @@ public static class SettlementPersistenceEndpoints
             var validationErrors = ValidateRun(request);
             if (validationErrors.Count > 0)
             {
-                return Results.BadRequest(new ErrorResponse(
-                    new ErrorDto("SETTLEMENT_VALIDATION_FAILED", string.Join(" ", validationErrors)),
+                return Results.BadRequest(new SettlementErrorResponse(
+                    new SettlementErrorDto("SETTLEMENT_VALIDATION_FAILED", string.Join(" ", validationErrors)),
                     context.GetCorrelationId()));
             }
 
@@ -222,14 +222,14 @@ public static class SettlementPersistenceEndpoints
             }
             catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.UniqueViolation)
             {
-                return Results.Conflict(new ErrorResponse(
-                    new ErrorDto("SETTLEMENT_DUPLICATE_COMPLETED_SCOPE", error.MessageText),
+                return Results.Conflict(new SettlementErrorResponse(
+                    new SettlementErrorDto("SETTLEMENT_DUPLICATE_COMPLETED_SCOPE", error.MessageText),
                     context.GetCorrelationId()));
             }
             catch (PostgresException error)
             {
-                return Results.BadRequest(new ErrorResponse(
-                    new ErrorDto("SETTLEMENT_PERSISTENCE_REJECTED", error.MessageText),
+                return Results.BadRequest(new SettlementErrorResponse(
+                    new SettlementErrorDto("SETTLEMENT_PERSISTENCE_REJECTED", error.MessageText),
                     context.GetCorrelationId()));
             }
             catch (Exception error) when (error is DurableSettlementRepositoryException or NpgsqlException or TimeoutException or InvalidOperationException)
@@ -239,8 +239,8 @@ public static class SettlementPersistenceEndpoints
                     .LogWarning(error, "Settlement durable persistence request failed.");
 
                 return Results.Json(
-                    new ErrorResponse(
-                        new ErrorDto(
+                    new SettlementErrorResponse(
+                        new SettlementErrorDto(
                             "SETTLEMENT_PERSISTENCE_UNAVAILABLE",
                             "Settlement durable persistence is unavailable."),
                         context.GetCorrelationId()),
@@ -300,8 +300,8 @@ public static class SettlementPersistenceEndpoints
             var validationErrors = ValidateExecution(request);
             if (validationErrors.Count > 0)
             {
-                return Results.BadRequest(new ErrorResponse(
-                    new ErrorDto("SETTLEMENT_EXECUTION_VALIDATION_FAILED", string.Join(" ", validationErrors)),
+                return Results.BadRequest(new SettlementErrorResponse(
+                    new SettlementErrorDto("SETTLEMENT_EXECUTION_VALIDATION_FAILED", string.Join(" ", validationErrors)),
                     context.GetCorrelationId()));
             }
 
@@ -310,8 +310,8 @@ public static class SettlementPersistenceEndpoints
                 var existingRun = await repository.GetRunAsync(id, context.RequestAborted);
                 if (existingRun is null)
                 {
-                    return Results.NotFound(new ErrorResponse(
-                        new ErrorDto("SETTLEMENT_RUN_NOT_FOUND", "Settlement run was not found."),
+                    return Results.NotFound(new SettlementErrorResponse(
+                        new SettlementErrorDto("SETTLEMENT_RUN_NOT_FOUND", "Settlement run was not found."),
                         context.GetCorrelationId()));
                 }
 
@@ -351,14 +351,14 @@ public static class SettlementPersistenceEndpoints
             }
             catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.UniqueViolation)
             {
-                return Results.Conflict(new ErrorResponse(
-                    new ErrorDto("SETTLEMENT_DUPLICATE_COMPLETED_SCOPE", error.MessageText),
+                return Results.Conflict(new SettlementErrorResponse(
+                    new SettlementErrorDto("SETTLEMENT_DUPLICATE_COMPLETED_SCOPE", error.MessageText),
                     context.GetCorrelationId()));
             }
             catch (PostgresException error)
             {
-                return Results.BadRequest(new ErrorResponse(
-                    new ErrorDto("SETTLEMENT_PERSISTENCE_REJECTED", error.MessageText),
+                return Results.BadRequest(new SettlementErrorResponse(
+                    new SettlementErrorDto("SETTLEMENT_PERSISTENCE_REJECTED", error.MessageText),
                     context.GetCorrelationId()));
             }
             catch (SettlementTargetRejectedException error)
@@ -375,8 +375,8 @@ public static class SettlementPersistenceEndpoints
                     ? error.StatusCode
                     : StatusCodes.Status502BadGateway;
                 return Results.Json(
-                    new ErrorResponse(
-                        new ErrorDto(
+                    new SettlementErrorResponse(
+                        new SettlementErrorDto(
                             "SETTLEMENT_INTEGRATION_TARGET_REJECTED",
                             $"{error.TargetService} rejected the canonical settlement request."),
                         context.GetCorrelationId()),
@@ -389,8 +389,8 @@ public static class SettlementPersistenceEndpoints
                     .LogWarning(error, "Settlement durable execution dry-run request failed.");
 
                 return Results.Json(
-                    new ErrorResponse(
-                        new ErrorDto(
+                    new SettlementErrorResponse(
+                        new SettlementErrorDto(
                             "SETTLEMENT_EXECUTION_UNAVAILABLE",
                             "Settlement durable execution dry run is unavailable."),
                         context.GetCorrelationId()),
@@ -415,8 +415,8 @@ public static class SettlementPersistenceEndpoints
             var validationErrors = ValidateExecution(ToExecuteRequest(request));
             if (validationErrors.Count > 0)
             {
-                return Results.BadRequest(new ErrorResponse(
-                    new ErrorDto("SETTLEMENT_RESUME_VALIDATION_FAILED", string.Join(" ", validationErrors)),
+                return Results.BadRequest(new SettlementErrorResponse(
+                    new SettlementErrorDto("SETTLEMENT_RESUME_VALIDATION_FAILED", string.Join(" ", validationErrors)),
                     context.GetCorrelationId()));
             }
 
@@ -427,8 +427,8 @@ public static class SettlementPersistenceEndpoints
                 runForFailure = existingRun;
                 if (existingRun is null)
                 {
-                    return Results.NotFound(new ErrorResponse(
-                        new ErrorDto("SETTLEMENT_RUN_NOT_FOUND", "Settlement run was not found."),
+                    return Results.NotFound(new SettlementErrorResponse(
+                        new SettlementErrorDto("SETTLEMENT_RUN_NOT_FOUND", "Settlement run was not found."),
                         context.GetCorrelationId()));
                 }
 
@@ -444,8 +444,8 @@ public static class SettlementPersistenceEndpoints
 
                 if (!IsStateConsistent(request.TicketLines, existingRecords, existingEffects, out var inconsistencyReason))
                 {
-                    return Results.Conflict(new ErrorResponse(
-                        new ErrorDto("SETTLEMENT_RESUME_INCONSISTENT_STATE", inconsistencyReason),
+                    return Results.Conflict(new SettlementErrorResponse(
+                        new SettlementErrorDto("SETTLEMENT_RESUME_INCONSISTENT_STATE", inconsistencyReason),
                         context.GetCorrelationId()));
                 }
 
@@ -527,8 +527,8 @@ public static class SettlementPersistenceEndpoints
             }
             catch (PostgresException error)
             {
-                return Results.BadRequest(new ErrorResponse(
-                    new ErrorDto("SETTLEMENT_RESUME_PERSISTENCE_REJECTED", error.MessageText),
+                return Results.BadRequest(new SettlementErrorResponse(
+                    new SettlementErrorDto("SETTLEMENT_RESUME_PERSISTENCE_REJECTED", error.MessageText),
                     context.GetCorrelationId()));
             }
             catch (Exception error) when (error is DurableSettlementRepositoryException or SettlementIntegrationException or NpgsqlException or TimeoutException or InvalidOperationException)
@@ -543,8 +543,8 @@ public static class SettlementPersistenceEndpoints
                     .LogWarning(error, "Settlement durable resume request failed.");
 
                 return Results.Json(
-                    new ErrorResponse(
-                        new ErrorDto(
+                    new SettlementErrorResponse(
+                        new SettlementErrorDto(
                             "SETTLEMENT_RESUME_UNAVAILABLE",
                             "Settlement durable resume is unavailable."),
                         context.GetCorrelationId()),
@@ -594,8 +594,8 @@ public static class SettlementPersistenceEndpoints
 
             var run = await repository.GetRunAsync(id, context.RequestAborted);
             return run is null
-                ? Results.NotFound(new ErrorResponse(
-                    new ErrorDto("SETTLEMENT_RUN_NOT_FOUND", "Settlement run was not found."),
+                ? Results.NotFound(new SettlementErrorResponse(
+                    new SettlementErrorDto("SETTLEMENT_RUN_NOT_FOUND", "Settlement run was not found."),
                     context.GetCorrelationId()))
                 : Results.Ok(new
                 {
@@ -626,8 +626,8 @@ public static class SettlementPersistenceEndpoints
     private static IResult DurablePersistenceUnavailable(HttpContext context)
     {
         return Results.Json(
-            new ErrorResponse(
-                new ErrorDto(
+            new SettlementErrorResponse(
+                new SettlementErrorDto(
                     "SETTLEMENT_DURABLE_PERSISTENCE_DISABLED",
                     "Settlement durable persistence is not configured."),
                 context.GetCorrelationId()),
