@@ -80,6 +80,13 @@ const ownedResources = [
   { owner: "SETTLEMENT_SERVICE", name: "settlement_service.resettlement_requests", kind: "table" },
 
   { owner: "OPERATIONAL_SERVICE", name: "authority_approval_records", kind: "table" },
+  { owner: "OPERATIONAL_SERVICE", name: "operational_governance.policy_versions", kind: "table" },
+  { owner: "OPERATIONAL_SERVICE", name: "operational_governance.commands", kind: "table" },
+  { owner: "OPERATIONAL_SERVICE", name: "operational_governance.command_approvals", kind: "table" },
+  { owner: "OPERATIONAL_SERVICE", name: "operational_governance.command_events", kind: "table" },
+  { owner: "OPERATIONAL_SERVICE", name: "operational_governance.execution_evidence", kind: "table" },
+  { owner: "OPERATIONAL_SERVICE", name: "operational_governance.request_command", kind: "rpc" },
+  { owner: "OPERATIONAL_SERVICE", name: "operational_governance.authorize_command", kind: "rpc" },
 
   { owner: "PAM_SERVICE", name: "pam_transactions", kind: "future" },
   { owner: "PAM_SERVICE", name: "pam_balance_snapshots", kind: "future" },

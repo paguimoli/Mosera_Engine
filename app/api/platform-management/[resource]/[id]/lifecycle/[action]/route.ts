@@ -13,6 +13,10 @@ import {
   type PlatformLifecycleAction,
 } from "@/src/domains/platform-management/platform-management.repository";
 import { errorJson, readObjectBody, successJson } from "../../../../api.helpers";
+import {
+  executeGovernedOperation,
+  resolveOperationalRequestMetadata,
+} from "@/src/domains/operational-governance/operational-governance.service";
 
 export const runtime = "nodejs";
 
@@ -67,19 +71,37 @@ export async function POST(request: Request, { params }: RouteParams) {
     assertPlatformResourceScope(authorization, resource, "create", scope);
 
     const body = await readObjectBody(request);
-    const result = await performPlatformLifecycleAction(
-      resource,
-      id,
-      action,
-      withPlatformMutationAudit(
-        body,
-        request,
-        authorization,
+    const metadata = resolveOperationalRequestMetadata(
+      request,
+      body,
+      "PLATFORM_LIFECYCLE",
+      `${action} ${resource}`
+    );
+    const governed = await executeGovernedOperation(
+      {
+        authContext: authorization.authContext,
+        commandType: "PLATFORM_LIFECYCLE",
+        affectedAuthority: "PLATFORM",
+        targetType: resource,
+        targetId: id,
+        ...metadata,
+        payload: { resource, id, action, scope: scope ?? {} },
+      },
+      () => performPlatformLifecycleAction(
         resource,
+        id,
         action,
-        scope
+        withPlatformMutationAudit(
+          body,
+          request,
+          authorization,
+          resource,
+          action,
+          scope
+        )
       )
     );
+    const result = governed.result;
 
     if (!result) {
       return Response.json(
@@ -103,6 +125,8 @@ export async function POST(request: Request, { params }: RouteParams) {
         previous: result.previous,
         [platformResourceResponseKey(resource)]: result.current,
         lifecycleEvents,
+        operationalCommandId: governed.command.commandId,
+        idempotent: governed.idempotent,
       },
       201
     );

@@ -78,10 +78,11 @@ export const coreAuthorityOwnership: readonly CoreAuthorityOwnership[] = [
   },
   {
     authority: "OPERATIONAL",
-    canonicalOwner: "Authenticated operational command and approval services",
+    canonicalOwner: "Canonical Operational Governance Authority",
     productionBoundary: [
-      "src/domains/operational-access/operational-access.service.ts",
-      "src/domains/authority-approval/authority-approval.service.ts",
+      "src/domains/operational-governance/operational-governance.service.ts",
+      "operational_governance.request_command",
+      "operational_governance.authorize_command",
     ],
     retainedCompatibility: [
       "Read-only authority rehearsal, shadow, and promotion evidence",

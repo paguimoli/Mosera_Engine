@@ -8,6 +8,10 @@ import {
   certifyLedgerAuthority,
   LedgerAuthorityValidationError,
 } from "@/src/domains/ledger-authority/ledger-authority.service";
+import {
+  executeGovernedOperation,
+  resolveOperationalRequestMetadata,
+} from "@/src/domains/operational-governance/operational-governance.service";
 import { logger } from "@/src/lib/observability/logger";
 
 export const runtime = "nodejs";
@@ -51,12 +55,27 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const result = await certifyLedgerAuthority({
-      actor: authContext.user,
-      justification: body.justification,
-      acknowledgedWarnings: body.acknowledgedWarnings,
-      correlationId: body.correlationId,
-    });
+    const metadata = resolveOperationalRequestMetadata(
+      request, body, "AUTHORITY_CERTIFICATION_CAPTURE", "Ledger authority certification"
+    );
+    const governed = await executeGovernedOperation(
+      {
+        authContext,
+        commandType: "AUTHORITY_CERTIFICATION_CAPTURE",
+        affectedAuthority: "LEDGER",
+        targetType: "CERTIFICATION",
+        targetId: "LEDGER",
+        ...metadata,
+        payload: { acknowledgedWarnings: body.acknowledgedWarnings },
+      },
+      () => certifyLedgerAuthority({
+        actor: authContext.user,
+        justification: body.justification,
+        acknowledgedWarnings: body.acknowledgedWarnings,
+        correlationId: metadata.correlationId,
+      })
+    );
+    const result = governed.result;
 
     return NextResponse.json({
       success: true,
@@ -64,6 +83,8 @@ export async function POST(request: Request) {
       idempotent: result.idempotent,
       stabilizationBefore: result.stabilizationBefore,
       stabilizationAfter: result.stabilizationAfter,
+      operationalCommandId: governed.command.commandId,
+      operationalIdempotent: governed.idempotent,
     });
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {

@@ -11,14 +11,19 @@ import {
 import { getLaunchConfigurationReadiness } from "@/src/domains/launch-configuration/launch-configuration";
 import { getPlatformMutationAuthorityChecks } from "@/src/domains/platform-management/platform-mutation-authority";
 import { getAuthorityConsolidationReadiness } from "@/src/architecture/authorities/authority-consolidation";
+import {
+  getOperationalGovernanceReadiness,
+  OperationalGovernanceRepositoryError,
+} from "@/src/domains/operational-governance/operational-governance.repository";
 
 export const runtime = "nodejs";
 
 export async function GET() {
   try {
-    const [accountChecks, ticketChecks] = await Promise.all([
+    const [accountChecks, ticketChecks, operationalChecks] = await Promise.all([
       getAccountScopeReadiness(),
       getTicketReadiness(),
+      getOperationalGovernanceReadiness(),
     ]);
     const platformMutationChecks = getPlatformMutationAuthorityChecks();
     const authorityConsolidationChecks = getAuthorityConsolidationReadiness();
@@ -26,6 +31,10 @@ export async function GET() {
     const checks = [
       ...accountChecks.map((check) => ({ ...check, authority: "account" })),
       ...ticketChecks.map((check) => ({ ...check, authority: "ticket" })),
+      ...operationalChecks.map((check) => ({
+        ...check,
+        authority: "operational-governance",
+      })),
       ...platformMutationChecks.map((check) => ({
         ...check,
         authority: "platform-mutation",
@@ -70,6 +79,9 @@ export async function GET() {
           coreAuthoritiesConsolidated: authorityConsolidationChecks.every(
             (check) => check.ready
           ),
+          operationalGovernanceAuthority: operationalChecks.every(
+            (check) => check.ready
+          ),
           launchConfigurationFrozen: launchConfiguration.ready,
           creditOnlyLaunch: process.env.CREDIT_ONLY_LAUNCH_ENABLED === "true",
           cashierLaunchDisabled: process.env.CASHIER_LAUNCH_ENABLED === "false",
@@ -102,13 +114,15 @@ export async function GET() {
           canonicalPlatformMutationAuthority: false,
           legacyPlatformProductionMutationDisabled: false,
           coreAuthoritiesConsolidated: false,
+          operationalGovernanceAuthority: false,
           launchConfigurationFrozen: false,
           creditOnlyLaunch: false,
           cashierLaunchDisabled: false,
         },
         error:
           error instanceof AccountRepositoryError ||
-          error instanceof CanonicalTicketRepositoryError
+          error instanceof CanonicalTicketRepositoryError ||
+          error instanceof OperationalGovernanceRepositoryError
             ? error.message
             : "Application readiness failed.",
       },

@@ -8,6 +8,10 @@ import {
   captureLedgerReferenceRemediationApproval,
   LedgerReferenceRemediationValidationError,
 } from "@/src/domains/ledger-reference-remediation/ledger-reference-remediation.service";
+import {
+  executeGovernedOperation,
+  resolveOperationalRequestMetadata,
+} from "@/src/domains/operational-governance/operational-governance.service";
 import { logger } from "@/src/lib/observability/logger";
 
 export const runtime = "nodejs";
@@ -31,13 +35,34 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const result = await captureLedgerReferenceRemediationApproval({
-      actor: authContext.user,
-      remediationId: body.remediationId,
-      remediationDecision: body.remediationDecision,
-      justification: body.justification,
-      correlationId: body.correlationId,
-    });
+    const metadata = resolveOperationalRequestMetadata(
+      request,
+      body,
+      "LEDGER_REMEDIATION_APPROVAL_CAPTURE",
+      "Ledger reference remediation approval"
+    );
+    const governed = await executeGovernedOperation(
+      {
+        authContext,
+        commandType: "LEDGER_REMEDIATION_APPROVAL_CAPTURE",
+        affectedAuthority: "LEDGER",
+        targetType: "LEDGER_REMEDIATION",
+        targetId: String(body.remediationId ?? "UNKNOWN"),
+        ...metadata,
+        payload: {
+          remediationId: body.remediationId,
+          remediationDecision: body.remediationDecision,
+        },
+      },
+      () => captureLedgerReferenceRemediationApproval({
+        actor: authContext.user,
+        remediationId: body.remediationId,
+        remediationDecision: body.remediationDecision,
+        justification: body.justification,
+        correlationId: metadata.correlationId,
+      })
+    );
+    const result = governed.result;
 
     return NextResponse.json({
       success: true,
@@ -46,6 +71,8 @@ export async function POST(request: Request) {
       idempotent: result.idempotent,
       candidateBefore: result.candidateBefore,
       candidateAfter: result.candidateAfter,
+      operationalCommandId: governed.command.commandId,
+      operationalIdempotent: governed.idempotent,
     });
   } catch (error) {
     if (error instanceof AuthMiddlewareError) return authErrorResponse(error);

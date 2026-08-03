@@ -1486,6 +1486,28 @@ addCheck(
   "ticket_platform_readiness_function",
   functionExists("ticket_authority", "ticket_platform_readiness")
 );
+for (const table of [
+  "policy_versions",
+  "commands",
+  "command_approvals",
+  "command_events",
+  "execution_evidence",
+]) {
+  addCheck(
+    `operational_governance_table:${table}`,
+    existsRegclass(`operational_governance.${table}`)
+  );
+  addCheck(
+    `operational_governance_immutable:${table}`,
+    triggerExists("operational_governance", table, `trg_${table}_immutable`)
+  );
+}
+for (const operation of ["request_command", "authorize_command", "readiness"]) {
+  addCheck(
+    `operational_governance_function:${operation}`,
+    functionExists("operational_governance", operation)
+  );
+}
 addCheck(
   "ticket_execution_manifest_lineage_column",
   columnExists("ticket_authority", "tickets", "execution_manifest_id")

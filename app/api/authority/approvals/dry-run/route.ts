@@ -8,6 +8,10 @@ import {
   approveAuthorityDryRun,
   AuthorityApprovalValidationError,
 } from "@/src/domains/authority-approval/authority-approval.service";
+import {
+  executeGovernedOperation,
+  resolveOperationalRequestMetadata,
+} from "@/src/domains/operational-governance/operational-governance.service";
 import { logger } from "@/src/lib/observability/logger";
 
 export const runtime = "nodejs";
@@ -40,13 +44,31 @@ export async function POST(request: Request) {
   try {
     const authContext = await requirePermission(request, "system.admin");
     const body = await request.json().catch(() => ({}));
-    const result = await approveAuthorityDryRun({
-      actor: authContext.user,
-      domain: body.domain,
-      justification: body.justification,
-      acknowledgedWarnings: body.acknowledgedWarnings,
-      correlationId: body.correlationId,
-    });
+    const metadata = resolveOperationalRequestMetadata(
+      request, body, "AUTHORITY_APPROVAL_CAPTURE", "Authority dry-run approval"
+    );
+    const governed = await executeGovernedOperation(
+      {
+        authContext,
+        commandType: "AUTHORITY_APPROVAL_CAPTURE",
+        affectedAuthority: String(body.domain ?? "UNKNOWN"),
+        targetType: "DRY_RUN_APPROVAL",
+        targetId: String(body.domain ?? "UNKNOWN"),
+        ...metadata,
+        payload: {
+          domain: body.domain,
+          acknowledgedWarnings: body.acknowledgedWarnings,
+        },
+      },
+      () => approveAuthorityDryRun({
+        actor: authContext.user,
+        domain: body.domain,
+        justification: body.justification,
+        acknowledgedWarnings: body.acknowledgedWarnings,
+        correlationId: metadata.correlationId,
+      })
+    );
+    const result = governed.result;
 
     return NextResponse.json({
       success: true,
@@ -54,6 +76,8 @@ export async function POST(request: Request) {
       idempotent: result.idempotent,
       promotionDecisionBefore: result.promotionDecisionBefore,
       promotionDecisionAfter: result.promotionDecisionAfter,
+      operationalCommandId: governed.command.commandId,
+      operationalIdempotent: governed.idempotent,
     });
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {

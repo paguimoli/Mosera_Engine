@@ -8,6 +8,10 @@ import {
   OperationalAccessError,
   restoreBreakGlassAccount,
 } from "@/src/domains/operational-access/operational-access.service";
+import {
+  executeGovernedOperation,
+  resolveOperationalRequestMetadata,
+} from "@/src/domains/operational-governance/operational-governance.service";
 
 export const runtime = "nodejs";
 
@@ -30,10 +34,29 @@ export async function POST(request: Request, { params }: RouteParams) {
     const actor = await requirePermission(request, "system.admin");
     const { userId } = await params;
 
-    await restoreBreakGlassAccount({ userId, actor });
+    const metadata = resolveOperationalRequestMetadata(
+      request, {}, "BREAK_GLASS_LIFECYCLE", "Restore break-glass account"
+    );
+    const governed = await executeGovernedOperation(
+      {
+        authContext: actor,
+        commandType: "BREAK_GLASS_LIFECYCLE",
+        affectedAuthority: "AUTHENTICATION",
+        targetType: "BREAK_GLASS_ACCOUNT",
+        targetId: userId,
+        ...metadata,
+        payload: { action: "RESTORE", userId },
+      },
+      async () => {
+        await restoreBreakGlassAccount({ userId, actor });
+        return { userId, status: "ACTIVE" };
+      }
+    );
 
     return NextResponse.json({
       success: true,
+      operationalCommandId: governed.command.commandId,
+      idempotent: governed.idempotent,
     });
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {

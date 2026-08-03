@@ -9,6 +9,10 @@ import {
   promoteSettlementAuthority,
   PromotionExecutionValidationError,
 } from "@/src/domains/promotion-execution/promotion-execution.service";
+import {
+  executeGovernedOperation,
+  resolveOperationalRequestMetadata,
+} from "@/src/domains/operational-governance/operational-governance.service";
 import { logger } from "@/src/lib/observability/logger";
 
 export const runtime = "nodejs";
@@ -39,15 +43,28 @@ export async function POST(request: Request) {
     const authContext = await requirePermission(request, "system.admin");
     const body = await request.json().catch(() => ({}));
     const domain = parsePromotionExecutionDomain(body.domain);
-    const promotion = await promoteSettlementAuthority({
-      actor: authContext.user,
-      domain,
-      correlationId: body.correlationId,
-    });
+    const metadata = resolveOperationalRequestMetadata(
+      request, body, "AUTHORITY_PROMOTION_EXECUTION", "Settlement authority promotion"
+    );
+    const governed = await executeGovernedOperation(
+      {
+        authContext,
+        commandType: "AUTHORITY_PROMOTION_EXECUTION",
+        affectedAuthority: "SETTLEMENT",
+        targetType: "AUTHORITY",
+        targetId: domain,
+        ...metadata,
+        payload: { domain },
+      },
+      () => promoteSettlementAuthority({ actor: authContext.user, domain, correlationId: metadata.correlationId })
+    );
+    const promotion = governed.result;
 
     return NextResponse.json({
       success: true,
       promotion,
+      operationalCommandId: governed.command.commandId,
+      idempotent: governed.idempotent,
     });
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {

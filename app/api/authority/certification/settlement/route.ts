@@ -8,6 +8,10 @@ import {
   certifySettlementAuthority,
   SettlementStabilizationValidationError,
 } from "@/src/domains/settlement-stabilization/settlement-stabilization.service";
+import {
+  executeGovernedOperation,
+  resolveOperationalRequestMetadata,
+} from "@/src/domains/operational-governance/operational-governance.service";
 import { logger } from "@/src/lib/observability/logger";
 
 export const runtime = "nodejs";
@@ -40,12 +44,27 @@ export async function POST(request: Request) {
   try {
     const authContext = await requirePermission(request, "system.admin");
     const body = await request.json().catch(() => ({}));
-    const result = await certifySettlementAuthority({
-      actor: authContext.user,
-      justification: body.justification,
-      acknowledgedWarnings: body.acknowledgedWarnings,
-      correlationId: body.correlationId,
-    });
+    const metadata = resolveOperationalRequestMetadata(
+      request, body, "AUTHORITY_CERTIFICATION_CAPTURE", "Settlement authority certification"
+    );
+    const governed = await executeGovernedOperation(
+      {
+        authContext,
+        commandType: "AUTHORITY_CERTIFICATION_CAPTURE",
+        affectedAuthority: "SETTLEMENT",
+        targetType: "CERTIFICATION",
+        targetId: "SETTLEMENT",
+        ...metadata,
+        payload: { acknowledgedWarnings: body.acknowledgedWarnings },
+      },
+      () => certifySettlementAuthority({
+        actor: authContext.user,
+        justification: body.justification,
+        acknowledgedWarnings: body.acknowledgedWarnings,
+        correlationId: metadata.correlationId,
+      })
+    );
+    const result = governed.result;
 
     return NextResponse.json({
       success: true,
@@ -53,6 +72,8 @@ export async function POST(request: Request) {
       idempotent: result.idempotent,
       stabilizationBefore: result.stabilizationBefore,
       stabilizationAfter: result.stabilizationAfter,
+      operationalCommandId: governed.command.commandId,
+      operationalIdempotent: governed.idempotent,
     });
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {

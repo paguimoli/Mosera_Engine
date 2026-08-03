@@ -8,6 +8,10 @@ import {
   OperationalAccessError,
   revokeOperationalSession,
 } from "@/src/domains/operational-access/operational-access.service";
+import {
+  executeGovernedOperation,
+  resolveOperationalRequestMetadata,
+} from "@/src/domains/operational-governance/operational-governance.service";
 
 export const runtime = "nodejs";
 
@@ -55,10 +59,29 @@ export async function POST(request: Request) {
     const record = body as Record<string, unknown>;
     const sessionId = getString(record.sessionId ?? record.session_id);
 
-    await revokeOperationalSession({ sessionId, actor });
+    const metadata = resolveOperationalRequestMetadata(
+      request, record, "SESSION_REVOCATION", "Revoke operational session"
+    );
+    const governed = await executeGovernedOperation(
+      {
+        authContext: actor,
+        commandType: "SESSION_REVOCATION",
+        affectedAuthority: "AUTHENTICATION",
+        targetType: "SESSION",
+        targetId: sessionId,
+        ...metadata,
+        payload: { sessionId },
+      },
+      async () => {
+        await revokeOperationalSession({ sessionId, actor });
+        return { sessionId, revoked: true };
+      }
+    );
 
     return NextResponse.json({
       success: true,
+      operationalCommandId: governed.command.commandId,
+      idempotent: governed.idempotent,
     });
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {

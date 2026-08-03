@@ -8,6 +8,10 @@ import {
   LedgerAuthorityValidationError,
   promoteLedgerAuthority,
 } from "@/src/domains/ledger-authority/ledger-authority.service";
+import {
+  executeGovernedOperation,
+  resolveOperationalRequestMetadata,
+} from "@/src/domains/operational-governance/operational-governance.service";
 import { logger } from "@/src/lib/observability/logger";
 
 export const runtime = "nodejs";
@@ -37,17 +41,33 @@ export async function POST(request: Request) {
   try {
     const authContext = await requirePermission(request, "system.admin");
     const body = await request.json().catch(() => ({}));
-    const promotion = await promoteLedgerAuthority({
-      actor: authContext.user,
-      domain: body.domain,
-      mode: body.mode,
-      justification: body.justification,
-      correlationId: body.correlationId,
-    });
+    const metadata = resolveOperationalRequestMetadata(
+      request, body, "AUTHORITY_PROMOTION_EXECUTION", "Ledger authority promotion"
+    );
+    const governed = await executeGovernedOperation(
+      {
+        authContext,
+        commandType: "AUTHORITY_PROMOTION_EXECUTION",
+        affectedAuthority: "LEDGER",
+        targetType: "AUTHORITY",
+        targetId: "LEDGER",
+        ...metadata,
+        payload: { domain: body.domain, mode: body.mode },
+      },
+      () => promoteLedgerAuthority({
+        actor: authContext.user,
+        domain: body.domain,
+        mode: body.mode,
+        justification: body.justification,
+        correlationId: metadata.correlationId,
+      })
+    );
 
     return NextResponse.json({
       success: true,
-      promotion,
+      promotion: governed.result,
+      operationalCommandId: governed.command.commandId,
+      idempotent: governed.idempotent,
     });
   } catch (error) {
     if (error instanceof AuthMiddlewareError) {

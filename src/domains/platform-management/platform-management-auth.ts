@@ -38,6 +38,7 @@ export type PlatformManagementAuthorization = {
   readonly superAdmin: boolean;
   readonly actorId: string;
   readonly sessionId: string | null;
+  readonly authContext: AuthContext;
 };
 
 const platformManagementPermissions: Record<
@@ -109,6 +110,33 @@ export async function requirePlatformManagementPermission(
         superAdmin: authOverride.permissions.has("system.admin"),
         actorId: "platform-management-qa",
         sessionId: null,
+        authContext: {
+          user: {
+            id: "platform-management-qa",
+            username: "platform-management-qa",
+            email: "qa@local.invalid",
+            displayName: "Platform Management QA",
+            identityClass: "PLATFORM_OPERATOR",
+            status: "ACTIVE",
+            failedLoginAttempts: 0,
+          },
+          session: {
+            id: "platform-management-qa-session",
+            userId: "platform-management-qa",
+            createdAt: new Date(0).toISOString(),
+            lastSeenAt: new Date(0).toISOString(),
+            expiresAt: new Date(8640000000000000).toISOString(),
+          },
+          groups: [],
+          permissions: [...authOverride.permissions].map((key) => ({
+            id: key,
+            key,
+            isSystemPermission: false,
+            createdAt: new Date(0).toISOString(),
+          })),
+          platformScopes: [...authOverride.scopes],
+          hasPermission: (key) => authOverride?.permissions.has(key) ?? false,
+        },
       };
     }
 
@@ -182,6 +210,7 @@ function authorizationFromContext(context: AuthContext): PlatformManagementAutho
     superAdmin: resolved.permissions.includes("system.admin"),
     actorId: resolved.identityId,
     sessionId: resolved.sessionId,
+    authContext: context,
   };
 }
 
