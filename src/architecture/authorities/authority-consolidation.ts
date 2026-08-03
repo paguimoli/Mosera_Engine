@@ -51,6 +51,8 @@ export const coreAuthorityOwnership: readonly CoreAuthorityOwnership[] = [
       "ticket_authority.cancel_ticket",
       "ticket_authority.request_settlement",
       "ticket_completion_authority.complete_ticket",
+      "ticket_exception_authority.request_operation",
+      "ticket_exception_authority.recover_operation",
     ],
     retainedCompatibility: [
       "Client-only local demonstration state; never imported by API or worker code",

@@ -1523,6 +1523,45 @@ addCheck(
   "ticket_referential_integrity_readiness",
   functionExists("ticket_authority", "ticket_referential_integrity_readiness")
 );
+for (const table of [
+  "operations",
+  "operation_events",
+  "operation_projection",
+  "financial_evidence",
+  "reservation_release_evidence",
+  "draw_cancellation_impacts",
+]) {
+  addCheck(
+    `ticket_exception_table:${table}`,
+    existsRegclass(`ticket_exception_authority.${table}`)
+  );
+}
+for (const operation of [
+  "request_operation",
+  "execute_unsettled_void",
+  "record_settlement_chain",
+  "complete_financial_exception",
+  "recover_operation",
+  "process_draw_cancellation",
+  "readiness",
+]) {
+  addCheck(
+    `ticket_exception_function:${operation}`,
+    functionExists("ticket_exception_authority", operation)
+  );
+}
+addCheck(
+  "ticket_exception_lifecycle_gate",
+  triggerExists("ticket_authority", "ticket_lifecycle_events", "trg_ticket_exception_lifecycle_gate")
+);
+addCheck(
+  "ticket_exception_projection_guard",
+  triggerExists("ticket_exception_authority", "operation_projection", "trg_ticket_exception_projection_guard")
+);
+addCheck(
+  "ticket_exception_compensation_adjustments",
+  existsRegclass("compensation.adjustment_requirements")
+);
 addCheck(
   "canonical_ticket_generic_correlation_retired",
   !functionExists("ticket_authority", "record_correlation")

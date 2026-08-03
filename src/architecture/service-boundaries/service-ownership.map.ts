@@ -68,6 +68,10 @@ const ownedResources = [
   { owner: "TICKET_SERVICE", name: "ticket_completion_authority.completion_requests", kind: "table" },
   { owner: "TICKET_SERVICE", name: "ticket_completion_authority.completion_evidence", kind: "table" },
   { owner: "TICKET_SERVICE", name: "ticket_completion_authority.complete_ticket", kind: "rpc" },
+  { owner: "TICKET_SERVICE", name: "ticket_exception_authority.operations", kind: "table" },
+  { owner: "TICKET_SERVICE", name: "ticket_exception_authority.operation_events", kind: "table" },
+  { owner: "TICKET_SERVICE", name: "ticket_exception_authority.request_operation", kind: "rpc" },
+  { owner: "TICKET_SERVICE", name: "ticket_exception_authority.recover_operation", kind: "rpc" },
 
   { owner: "SETTLEMENT_SERVICE", name: "settlement_service.settlement_requests", kind: "table" },
   { owner: "SETTLEMENT_SERVICE", name: "settlement_service.settlement_runs", kind: "table" },
