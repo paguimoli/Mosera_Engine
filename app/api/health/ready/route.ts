@@ -16,16 +16,18 @@ import {
   OperationalGovernanceRepositoryError,
 } from "@/src/domains/operational-governance/operational-governance.repository";
 import { checkOperationalSecurityReadiness } from "@/src/domains/operational-security/operational-security.repository";
+import { getOperationalChangeReadiness } from "@/src/domains/operational-change/operational-change.repository";
 
 export const runtime = "nodejs";
 
 export async function GET() {
   try {
-    const [accountChecks, ticketChecks, operationalChecks, operationalSecurityReady] = await Promise.all([
+    const [accountChecks, ticketChecks, operationalChecks, operationalSecurityReady, operationalChangeChecks] = await Promise.all([
       getAccountScopeReadiness(),
       getTicketReadiness(),
       getOperationalGovernanceReadiness(),
       checkOperationalSecurityReadiness(),
+      getOperationalChangeReadiness(),
     ]);
     const platformMutationChecks = getPlatformMutationAuthorityChecks();
     const authorityConsolidationChecks = getAuthorityConsolidationReadiness();
@@ -43,6 +45,10 @@ export async function GET() {
         issueCount: operationalSecurityReady ? 0 : 1,
         authority: "operational-security",
       },
+      ...operationalChangeChecks.map((check) => ({
+        ...check,
+        authority: "operational-change",
+      })),
       ...platformMutationChecks.map((check) => ({
         ...check,
         authority: "platform-mutation",
@@ -91,6 +97,7 @@ export async function GET() {
             (check) => check.ready
           ),
           operationalSecurityAuthority: operationalSecurityReady,
+          operationalChangeAuthority: operationalChangeChecks.every((check) => check.ready),
           launchConfigurationFrozen: launchConfiguration.ready,
           creditOnlyLaunch: process.env.CREDIT_ONLY_LAUNCH_ENABLED === "true",
           cashierLaunchDisabled: process.env.CASHIER_LAUNCH_ENABLED === "false",
@@ -125,6 +132,7 @@ export async function GET() {
           coreAuthoritiesConsolidated: false,
           operationalGovernanceAuthority: false,
           operationalSecurityAuthority: false,
+          operationalChangeAuthority: false,
           launchConfigurationFrozen: false,
           creditOnlyLaunch: false,
           cashierLaunchDisabled: false,

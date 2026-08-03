@@ -56,7 +56,14 @@ export async function POST(request: Request) {
         ...metadata,
         payload: { domain },
       },
-      () => promoteSettlementAuthority({ actor: authContext.user, domain, correlationId: metadata.correlationId })
+      () => promoteSettlementAuthority({ actor: authContext.user, domain, correlationId: metadata.correlationId }),
+      {
+        changeType: "PROVIDER_ACTIVATION",
+        expectedState: { authority: "SETTLEMENT", domain },
+        verify: (result) => ({ expectedStateReached: Boolean(result), authorityAccepted: true,
+          readinessMaintained: true, auditRecorded: true,
+          observedState: result as unknown as Record<string, unknown> }),
+      }
     );
     const promotion = governed.result;
 

@@ -1256,7 +1256,8 @@ public static class GameEngineEndpoints
         HttpContext context,
         ServiceConfiguration configuration,
         CanonicalOutcomeLifecycleAuthority lifecycleAuthority,
-        IOperationalSecurityAuthority operationalSecurityAuthority)
+        IOperationalSecurityAuthority operationalSecurityAuthority,
+        IOperationalChangeAuthority operationalChangeAuthority)
     {
         if (!configuration.CanonicalOutcomePipelineEnabled ||
             !configuration.CanonicalOutcomeRecoveryEnabled)
@@ -1275,23 +1276,41 @@ public static class GameEngineEndpoints
             context.Request.Headers["x-operational-executor-id"].FirstOrDefault(),
             "OUTCOME_RECOVERY_EXECUTION",
             context.RequestAborted);
-
-        var result = await lifecycleAuthority.RecoverAsync(
-            new CanonicalOutcomeRecoveryCommand(
-                25,
-                "system:game-engine-api",
-                "REQUESTED_INCOMPLETE_OPERATION_RECOVERY",
-                context.GetCorrelationId(),
-                "api:outcome-publications:recover"),
+        var changeExecution = await operationalChangeAuthority.BeginAsync(
+            context.Request.Headers["x-operational-change-id"].FirstOrDefault(),
+            context.Request.Headers["x-operational-command-id"].FirstOrDefault(),
+            context.Request.Headers["x-operational-executor-id"].FirstOrDefault(),
+            "RECOVERY_EXECUTION",
             context.RequestAborted);
-        return Results.Ok(new
+        try
         {
-            success = true,
-            data = result,
-            directSettlementCallsEnabled = false,
-            productionActivationGoverned = true,
-            correlationId = context.GetCorrelationId()
-        });
+            var result = await lifecycleAuthority.RecoverAsync(
+                new CanonicalOutcomeRecoveryCommand(
+                    25,
+                    "system:game-engine-api",
+                    "REQUESTED_INCOMPLETE_OPERATION_RECOVERY",
+                    context.GetCorrelationId(),
+                    "api:outcome-publications:recover"),
+                context.RequestAborted);
+            await operationalChangeAuthority.CompleteAsync(
+                changeExecution, result,
+                new { recoveryAccepted = true, readinessMaintained = true },
+                context.RequestAborted);
+            return Results.Ok(new
+            {
+                success = true,
+                data = result,
+                directSettlementCallsEnabled = false,
+                productionActivationGoverned = true,
+                operationalChangeVerified = true,
+                correlationId = context.GetCorrelationId()
+            });
+        }
+        catch (Exception error)
+        {
+            await operationalChangeAuthority.FailAsync(changeExecution, error, context.RequestAborted);
+            throw;
+        }
     }
 
     private static async Task<IResult> ReplayCanonicalOutcomeAsync(
@@ -1380,8 +1399,10 @@ public static class GameEngineEndpoints
         GameEngineProductionActivationCommand command,
         HttpContext context,
         GameEngineProductionActivationAuthority activationAuthority,
-        IOperationalSecurityAuthority operationalSecurityAuthority)
+        IOperationalSecurityAuthority operationalSecurityAuthority,
+        IOperationalChangeAuthority operationalChangeAuthority)
     {
+        OperationalChangeExecution? changeExecution = null;
         try
         {
             await operationalSecurityAuthority.ValidateAsync(
@@ -1390,8 +1411,18 @@ public static class GameEngineEndpoints
                 context.Request.Headers["x-operational-executor-id"].FirstOrDefault(),
                 "GAME_ENGINE_PRODUCTION_ACTIVATION",
                 context.RequestAborted);
+            changeExecution = await operationalChangeAuthority.BeginAsync(
+                context.Request.Headers["x-operational-change-id"].FirstOrDefault(),
+                context.Request.Headers["x-operational-command-id"].FirstOrDefault(),
+                context.Request.Headers["x-operational-executor-id"].FirstOrDefault(),
+                "PROVIDER_ACTIVATION",
+                context.RequestAborted);
             var activationEvent = await activationAuthority.AdvanceAsync(
                 command,
+                context.RequestAborted);
+            await operationalChangeAuthority.CompleteAsync(
+                changeExecution, activationEvent,
+                new { authorityAccepted = true, readinessMaintained = true, state = activationEvent.Stage },
                 context.RequestAborted);
             return Results.Ok(new
             {
@@ -1399,11 +1430,13 @@ public static class GameEngineEndpoints
                 data = activationEvent,
                 activationWasExplicit = true,
                 authority = "GameEngineProductionActivationAuthority",
+                operationalChangeVerified = true,
                 correlationId = context.GetCorrelationId()
             });
         }
         catch (ArgumentException error)
         {
+            await operationalChangeAuthority.FailAsync(changeExecution, error, context.RequestAborted);
             return Results.BadRequest(new
             {
                 success = false,
@@ -1413,6 +1446,7 @@ public static class GameEngineEndpoints
         }
         catch (InvalidOperationException error)
         {
+            await operationalChangeAuthority.FailAsync(changeExecution, error, context.RequestAborted);
             return Results.Conflict(new
             {
                 success = false,

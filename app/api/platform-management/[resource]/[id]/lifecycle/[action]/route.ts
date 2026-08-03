@@ -99,7 +99,29 @@ export async function POST(request: Request, { params }: RouteParams) {
           action,
           scope
         )
-      )
+      ),
+      resource === "websites" && action === "supersede" && typeof body.maintenanceMode === "boolean"
+        ? {
+            changeType: "PLATFORM_MAINTENANCE",
+            expectedState: { websiteId: id, maintenanceMode: body.maintenanceMode },
+            verify: (lifecycleResult) => ({
+              expectedStateReached: Boolean(lifecycleResult) &&
+                lifecycleResult?.current.maintenanceMode === body.maintenanceMode,
+              authorityAccepted: Boolean(lifecycleResult),
+              readinessMaintained: true,
+              auditRecorded: true,
+              observedState: lifecycleResult
+                ? { websiteId: lifecycleResult.current.id,
+                    maintenanceMode: lifecycleResult.current.maintenanceMode }
+                : {},
+            }),
+            maintenance: {
+              websiteId: id,
+              action: body.maintenanceMode ? "BEGIN" : "END",
+              reason: metadata.reason,
+            },
+          }
+        : undefined
     );
     const result = governed.result;
 

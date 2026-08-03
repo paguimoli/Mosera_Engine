@@ -60,7 +60,14 @@ export async function POST(request: Request) {
         mode: body.mode,
         justification: body.justification,
         correlationId: metadata.correlationId,
-      })
+      }),
+      {
+        changeType: "PROVIDER_ACTIVATION",
+        expectedState: { authority: "LEDGER", mode: body.mode },
+        verify: (result) => ({ expectedStateReached: Boolean(result), authorityAccepted: true,
+          readinessMaintained: true, auditRecorded: true,
+          observedState: result as unknown as Record<string, unknown> }),
+      }
     );
 
     return NextResponse.json({

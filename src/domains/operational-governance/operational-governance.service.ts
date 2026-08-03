@@ -17,6 +17,11 @@ import {
   authorizeOperationalCommandSecurity,
   resolvePrivilegedSessionId,
 } from "../operational-security/operational-security.service";
+import { executeOperationalChange } from "../operational-change/operational-change.service";
+import type {
+  OperationalChangeType,
+  OperationalChangeVerification,
+} from "../operational-change/operational-change.types";
 import { randomUUID } from "node:crypto";
 
 export class OperationalGovernanceError extends Error {
@@ -59,7 +64,7 @@ export function resolveOperationalRequestMetadata(
   };
 }
 
-function canonicalScopeSnapshot(authContext: AuthContext) {
+export function canonicalScopeSnapshot(authContext: AuthContext) {
   return {
     platformScopes: [...(authContext.platformScopes ?? [])]
       .map((scope) => ({ scopeType: scope.scopeType, scopeId: scope.scopeId }))
@@ -74,7 +79,13 @@ export async function executeGovernedOperation<
   TResult,
 >(
   request: OperationalCommandRequest<TPayload>,
-  execute: () => Promise<TResult>
+  execute: () => Promise<TResult>,
+  change?: {
+    changeType: OperationalChangeType;
+    expectedState: Record<string, unknown>;
+    verify: (result: TResult) => Promise<OperationalChangeVerification> | OperationalChangeVerification;
+    maintenance?: { websiteId: string; action: "BEGIN" | "END"; reason: string };
+  }
 ): Promise<GovernedOperationResult<TResult>> {
   const canonicalRequestHash = canonicalHash({
     commandType: request.commandType,
@@ -124,7 +135,17 @@ export async function executeGovernedOperation<
     });
 
     try {
-      const result = await execute();
+      const result = change
+        ? (await executeOperationalChange({
+            command,
+            changeType: change.changeType,
+            expectedState: change.expectedState,
+            executorIdentityId: request.authContext.user.id,
+            execute,
+            verify: change.verify,
+            maintenance: change.maintenance,
+          })).result
+        : await execute();
       await appendExecutionEvidence({ command, status: "SUCCEEDED", result });
       await appendOperationalEvent({
         command,

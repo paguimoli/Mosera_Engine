@@ -24,6 +24,8 @@ var persistenceMode = string.IsNullOrWhiteSpace(databaseUrl) ? "in-memory" : "po
 builder.Services.AddSingleton(serviceConfiguration);
 builder.Services.AddSingleton<IOperationalSecurityAuthority>(
     new OperationalSecurityAuthority(databaseUrl));
+builder.Services.AddSingleton<IOperationalChangeAuthority>(
+    new OperationalChangeAuthority(databaseUrl));
 builder.Services.AddSingleton(new GameEngineProductionActivationOptions(
     serviceConfiguration.ProductionActivation.Enabled,
     serviceConfiguration.CanonicalOutcomePipelineEnabled,

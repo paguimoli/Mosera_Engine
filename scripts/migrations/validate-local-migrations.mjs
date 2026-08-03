@@ -1541,6 +1541,33 @@ addCheck(
   "operational_security_sod_trigger",
   triggerExists("operational_governance", "command_approvals", "trg_command_approvals_sod")
 );
+for (const table of [
+  "change_policy_versions",
+  "change_requests",
+  "change_attempts",
+  "change_verification_evidence",
+  "maintenance_events",
+]) {
+  addCheck(
+    `operational_change_table:${table}`,
+    existsRegclass(`operational_governance.${table}`)
+  );
+  addCheck(
+    `operational_change_immutable:${table}`,
+    triggerExists("operational_governance", table, `trg_${table}_immutable`)
+  );
+}
+for (const operation of [
+  "request_change",
+  "begin_change_execution",
+  "complete_change_execution",
+  "operational_change_readiness",
+]) {
+  addCheck(
+    `operational_change_function:${operation}`,
+    functionExists("operational_governance", operation)
+  );
+}
 addCheck(
   "ticket_execution_manifest_lineage_column",
   columnExists("ticket_authority", "tickets", "execution_manifest_id")
