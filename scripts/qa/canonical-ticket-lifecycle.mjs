@@ -45,7 +45,7 @@ try {
       select 1 from platform.game_availability existing
       where existing.tenant_id = tenant.id
         and existing.brand_id = brand.id
-        and existing.market_id = market.id
+        and (existing.market_id is null or existing.market_id = market.id)
         and existing.status in ('Suspended', 'Retired')
     ), market.id
     limit 20

@@ -254,7 +254,7 @@ export async function getTicketReadiness(): Promise<TicketReadinessCheck[]> {
       check_name: string;
       ready: boolean;
       issue_count: string;
-    }>("select * from ticket_authority.ticket_readiness()");
+    }>("select * from ticket_authority.ticket_platform_readiness()");
     return result.rows.map((row) => ({
       checkName: row.check_name,
       ready: row.ready,

@@ -1479,6 +1479,14 @@ addCheck(
   functionExists("ticket_completion_authority", "complete_ticket")
 );
 addCheck(
+  "ticket_settlement_ingestion_lifecycle_gate",
+  triggerExists("settlement_service", "settlement_requests", "trg_bind_ticket_settlement_request")
+);
+addCheck(
+  "ticket_platform_readiness_function",
+  functionExists("ticket_authority", "ticket_platform_readiness")
+);
+addCheck(
   "ticket_execution_manifest_lineage_column",
   columnExists("ticket_authority", "tickets", "execution_manifest_id")
 );

@@ -57,6 +57,9 @@ export async function GET() {
             .filter((check) => check.checkName.startsWith("platform_authority:"))
             .every((check) => check.ready),
           canonicalTicketLifecycle: ticketChecks.every((check) => check.ready),
+          ticketPlatformBackendFreezeReady: ticketChecks.every(
+            (check) => check.ready
+          ),
           ticketLegacyProductionMutationDisabled: true,
           canonicalPlatformMutationAuthority: platformMutationChecks.every(
             (check) => check.ready
@@ -94,6 +97,7 @@ export async function GET() {
           accountPlayerAgentScopeGovernance: false,
           canonicalPlatformHierarchy: false,
           canonicalTicketLifecycle: false,
+          ticketPlatformBackendFreezeReady: false,
           ticketLegacyProductionMutationDisabled: true,
           canonicalPlatformMutationAuthority: false,
           legacyPlatformProductionMutationDisabled: false,
