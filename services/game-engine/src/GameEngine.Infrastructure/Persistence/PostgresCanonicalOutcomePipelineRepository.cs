@@ -821,12 +821,41 @@ select
                         candidate.OutcomeCertificateId,
                         candidate.OutcomeCertificateHash,
                         cancellationToken);
+                    var evidenceStateHash = HashCanonical(string.Join(
+                        "|",
+                        candidate.OutcomeVersionId.ToString("N"),
+                        candidate.VersionKind,
+                        candidate.OutcomeCertificateId.ToString("N"),
+                        candidate.OutcomeCertificateHash,
+                        inputs.Count));
+                    if (await HasTerminalRecoveryClassificationAsync(
+                        lockConnection,
+                        candidate.OutcomeVersionId,
+                        evidenceStateHash,
+                        cancellationToken))
+                    {
+                        continue;
+                    }
                     if (inputs.Count != 1)
                     {
                         blockedCount += 1;
                         var reason = inputs.Count == 0
-                            ? "No certificate-backed SettlementInput is available."
+                            ? "No certificate-backed SettlementInput is available; Math Authority evidence cannot be fabricated."
                             : "Multiple SettlementInputs exist for one draw-level canonical request.";
+                        var classification = inputs.Count > 1
+                            ? "TERMINAL_INVALID"
+                            : candidate.ActorReference.Contains("qa", StringComparison.OrdinalIgnoreCase)
+                                ? "LEGACY_INSUFFICIENT_EVIDENCE"
+                                : "GOVERNED_MANUAL_INTERVENTION_REQUIRED";
+                        await RecordRecoveryClassificationAsync(
+                            lockConnection,
+                            candidate.OutcomeVersionId,
+                            classification,
+                            evidenceStateHash,
+                            reason,
+                            candidate.CorrelationId,
+                            command.ActorReference,
+                            cancellationToken);
                         blockers.Add($"{candidate.OutcomeVersionId}: {reason}");
                         await RecordBlockedRecoveryOnceAsync(
                             lockConnection,
@@ -977,7 +1006,8 @@ select
   version.outcome_certificate_id,
   version.outcome_certificate_hash,
   version.correlation_id,
-  version.audit_reference
+  version.audit_reference,
+  version.actor_reference
 from game_engine.canonical_outcome_versions version
 where not exists (
     select 1
@@ -1015,7 +1045,8 @@ limit @limit;
                 reader.GetGuid(2),
                 reader.GetString(3),
                 reader.GetString(4),
-                reader.GetString(5)));
+                reader.GetString(5),
+                reader.GetString(6)));
         }
         return candidates;
     }
@@ -1127,6 +1158,74 @@ select exists (
             "BLOCKED",
             reason,
             cancellationToken);
+    }
+
+    private static async Task<bool> HasTerminalRecoveryClassificationAsync(
+        NpgsqlConnection connection,
+        Guid outcomeVersionId,
+        string evidenceStateHash,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+select exists (
+  select 1
+  from game_engine.canonical_outcome_recovery_classifications
+  where outcome_version_id = @outcome_version_id
+    and evidence_state_hash = @evidence_state_hash
+    and classification in (
+      'GOVERNED_MANUAL_INTERVENTION_REQUIRED',
+      'LEGACY_INSUFFICIENT_EVIDENCE',
+      'TERMINAL_INVALID',
+      'COMPLETED_STALE_PROJECTION'
+    )
+);
+""";
+        command.Parameters.AddWithValue("outcome_version_id", outcomeVersionId);
+        command.Parameters.AddWithValue("evidence_state_hash", evidenceStateHash);
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+    }
+
+    private static async Task RecordRecoveryClassificationAsync(
+        NpgsqlConnection connection,
+        Guid outcomeVersionId,
+        string classification,
+        string evidenceStateHash,
+        string reason,
+        string correlationId,
+        string actorReference,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+insert into game_engine.canonical_outcome_recovery_classifications (
+  recovery_classification_id,
+  outcome_version_id,
+  classification,
+  evidence_state_hash,
+  reason,
+  correlation_id,
+  actor_reference
+)
+values (
+  @recovery_classification_id,
+  @outcome_version_id,
+  @classification,
+  @evidence_state_hash,
+  @reason,
+  @correlation_id,
+  @actor_reference
+)
+on conflict (outcome_version_id, classification, evidence_state_hash) do nothing;
+""";
+        command.Parameters.AddWithValue("recovery_classification_id", Guid.NewGuid());
+        command.Parameters.AddWithValue("outcome_version_id", outcomeVersionId);
+        command.Parameters.AddWithValue("classification", classification);
+        command.Parameters.AddWithValue("evidence_state_hash", evidenceStateHash);
+        command.Parameters.AddWithValue("reason", reason);
+        command.Parameters.AddWithValue("correlation_id", correlationId);
+        command.Parameters.AddWithValue("actor_reference", actorReference);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task RecordRecoveryEventAsync(
@@ -1941,7 +2040,8 @@ from game_engine.outcome_settlement_requests
         Guid OutcomeCertificateId,
         string OutcomeCertificateHash,
         string CorrelationId,
-        string AuditReference);
+        string AuditReference,
+        string ActorReference);
 
     private sealed record UnconfirmedRequest(
         Guid SettlementRequestId,

@@ -75,6 +75,7 @@ export async function GET() {
           },
         ],
         capabilities: {
+          backendFreezeRuntimeIntegrity: ready,
           accountPlayerAgentScopeGovernance: accountChecks.every(
             (check) => check.ready
           ),
@@ -137,6 +138,7 @@ export async function GET() {
           },
         ],
         capabilities: {
+          backendFreezeRuntimeIntegrity: false,
           accountPlayerAgentScopeGovernance: false,
           canonicalPlatformHierarchy: false,
           canonicalTicketLifecycle: false,

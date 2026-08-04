@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
 
 import type { QueueMessage } from "@/src/lib/queue/queue.types";
@@ -16,6 +16,30 @@ type CanonicalSettlementPayload = {
   auditReference: string;
 };
 
+export type CanonicalSettlementProcessingClassification =
+  | "SUCCESS"
+  | "IDEMPOTENT_DUPLICATE"
+  | "TRANSIENT_RETRY"
+  | "GOVERNED_RECOVERY_REQUIRED"
+  | "TERMINAL_INVALID"
+  | "LEGACY_UNPROCESSABLE";
+
+export class CanonicalSettlementProcessingError extends Error {
+  readonly workerClassification: CanonicalSettlementProcessingClassification;
+  readonly retryable: boolean;
+
+  constructor(
+    message: string,
+    classification: CanonicalSettlementProcessingClassification,
+    retryable = false
+  ) {
+    super(message);
+    this.name = "CanonicalSettlementProcessingError";
+    this.workerClassification = classification;
+    this.retryable = retryable;
+  }
+}
+
 function stableJson(value: unknown): string {
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value);
@@ -31,6 +55,81 @@ function stableJson(value: unknown): string {
 
 function hash(value: string) {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+function canonicalMessageHash(message: QueueMessage) {
+  return hash(stableJson({
+    aggregateId: message.aggregateId ?? null,
+    aggregateType: message.aggregateType ?? null,
+    eventId: message.id ?? null,
+    eventType: message.type,
+    payload: message.payload,
+  }));
+}
+
+function classifyError(error: unknown) {
+  if (error instanceof CanonicalSettlementProcessingError) {
+    return error;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  const code = typeof error === "object" && error !== null && "code" in error
+    ? String(error.code)
+    : "";
+  const transient =
+    code.startsWith("08") ||
+    ["40001", "40P01", "53300", "57P01", "57P02", "57P03"].includes(code) ||
+    /timeout|connection|temporarily unavailable/i.test(message);
+  return new CanonicalSettlementProcessingError(
+    message,
+    transient ? "TRANSIENT_RETRY" : "TERMINAL_INVALID",
+    transient
+  );
+}
+
+async function appendProcessingEvidence(
+  client: Pick<PoolClient, "query">,
+  message: QueueMessage,
+  classification: CanonicalSettlementProcessingClassification,
+  reason: string,
+  payload?: CanonicalSettlementPayload | null
+) {
+  await client.query(
+    `
+insert into game_engine.canonical_settlement_event_processing_evidence (
+  processing_evidence_id, event_id, settlement_request_id, outcome_version_id,
+  classification, canonical_message_hash, attempt_number, reason, correlation_id)
+select
+  $1::uuid, $2, $3::uuid, $4::uuid, $5, $6,
+  coalesce(max(attempt_number), 0) + 1, $7, $8
+from game_engine.canonical_settlement_event_processing_evidence
+where event_id = $2
+`,
+    [
+      randomUUID(),
+      message.id ?? "missing-event-id",
+      payload?.settlementRequestId ?? null,
+      payload?.outcomeVersionId ?? null,
+      classification,
+      canonicalMessageHash(message),
+      reason,
+      message.correlationId ?? null,
+    ]
+  );
+}
+
+export async function recordCanonicalSettlementFinalClassification(
+  message: QueueMessage,
+  classification: "GOVERNED_RECOVERY_REQUIRED" | "TERMINAL_INVALID" | "LEGACY_UNPROCESSABLE",
+  reason: string
+) {
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (!databaseUrl) return;
+  const pool = new Pool({ connectionString: databaseUrl, connectionTimeoutMillis: 2_000, max: 1 });
+  try {
+    await appendProcessingEvidence(pool, message, classification, reason, null);
+  } finally {
+    await pool.end();
+  }
 }
 
 function deterministicUuid(value: string) {
@@ -125,12 +224,6 @@ join game_engine.canonical_outcome_versions version
 left join game_engine.settlement_input_records input
   on input.settlement_input_id = request.settlement_input_id
 where request.settlement_request_id = $1::uuid
-  and not exists (
-    select 1
-    from game_engine.canonical_outcome_versions newer
-    where newer.draw_id = version.draw_id
-      and newer.version_number > version.version_number
-  )
 for update of request
 `,
     [payload.settlementRequestId]
@@ -175,15 +268,20 @@ export async function handleCanonicalSettlementRequest(
     throw new Error("DATABASE_URL is required for canonical Settlement consumption.");
   }
 
-  const payload = parsePayload(message);
+  let payload: CanonicalSettlementPayload;
+  try {
+    payload = parsePayload(message);
+  } catch (error) {
+    const classified = classifyError(error);
+    await recordCanonicalSettlementFinalClassification(
+      message,
+      "TERMINAL_INVALID",
+      classified.message
+    );
+    throw classified;
+  }
   const eventId = message.id!.trim();
-  const canonicalMessageHash = hash(stableJson({
-    aggregateId: message.aggregateId ?? null,
-    aggregateType: message.aggregateType ?? null,
-    eventId,
-    eventType: message.type,
-    payload: message.payload,
-  }));
+  const messageHash = canonicalMessageHash(message);
   const pool = new Pool({
     connectionString: databaseUrl,
     connectionTimeoutMillis: 2_000,
@@ -211,8 +309,11 @@ where settlement_request_id = $1::uuid
       [payload.settlementRequestId]
     );
     if (existing.rows[0]) {
-      if (existing.rows[0].canonical_message_hash !== canonicalMessageHash) {
-        throw new Error("Conflicting duplicate settlement.requested payload.");
+      if (existing.rows[0].canonical_message_hash !== messageHash) {
+        throw new CanonicalSettlementProcessingError(
+          "Conflicting duplicate settlement.requested payload.",
+          "TERMINAL_INVALID"
+        );
       }
       const completed = await client.query<{ completion_id: string }>(
         `
@@ -223,6 +324,13 @@ where settlement_request_id = $1::uuid
         [payload.settlementRequestId]
       );
       if (completed.rows[0]) {
+        await appendProcessingEvidence(
+          client,
+          message,
+          "IDEMPOTENT_DUPLICATE",
+          "Canonical Settlement event was already completed.",
+          payload
+        );
         await client.query("commit");
         return {
           eventId,
@@ -261,16 +369,73 @@ values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'settlement-worker', $5, $6, $7)
           payload.settlementRequestId,
           payload.outcomeVersionId,
           eventId,
-          canonicalMessageHash,
+          messageHash,
           message.correlationId ?? payload.settlementRequestId,
           payload.auditReference,
         ]
       );
     }
 
+    if (payload.requestKind === "Cancelled") {
+      const completionId = deterministicUuid(`completion:${payload.outcomeVersionId}`);
+      const completionHash = hash(
+        `${payload.drawId}|${payload.outcomeVersionId}|${payload.settlementRequestId}|${consumptionId}|non-financial-cancellation`
+      );
+      await client.query(
+        `
+insert into game_engine.canonical_draw_completion_evidence (
+  completion_id, draw_id, outcome_version_id, settlement_request_id,
+  consumption_id, settlement_acknowledgement_id, completion_kind,
+  canonical_evidence_hash)
+values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, null, 'Cancelled', $6)
+on conflict (outcome_version_id) do nothing
+`,
+        [
+          completionId,
+          payload.drawId,
+          payload.outcomeVersionId,
+          payload.settlementRequestId,
+          consumptionId,
+          completionHash,
+        ]
+      );
+      await client.query(
+        `
+insert into game_engine.canonical_draw_orchestration_events (
+  orchestration_event_id, draw_id, event_type, evidence_reference,
+  canonical_evidence_hash)
+values ($1::uuid, $2::uuid, 'DRAW_COMPLETED', $3, $4)
+on conflict (draw_id, event_type, evidence_reference) do nothing
+`,
+        [
+          deterministicUuid(`orchestration:draw-cancelled:${completionId}`),
+          payload.drawId,
+          completionId,
+          completionHash,
+        ]
+      );
+      await appendProcessingEvidence(
+        client,
+        message,
+        existing.rows[0] ? "IDEMPOTENT_DUPLICATE" : "SUCCESS",
+        "Canonical cancellation acknowledged without fabricated financial SettlementInput.",
+        payload
+      );
+      await client.query("commit");
+      return {
+        eventId,
+        eventType: message.type,
+        status: "HANDLED",
+        duplicate: Boolean(existing.rows[0]),
+        message: "Canonical non-financial cancellation acknowledged.",
+        metadata: { completionId, consumptionId, settlementRequestId: payload.settlementRequestId },
+      };
+    }
+
     if (!payload.settlementInputId || !payload.settlementInputHash) {
-      throw new Error(
-        "Canonical draw completion requires SettlementInput-backed authoritative Settlement acknowledgement."
+      throw new CanonicalSettlementProcessingError(
+        "Canonical financial outcome requires SettlementInput evidence.",
+        "TERMINAL_INVALID"
       );
     }
 
@@ -300,11 +465,16 @@ limit 2
       ]
     );
     if (settlementEvidence.rowCount !== 1) {
-      throw new Error(
-        settlementEvidence.rowCount === 0
-          ? "Authoritative Settlement acknowledgement is not available."
-          : "Multiple authoritative Settlement records conflict with one canonical request."
-      );
+      throw settlementEvidence.rowCount === 0
+        ? new CanonicalSettlementProcessingError(
+            "Authoritative Settlement acknowledgement is not available yet.",
+            "TRANSIENT_RETRY",
+            true
+          )
+        : new CanonicalSettlementProcessingError(
+            "Multiple authoritative Settlement records conflict with one canonical request.",
+            "TERMINAL_INVALID"
+          );
     }
 
     const authority = settlementEvidence.rows[0];
@@ -408,6 +578,13 @@ on conflict (draw_id, event_type, evidence_reference) do nothing
         completionHash,
       ]
     );
+    await appendProcessingEvidence(
+      client,
+      message,
+      "SUCCESS",
+      "Authoritative Settlement acknowledgement bound.",
+      payload
+    );
     await client.query("commit");
 
     return {
@@ -427,7 +604,20 @@ on conflict (draw_id, event_type, evidence_reference) do nothing
     };
   } catch (error) {
     await client.query("rollback").catch(() => undefined);
-    throw error;
+    const classified = classifyError(error);
+    const evidenceClient = await pool.connect();
+    try {
+      await appendProcessingEvidence(
+        evidenceClient,
+        message,
+        classified.workerClassification,
+        classified.message,
+        payload
+      );
+    } finally {
+      evidenceClient.release();
+    }
+    throw classified;
   } finally {
     client.release();
     await pool.end();

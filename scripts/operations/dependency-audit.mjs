@@ -48,16 +48,17 @@ function countAtOrAbove(counts, configuredThreshold) {
 
 const result = spawnSync(
   "npm",
-  ["audit", "--json", "--audit-level", threshold],
+  ["audit", "--omit=dev", "--json", "--audit-level", threshold],
   {
     encoding: "utf8",
   }
 );
 const audit = parseAuditOutput(result.stdout);
 
-if (!audit) {
+if (!audit || audit.error || !audit.metadata?.vulnerabilities) {
   fail("Dependency audit did not return parseable JSON.", {
     exitCode: result.status,
+    auditError: audit?.error ?? audit?.message,
     stderr: result.stderr,
   });
 }

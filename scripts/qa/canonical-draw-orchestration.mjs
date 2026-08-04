@@ -88,9 +88,14 @@ async function scalar(statement, values = []) {
   return result.rows[0] ? Object.values(result.rows[0])[0] : null;
 }
 
-async function seedCertifiedOutcome(suffix) {
-  const fixture = await createCanonicalOutcomeFixture(pool, { suffix });
+async function seedCertifiedOutcome(suffix, category = "INTERNAL_CSPRNG") {
+  const fixture = await createCanonicalOutcomeFixture(pool, { suffix, category });
   const result = await appendCertifiedProviderResult(pool, fixture);
+  const settlement = await seedSettlementInput(fixture, result, suffix);
+  return { ...settlement, fixture, result };
+}
+
+async function seedSettlementInput(fixture, result, suffix) {
   const settlementInputId = randomUUID();
   const mathCertificateId = randomUUID();
   const ticketId = randomUUID();
@@ -326,7 +331,7 @@ where request.settlement_request_id = $4;
   );
 }
 
-async function publish(evidence, suffix) {
+async function publish(evidence, suffix, overrides = {}) {
   return post("/api/game-engine/outcome-publications", {
     idempotencyKey: `orchestration-publication:${suffix}`,
     drawId: evidence.drawId,
@@ -344,6 +349,7 @@ async function publish(evidence, suffix) {
     actorReference: "worker:canonical-draw-orchestration-qa",
     reasonCode: "CERTIFIED_RESULT_PUBLICATION",
     lifecycleEvidenceHash: hash(`lifecycle:${suffix}`),
+    ...overrides,
   });
 }
 
@@ -455,6 +461,86 @@ try {
   );
   await seedAuthoritativeSettlement(normal, `${suffix}:normal`);
   await waitForCompletion(settlementRequestId);
+
+  for (const category of ["OFFICIAL_RESULTS", "MANUAL_CERTIFIED"]) {
+    const providerSuffix = `${suffix}:${category.toLowerCase()}`;
+    const providerEvidence = await seedCertifiedOutcome(providerSuffix, category);
+    const providerPublication = await publish(providerEvidence, providerSuffix);
+    assert(providerPublication.status === 200, `${category} publishes canonically`, providerPublication);
+    const providerSettlement = await requestSettlement(
+      providerPublication.body?.data?.outcomeVersionId,
+      providerEvidence,
+      providerSuffix,
+    );
+    assert(providerSettlement.status === 200, `${category} emits canonical Settlement request`, providerSettlement);
+    await seedAuthoritativeSettlement(providerEvidence, providerSuffix);
+    await waitForCompletion(providerSettlement.body?.data?.settlementRequestId);
+    pass(`${category} completes the canonical Settlement handoff`);
+  }
+
+  const replacement = normal.fixture.primaryUniverse.find((value) =>
+    !normal.fixture.primary.includes(value) && !normal.fixture.bonus.includes(value));
+  assert(replacement !== undefined, "correction fixture has a valid replacement number");
+  const correctedPrimary = [...normal.fixture.primary];
+  correctedPrimary[0] = replacement;
+  if (normal.fixture.primaryOrdering === "Ascending") {
+    correctedPrimary.sort((left, right) => left - right);
+  }
+  const correctedResult = await appendCertifiedProviderResult(pool, normal.fixture, {
+    primary: correctedPrimary,
+    outcomePayload: { numbers: correctedPrimary, bonusNumbers: normal.fixture.bonus },
+    previousCertificateId: normal.result.certificateId,
+    previousCertificateHash: normal.result.outcomeHash,
+  });
+  const correctedEvidence = {
+    ...(await seedSettlementInput(normal.fixture, correctedResult, `${suffix}:corrected`)),
+    fixture: normal.fixture,
+    result: correctedResult,
+  };
+  const correctedPublication = await publish(correctedEvidence, `${suffix}:corrected`, {
+    versionKind: "Corrected",
+    previousOutcomeVersionId: outcomeVersionId,
+    reasonCode: "CERTIFIED_CORRECTION",
+  });
+  assert(correctedPublication.status === 200, "corrected outcome publishes canonically", correctedPublication);
+  const correctedVersionId = correctedPublication.body?.data?.outcomeVersionId;
+  const correctedSettlement = await requestSettlement(
+    correctedVersionId,
+    correctedEvidence,
+    `${suffix}:corrected`,
+  );
+  assert(correctedSettlement.status === 200, "corrected outcome emits distinct Settlement intent", correctedSettlement);
+  await seedAuthoritativeSettlement(correctedEvidence, `${suffix}:corrected`);
+  await waitForCompletion(correctedSettlement.body?.data?.settlementRequestId);
+  assert(
+    Number(await scalar(`select count(*)::int from game_engine.canonical_draw_completion_evidence
+      where outcome_version_id in ($1, $2)`, [outcomeVersionId, correctedVersionId])) === 2,
+    "correction preserves original completion and appends corrected completion",
+  );
+
+  const cancellationPublication = await publish(correctedEvidence, `${suffix}:cancelled`, {
+    versionKind: "Cancelled",
+    previousOutcomeVersionId: correctedVersionId,
+    reasonCode: "GOVERNED_DRAW_CANCELLATION",
+    lifecycleEvidenceHash: hash(`lifecycle:${suffix}:cancelled`),
+  });
+  assert(cancellationPublication.status === 200, "cancelled outcome publishes canonically", cancellationPublication);
+  const cancelledVersionId = cancellationPublication.body?.data?.outcomeVersionId;
+  const cancellationSettlement = await post("/api/game-engine/outcome-settlement-requests", {
+    idempotencyKey: `orchestration-settlement:${suffix}:cancelled`,
+    outcomeVersionId: cancelledVersionId,
+    settlementInputId: null,
+    correlationId: `orchestration:${suffix}:cancelled`,
+    causationId: `publication:${cancelledVersionId}`,
+    auditReference: `audit:settlement:${suffix}:cancelled`,
+  });
+  assert(cancellationSettlement.status === 200, "cancelled outcome emits non-financial lifecycle intent", cancellationSettlement);
+  await waitForCompletion(cancellationSettlement.body?.data?.settlementRequestId);
+  assert(
+    await scalar(`select settlement_acknowledgement_id is null from game_engine.canonical_draw_completion_evidence
+      where outcome_version_id = $1`, [cancelledVersionId]) === true,
+    "cancellation completes without fabricated SettlementInput or financial acknowledgement",
+  );
 
   const outboxEventId = await scalar(
     `

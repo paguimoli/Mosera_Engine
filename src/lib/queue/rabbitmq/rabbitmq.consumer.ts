@@ -1,5 +1,5 @@
 import * as amqp from "amqplib";
-import type { Channel, ChannelModel, ConsumeMessage } from "amqplib";
+import type { ChannelModel, ConfirmChannel, ConsumeMessage } from "amqplib";
 
 import {
   getWorkerInstanceId,
@@ -19,6 +19,11 @@ export type RabbitMqMessageHandler = (
   message: QueueMessage,
   rawMessage: ConsumeMessage
 ) => Promise<void>;
+
+type ClassifiedWorkerError = Error & {
+  readonly workerClassification?: string;
+  readonly retryable?: boolean;
+};
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown RabbitMQ error.";
@@ -48,18 +53,20 @@ function getPositiveNumberEnv(name: string, fallback: number) {
 
 export class RabbitMqQueueConsumer {
   private connection: ChannelModel | null = null;
-  private channel: Channel | null = null;
+  private channel: ConfirmChannel | null = null;
   private heartbeatIntervals = new Set<ReturnType<typeof setInterval>>();
   private disconnectPromise: Promise<void> = Promise.resolve();
 
   async consume({
     routing,
     handler,
+    onGovernedRecoveryRequired,
     workerName,
     instanceId,
   }: {
     routing: RabbitMqRouting;
     handler: RabbitMqMessageHandler;
+    onGovernedRecoveryRequired?: (message: QueueMessage, reason: string) => Promise<void>;
     workerName?: string;
     instanceId?: string;
   }): Promise<void> {
@@ -209,6 +216,59 @@ export class RabbitMqQueueConsumer {
             metadata,
           });
         } catch (error) {
+          const classified = error as ClassifiedWorkerError;
+          const retryCount = Number(rawMessage.properties.headers?.["x-mosera-retry-count"] ?? 0);
+          const maxRetries = getPositiveNumberEnv("WORKER_CANONICAL_RETRY_LIMIT", 5);
+          if (classified.retryable === true && retryCount < maxRetries) {
+            const nextRetryCount = retryCount + 1;
+            const delayMs = Math.min(2_000, 250 * nextRetryCount);
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            channel.publish(
+              rawMessage.fields.exchange || routing.exchange,
+              rawMessage.fields.routingKey,
+              rawMessage.content,
+              {
+                ...rawMessage.properties,
+                persistent: true,
+                headers: {
+                  ...(rawMessage.properties.headers ?? {}),
+                  "x-mosera-retry-count": nextRetryCount,
+                  "x-mosera-original-event-id": message.id,
+                },
+              }
+            );
+            await channel.waitForConfirms();
+            channel.ack(rawMessage);
+            logger.warn({
+              message: "RabbitMQ transient event scheduled for bounded retry.",
+              correlationId: metadata.correlationId,
+              metadata: {
+                ...metadata,
+                retryCount: nextRetryCount,
+                retryLimit: maxRetries,
+                error: getErrorMessage(error),
+              },
+            });
+            return;
+          }
+
+          if (classified.retryable === true) {
+            await onGovernedRecoveryRequired?.(message, getErrorMessage(error));
+            channel.ack(rawMessage);
+            logger.error({
+              message: "RabbitMQ bounded retries exhausted; event requires governed recovery.",
+              correlationId: metadata.correlationId,
+              metadata: {
+                ...metadata,
+                retryCount,
+                retryLimit: maxRetries,
+                classification: "GOVERNED_RECOVERY_REQUIRED",
+                error: getErrorMessage(error),
+              },
+            });
+            return;
+          }
+
           logger.error({
             message: "RabbitMQ message handler failed.",
             correlationId: metadata.correlationId,
@@ -281,7 +341,7 @@ export class RabbitMqQueueConsumer {
     return this.disconnectPromise;
   }
 
-  private async getChannel(): Promise<Channel> {
+  private async getChannel(): Promise<ConfirmChannel> {
     if (this.channel) {
       return this.channel;
     }
@@ -310,7 +370,7 @@ export class RabbitMqQueueConsumer {
       connection.on("close", markDisconnected);
     });
     this.connection = connection;
-    this.channel = await connection.createChannel();
+    this.channel = await connection.createConfirmChannel();
 
     return this.channel;
   }

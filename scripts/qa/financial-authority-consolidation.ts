@@ -84,6 +84,9 @@ async function main() {
   const canonicalTicket = await source(
     "src/domains/tickets/canonical-ticket.repository.ts"
   );
+  const canonicalTicketAcceptance = await source(
+    "scripts/migrations/local/101_add_draw_close_fence_effective_availability.sql"
+  );
   const compensationService = await source(
     "src/domains/compensation/compensation.service.ts"
   );
@@ -92,7 +95,10 @@ async function main() {
     fundingAuthority.includes(
       "funding_authority.resolve_funding_instrument"
     ) &&
-      canonicalTicket.includes("resolveFundingInstrument") &&
+      canonicalTicket.includes("ticket_authority.accept_ticket") &&
+      canonicalTicketAcceptance.includes(
+        "funding_authority.resolve_funding_instrument"
+      ) &&
       compensationService.includes("resolveFundingInstrument") &&
       !compensationService.includes("findActiveCreditWallet")
   );

@@ -1,5 +1,54 @@
 # Deferred Production Register
 
+## BF-7.4 Final Backend Freeze Deferrals
+
+These items are explicitly outside the frozen backend implementation scope. They
+cannot become production authority through defaults, fallback behavior, or an
+unapproved runtime switch. Each requires its own evidence, governance approval,
+and production-verification gate before activation.
+
+| Item | Classification | Required Before | Production-authority prevention |
+| --- | --- | --- | --- |
+| CSPRNG external validation | Certification incomplete | Internal RNG production activation | Game Engine production activation remains explicit and fail-closed. |
+| NIST, TestU01, PractRand, and Dieharder | External validation incomplete | Internal RNG production activation | Statistical evidence cannot activate an Outcome Provider. |
+| Math Certification Pack | Certification incomplete | Certified Math Authority promotion | Certification absence cannot be treated as approved evidence when required by a manifest. |
+| External laboratory certification | External certification incomplete | Regulated product activation where required | Certification remains a governed policy overlay and cannot be inferred. |
+| Penetration testing | External security review incomplete | Production launch | No test result is represented by backend readiness. |
+| Senior engineering review | External review incomplete | Production launch | Backend Freeze evidence requires independent launch review. |
+| Production-like staging | Production verification incomplete | Production launch | Production migration and release governance require rehearsal evidence. |
+| Managed infrastructure | Production infrastructure incomplete | Production launch | Production configuration rejects local PostgreSQL, Redis, and RabbitMQ. |
+| External HSM/KMS and production key custody | Production security incomplete | Production signing or token-key activation | No production keys are stored in the repository; production references are mandatory. |
+| Official-results adapters | Provider integration incomplete | Official-feed product activation | Manual and official provider authorities cannot silently select an unavailable adapter. |
+| UI/UX | Product surface incomplete | Pilot | Backend APIs and evidence remain authoritative; no UI is implied by freeze readiness. |
+| Dependency vulnerability remediation | Production security maintenance | Production launch when findings exist | The release dependency gate remains fail-closed at its configured severity; unclassified high/critical findings require remediation. |
+| Stale external QA endpoints | External environment maintenance | Any QA that depends on the endpoint | Unreachable external QA cannot be counted as canonical local or CI evidence. |
+| Advanced availability calendars | Deferred product capability | Product requirement | Existing effective availability remains authoritative; unsupported calendar rules cannot be supplied by clients. |
+| Automated expiration cleanup | Deferred operations automation | Operational scale requirement | Expiration semantics remain enforced by authoritative reads and governed commands. |
+| Operational command console | UI/operations tooling incomplete | Operational launch workflow | Commands still require canonical governance APIs and cannot bypass approval. |
+| Multi-currency and FX | Deferred financial capability | Multi-currency product launch | Frozen funding and ledger contracts reject unsupported behavior. |
+| Odds-format support | Deferred product capability | Product requirement | Unsupported wager formats cannot enter the canonical Ticket path. |
+| Additional compensation strategies | Deferred financial capability | Strategy-specific approval | Only registered Commission and Rebate strategies are production-capable. |
+
+### Dependency classification
+
+The BF-7.4 production dependency audit on 2026-08-03 found three high-severity
+findings and no critical findings. They affect the direct `next` runtime
+dependency through its bundled `postcss` and `sharp` packages; fixes are
+available. They are classified as **production-impacting and must be remediated
+before launch**. They do not block Backend Freeze because production deployment
+and UI activation remain disabled, but they do block production launch until a
+targeted upgrade and regression pass are complete.
+
+The audit wrapper fails closed when the npm advisory service is unavailable or
+returns malformed evidence. Future critical or high findings must be classified
+as exploitable, production-impacting, non-exploitable with documented runtime
+rationale, development-only, or false-positive/superseded. An unclassified
+critical or high finding requires remediation before production.
+
+Historical entries below are retained as phase evidence. Where a later Backend
+Freeze package completed an item, the current ownership maps, readiness endpoint,
+and BF-7.4 gate supersede the historical implementation-status wording.
+
 ## P1-014.5 Freeze Deferrals
 
 - Real production secrets and managed dependency commissioning.

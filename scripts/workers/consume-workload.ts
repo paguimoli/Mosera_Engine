@@ -1,5 +1,6 @@
 import { logger } from "@/src/lib/observability/logger";
 import { handleWorkloadMessage } from "@/src/domains/workers/financial-worker-handlers";
+import { recordCanonicalSettlementFinalClassification } from "@/src/domains/workers/canonical-settlement-request-handler";
 import type { QueueWorkloadCategory } from "@/src/lib/queue/queue-topology";
 import { getQueueTopologyEntry } from "@/src/lib/queue/queue-topology";
 import { RabbitMqQueueConsumer } from "@/src/lib/queue/rabbitmq/rabbitmq.consumer";
@@ -107,6 +108,15 @@ async function main() {
             },
           });
         },
+        onGovernedRecoveryRequired: category === "SETTLEMENT"
+          ? async (message, reason) => {
+              await recordCanonicalSettlementFinalClassification(
+                message,
+                "GOVERNED_RECOVERY_REQUIRED",
+                reason
+              );
+            }
+          : undefined,
       });
       await recordCompiledWorkerRuntime({
         componentName,
