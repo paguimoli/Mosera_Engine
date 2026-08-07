@@ -7,6 +7,7 @@ import {
   safeRecordWorkerHeartbeat,
   safeRecordWorkerProcessingMetric,
 } from "@/src/domains/operations/worker-observability.service";
+import { isRetryablePostgresError } from "@/src/lib/database/resilient-postgres-pool";
 import { logger } from "@/src/lib/observability/logger";
 import {
   CANONICAL_EVENT_CONTRACT_VERSION,
@@ -217,9 +218,11 @@ export class RabbitMqQueueConsumer {
           });
         } catch (error) {
           const classified = error as ClassifiedWorkerError;
+          const retryable =
+            classified.retryable === true || isRetryablePostgresError(error);
           const retryCount = Number(rawMessage.properties.headers?.["x-mosera-retry-count"] ?? 0);
           const maxRetries = getPositiveNumberEnv("WORKER_CANONICAL_RETRY_LIMIT", 5);
-          if (classified.retryable === true && retryCount < maxRetries) {
+          if (retryable && retryCount < maxRetries) {
             const nextRetryCount = retryCount + 1;
             const delayMs = Math.min(2_000, 250 * nextRetryCount);
             await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -252,7 +255,7 @@ export class RabbitMqQueueConsumer {
             return;
           }
 
-          if (classified.retryable === true) {
+          if (retryable) {
             await onGovernedRecoveryRequired?.(message, getErrorMessage(error));
             channel.ack(rawMessage);
             logger.error({

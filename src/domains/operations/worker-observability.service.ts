@@ -1,17 +1,16 @@
 import { logger } from "@/src/lib/observability/logger";
 import os from "node:os";
-import { listRecentJobRuns } from "@/src/domains/jobs/job-run.service";
 import {
   classifyOutboxEventType,
   listQueueTopology,
   type QueueWorkloadCategory,
 } from "@/src/lib/queue/queue-topology";
-import { supabaseServerAdmin } from "@/src/lib/supabase/server-admin-client";
 import { getQueueHealthSummary } from "./queue-health.service";
 import type { RabbitMqQueueHealth } from "./queue-health.types";
 import {
   insertWorkerFailure,
   insertWorkerProcessingMetric,
+  getOutboxObservabilitySnapshot,
   listFreshWorkerHeartbeats,
   listRecentWorkerFailures,
   listRecentWorkerProcessingMetrics,
@@ -28,14 +27,6 @@ import type {
   WorkerHeartbeat,
   WorkerObservabilitySummary,
 } from "./worker-observability.types";
-
-type OutboxMetricRow = {
-  event_type: string;
-  status: "PENDING" | "PUBLISHED" | "FAILED" | "DEAD_LETTER";
-  attempt_count: number;
-  created_at: string;
-  published_at?: string | null;
-};
 
 const processStartedAt = new Date();
 
@@ -151,59 +142,18 @@ export async function safeRecordWorkerFailure(input: RecordWorkerFailureInput) {
   }
 }
 
-async function countRowsByStatus(table: string, status: string) {
-  const { count, error } = await supabaseServerAdmin
-    .from(table)
-    .select("id", { count: "exact", head: true })
-    .eq("status", status);
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return count ?? 0;
-}
-
 export async function getOutboxObservabilitySummary(
   now = new Date()
 ): Promise<OutboxObservabilitySummary> {
-  const [
+  const snapshot = await getOutboxObservabilitySnapshot();
+  const {
     pendingCount,
     failedCount,
     deadLetterCount,
     publishedCount,
     failedJobCount,
-    oldest,
-    rowsResult,
-  ] = await Promise.all([
-    countRowsByStatus("outbox_events", "PENDING"),
-    countRowsByStatus("outbox_events", "FAILED"),
-    countRowsByStatus("outbox_events", "DEAD_LETTER"),
-    countRowsByStatus("outbox_events", "PUBLISHED"),
-    countRowsByStatus("job_runs", "FAILED"),
-    supabaseServerAdmin
-      .from("outbox_events")
-      .select("created_at")
-      .in("status", ["PENDING", "FAILED"])
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle(),
-    supabaseServerAdmin
-      .from("outbox_events")
-      .select("event_type, status, attempt_count, created_at, published_at")
-      .order("created_at", { ascending: false })
-      .limit(1000),
-  ]);
-
-  if (oldest.error) {
-    throw new Error(oldest.error.message);
-  }
-
-  if (rowsResult.error) {
-    throw new Error(rowsResult.error.message);
-  }
-
-  const rows = (rowsResult.data ?? []) as OutboxMetricRow[];
+    rows,
+  } = snapshot;
   const distribution = new Map<
     QueueWorkloadCategory,
     { pendingCount: number; failedCount: number; deadLetterCount: number }
@@ -251,8 +201,7 @@ export async function getOutboxObservabilitySummary(
     distribution.set(category, item);
   }
 
-  const oldestCreatedAt =
-    typeof oldest.data?.created_at === "string" ? oldest.data.created_at : null;
+  const oldestCreatedAt = snapshot.oldestCreatedAt;
   const oldestAgeSeconds = oldestCreatedAt
     ? Math.max(
         0,
@@ -336,46 +285,9 @@ export async function getWorkerObservabilitySummary(
     listRecentWorkerProcessingMetrics(100),
     listRecentWorkerFailures(100),
   ]);
-  const storedHeartbeats = [...storedFreshHeartbeats, ...storedStaleHeartbeats];
-  const heartbeats =
-    storedHeartbeats.length > 0
-      ? storedHeartbeats
-      : (await listRecentJobRuns({ limit: 25 })).map((jobRun) => ({
-          id: jobRun.id,
-          workerName: jobRun.jobName,
-          workloadCategory: "REPORTING_LOW_PRIORITY" as const,
-          instanceId: jobRun.id,
-          status:
-            jobRun.status === "FAILED"
-              ? ("DEGRADED" as const)
-              : jobRun.status === "STARTED"
-                ? ("ACTIVE" as const)
-                : ("IDLE" as const),
-          lastSeenAt: jobRun.finishedAt ?? jobRun.startedAt,
-          metadata: {
-            derivedFromJobRun: true,
-            jobRunStatus: jobRun.status,
-            correlationId: jobRun.correlationId,
-          },
-          createdAt: jobRun.startedAt,
-          updatedAt: jobRun.finishedAt ?? null,
-        }));
-  const staleWorkers =
-    storedHeartbeats.length > 0
-      ? storedStaleHeartbeats
-      : heartbeats.filter(
-          (heartbeat) =>
-            now.getTime() - new Date(heartbeat.lastSeenAt).getTime() >
-            thresholds.heartbeatStaleSeconds * 1000
-        );
-  const freshHeartbeats =
-    storedHeartbeats.length > 0
-      ? storedFreshHeartbeats
-      : heartbeats.filter(
-          (heartbeat) =>
-            now.getTime() - new Date(heartbeat.lastSeenAt).getTime() <=
-            thresholds.heartbeatStaleSeconds * 1000
-        );
+  const heartbeats = [...storedFreshHeartbeats, ...storedStaleHeartbeats];
+  const staleWorkers = storedStaleHeartbeats;
+  const freshHeartbeats = storedFreshHeartbeats;
   const processedByWorkerName = new Map<string, number>();
 
   for (const metric of recentMetrics) {

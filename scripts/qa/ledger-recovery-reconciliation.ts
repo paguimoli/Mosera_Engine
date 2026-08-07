@@ -202,8 +202,12 @@ async function verifyReconciliation(pool: Pool) {
       and credit.instruction_type <> 'CREDIT_NOOP'
     join settlement_service.financial_instruction_execution_attempts ca
       on ca.instruction_id = credit.instruction_id and ca.status in ('Posted', 'Reused', 'RecoveryVerified')
-    join public.credit_settlement_applications csa on csa.id::text = ca.external_reference_id
-    join credit_wallet_service.wallet_operation_requests wor on wor.operation_id = csa.operation_id
+    join public.credit_settlement_applications csa
+      on csa.id::text = ca.external_reference_id
+      or csa.operation_id::text = ca.external_reference_id
+    join credit_wallet_service.wallet_operation_requests wor
+      on wor.operation_id = csa.operation_id
+      or wor.operation_id::text = ca.external_reference_id
     where fi.target_service = 'ledger-service' and fi.instruction_type in ('LEDGER_PAYOUT', 'LEDGER_REFUND')
     order by fi.created_at desc limit 1
   `);

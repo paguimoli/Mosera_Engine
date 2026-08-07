@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
-import { Pool, type QueryResultRow } from "pg";
+import type { Pool, QueryResultRow } from "pg";
 
+import {
+  createResilientPostgresPool,
+  queryWithBoundedReconnect,
+} from "@/src/lib/database/resilient-postgres-pool";
 import { logger } from "@/src/lib/observability/logger";
 import type { QueueMessage } from "@/src/lib/queue/queue.types";
 import type { QueueWorkloadCategory } from "@/src/lib/queue/queue-topology";
@@ -386,6 +390,10 @@ export function createInMemoryFinancialWorkerEventRepository(
   return new InMemoryFinancialWorkerEventRepository(evidence);
 }
 
+let cachedDurableRepository:
+  | { databaseUrl: string; promise: Promise<FinancialWorkerEventRepository> }
+  | null = null;
+
 export async function createFinancialWorkerEventRepository({
   databaseUrl = process.env.DATABASE_URL,
 }: {
@@ -395,18 +403,38 @@ export async function createFinancialWorkerEventRepository({
     return createInMemoryFinancialWorkerEventRepository();
   }
 
-  const pool = new Pool({
-    connectionString: databaseUrl,
-    connectionTimeoutMillis: 1_000,
-    max: 4,
-  });
+  if (cachedDurableRepository?.databaseUrl === databaseUrl) {
+    return cachedDurableRepository.promise;
+  }
 
+  const promise = (async () => {
+    const pool = createResilientPostgresPool("financial-worker-evidence", {
+      connectionString: databaseUrl,
+      connectionTimeoutMillis: 1_000,
+      idleTimeoutMillis: 10_000,
+      max: 4,
+    });
+
+    try {
+      await queryWithBoundedReconnect(
+        pool,
+        "financial-worker-evidence",
+        "select 1"
+      );
+      return new PostgresFinancialWorkerEventRepository(pool);
+    } catch (error) {
+      await pool.end();
+      throw error;
+    }
+  })();
+  cachedDurableRepository = { databaseUrl, promise };
   try {
-    await pool.query("select 1");
-    return new PostgresFinancialWorkerEventRepository(pool);
-  } catch {
-    await pool.end();
-    return createInMemoryFinancialWorkerEventRepository();
+    return await promise;
+  } catch (error) {
+    if (cachedDurableRepository?.promise === promise) {
+      cachedDurableRepository = null;
+    }
+    throw error;
   }
 }
 
@@ -568,7 +596,6 @@ export async function handleWorkloadMessage({
 
   const resolvedRepository =
     repository ?? (await createFinancialWorkerEventRepository());
-  const shouldCloseRepository = !repository;
   const eventId = stableEventId(message);
   const handlerName = `${category.toLowerCase()}-worker`;
 
@@ -658,9 +685,5 @@ export async function handleWorkloadMessage({
     });
 
     throw error;
-  } finally {
-    if (shouldCloseRepository) {
-      await resolvedRepository.close();
-    }
   }
 }

@@ -1,4 +1,6 @@
-import { Pool, type QueryResultRow } from "pg";
+import type { Pool, QueryResultRow } from "pg";
+
+import { createResilientPostgresPool } from "@/src/lib/database/resilient-postgres-pool";
 
 import type {
   CreateOutboxEventInput,
@@ -33,9 +35,10 @@ function getPool() {
   if (!databaseUrl) {
     throw new Error("DATABASE_URL is required for durable outbox dispatch.");
   }
-  pool ??= new Pool({
+  pool ??= createResilientPostgresPool("outbox-postgres-repository", {
     connectionString: databaseUrl,
     connectionTimeoutMillis: 2_000,
+    idleTimeoutMillis: 10_000,
     max: 4,
   });
   return pool;

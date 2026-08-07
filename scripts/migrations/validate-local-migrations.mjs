@@ -1657,6 +1657,25 @@ addCheck(
   !functionExists("ticket_authority", "record_correlation")
 );
 addCheck("canonical_ticket_readiness_function", functionExists("ticket_authority", "ticket_readiness"));
+for (const table of [
+  "worker_heartbeats",
+  "worker_processing_metrics",
+  "worker_failures",
+]) {
+  addCheck(`canonical_worker_observability_table:${table}`, existsRegclass(`public.${table}`));
+}
+addCheck(
+  "canonical_worker_heartbeat_uniqueness",
+  constraintExists("public", "worker_heartbeats", "ux_worker_heartbeats_worker_instance")
+);
+addCheck(
+  "availability_decision_hash_lookup",
+  indexExists("ticket_authority", "availability_decisions", "idx_availability_decisions_decision_hash")
+);
+addCheck(
+  "availability_decision_hash_not_globally_unique",
+  !constraintExists("ticket_authority", "availability_decisions", "availability_decisions_decision_hash_key")
+);
 addCheck("game_engine_duplicate_create_conflict_resolved_or_blocked", true, {
   resolution: manifest.knownConflicts?.find((conflict) => conflict.id === "game_engine_evaluation_table_duplicate_create")?.resolution,
 });

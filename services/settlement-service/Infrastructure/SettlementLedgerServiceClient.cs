@@ -108,6 +108,7 @@ public sealed class SettlementLedgerServiceClient
     public async Task<(SettlementExternalReferenceDto Reference, string ResponseHash)> PostFinancialInstructionAsync(
         FinancialInstructionExecutionContext context,
         Guid walletId,
+        Guid ledgerAccountId,
         string fundingInstrument,
         string targetIdempotencyKey,
         string correlationId,
@@ -184,7 +185,7 @@ public sealed class SettlementLedgerServiceClient
             "settlement-service",
             context.SettlementRecord.SettlementId.ToString(),
             walletId.ToString(),
-            null,
+            ledgerAccountId.ToString(),
             transactionType,
             direction,
             amount,
@@ -206,7 +207,7 @@ public sealed class SettlementLedgerServiceClient
         request.Content = JsonContent.Create(new
         {
             walletId,
-            ledgerAccountId = (Guid?)null,
+            ledgerAccountId,
             instructionId = instruction.InstructionId.ToString(),
             instructionType = ledgerInstructionType,
             instructionHash = instruction.CanonicalPayloadHash,
@@ -257,15 +258,17 @@ public sealed class SettlementLedgerServiceClient
 
         using var document = JsonDocument.Parse(body);
         var ledgerEntry = document.RootElement.GetProperty("ledgerEntry");
-        var ledgerEntryId = ledgerEntry.GetProperty("id").GetString()
+        _ = ledgerEntry.GetProperty("id").GetString()
             ?? throw new SettlementIntegrationException("Ledger Service response did not include ledgerEntry.id.");
+        var postingRequestId = document.RootElement.GetProperty("postingRequestId").GetString()
+            ?? throw new SettlementIntegrationException("Ledger Service response did not include postingRequestId.");
 
         return (new SettlementExternalReferenceDto(
             context.SettlementRecord.SettlementId.ToString(),
             context.SettlementRecord.TicketId,
             context.SettlementRecord.TicketLineId,
-            "ledger_entry",
-            ledgerEntryId,
+            "ledger_posting_request",
+            postingRequestId,
             targetIdempotencyKey,
             "POSTED"), FinancialInstructionService.HashCanonical(body));
     }

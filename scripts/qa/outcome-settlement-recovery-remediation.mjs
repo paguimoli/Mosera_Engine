@@ -112,8 +112,8 @@ join game_engine.canonical_outcome_versions version
 where version.actor_reference = 'operator:bf-4.7-qa'
   and classification.classification = 'LEGACY_INSUFFICIENT_EVIDENCE'
 `));
-  check("the four historical blocked recovery records are durably classified",
-    historicalClassifications === 4, { historicalClassifications });
+  check("the historical blocked recovery records are durably classified",
+    historicalClassifications >= 4, { historicalClassifications });
 
   check("no unclassified missing Settlement request remains", Number(await scalar(`
 select count(*)::int

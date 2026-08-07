@@ -621,6 +621,7 @@ group.MapGet("/me", async (
     IAuthenticationAuthorityRepository identities,
     IRoleRepository roles,
     IPermissionRepository permissions,
+    IMembershipRepository memberships,
     CancellationToken cancellationToken) =>
 {
     var sessionToken = ReadOpaqueSessionToken(httpRequest);
@@ -642,6 +643,7 @@ group.MapGet("/me", async (
     if (identity is null) return Results.Json(new { success = false, error = "Identity is invalid." }, statusCode: StatusCodes.Status401Unauthorized);
     var identityRoles = await roles.ListRoles(identity.IdentityId, cancellationToken);
     var identityPermissions = await permissions.ListPermissions(identity.IdentityId, cancellationToken);
+    var identityMemberships = await memberships.ListMemberships(identity.IdentityId, cancellationToken);
     return Results.Ok(new
     {
         success = true,
@@ -650,7 +652,12 @@ group.MapGet("/me", async (
         roles = identityRoles.Select(ToRoleResponse),
         groups = identityRoles.Select(ToGroupResponse),
         permissions = identityPermissions.Select(ToPermissionResponse),
-        claims = identityPermissions.Select(permission => new { type = "permission", value = permission, issuer = "auth-service" })
+        claims = identityPermissions.Select(permission => new { type = "permission", value = permission, issuer = "auth-service" }),
+        memberships = identityMemberships.Select(membership => new
+        {
+            scopeType = membership.ScopeType,
+            scopeId = membership.ScopeId
+        })
     });
 });
 

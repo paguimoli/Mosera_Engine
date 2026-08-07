@@ -179,8 +179,10 @@ left join paired_credit pc on true
 left join credit_attempt ca on ca.instruction_id = pc.instruction_id
 left join public.credit_settlement_applications csa
   on csa.id::text = ca.external_reference_id
+  or csa.operation_id::text = ca.external_reference_id
 left join credit_wallet_service.wallet_operation_requests wor
-  on wor.operation_id = csa.operation_id;
+  on wor.operation_id = csa.operation_id
+  or wor.operation_id::text = ca.external_reference_id;
 """;
         command.Parameters.AddWithValue("instruction_id", instructionId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

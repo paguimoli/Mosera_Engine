@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { Pool, type PoolClient } from "pg";
+import type { PoolClient } from "pg";
+
+import { createResilientPostgresPool } from "@/src/lib/database/resilient-postgres-pool";
 
 import type { QueueMessage } from "@/src/lib/queue/queue.types";
 import type { FinancialWorkerHandlingResult } from "./financial-worker-handlers";
@@ -14,6 +16,34 @@ type CanonicalSettlementPayload = {
   outcomeCertificateId: string;
   outcomeCertificateHash: string;
   auditReference: string;
+};
+
+type SettlementInvocationContext = {
+  tenantId: string;
+  brandId: string;
+  ticketId: string;
+  ticketLineId: string;
+  playerAccountReference: string;
+  reservationId: string;
+  acceptedStakeAmountMinor: number;
+  currency: string;
+  acceptedAt: string;
+  acceptanceHash: string;
+  mathEvaluationCertificateId: string;
+  mathEvaluationCertificateHash: string;
+};
+
+type AuthoritativeSettlementEvidence = {
+  settlement_id: string;
+  settlement_request_id: string;
+  canonical_settlement_hash: string;
+};
+
+type OriginalSettlementEvidence = AuthoritativeSettlementEvidence & {
+  settlement_input_id: string;
+  settlement_input_hash: string;
+  math_evaluation_certificate_id: string;
+  math_evaluation_certificate_hash: string;
 };
 
 export type CanonicalSettlementProcessingClassification =
@@ -124,7 +154,11 @@ export async function recordCanonicalSettlementFinalClassification(
 ) {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) return;
-  const pool = new Pool({ connectionString: databaseUrl, connectionTimeoutMillis: 2_000, max: 1 });
+  const pool = createResilientPostgresPool("canonical-settlement-classification", {
+    connectionString: databaseUrl,
+    connectionTimeoutMillis: 2_000,
+    max: 1,
+  });
   try {
     await appendProcessingEvidence(pool, message, classification, reason, null);
   } finally {
@@ -260,6 +294,433 @@ for update of request
   }
 }
 
+async function loadSettlementInvocationContext(
+  client: PoolClient,
+  payload: CanonicalSettlementPayload
+): Promise<SettlementInvocationContext> {
+  const result = await client.query<{
+    tenant_id: string;
+    brand_id: string;
+    ticket_id: string;
+    ticket_line_id: string;
+    player_account_reference: string;
+    reservation_id: string;
+    accepted_stake_amount_minor: string;
+    currency: string;
+    accepted_at: Date;
+    acceptance_hash: string;
+    math_evaluation_certificate_id: string;
+    math_evaluation_certificate_hash: string;
+  }>(
+    `
+select
+  ticket.tenant_id::text,
+  ticket.brand_id::text,
+  ticket.ticket_id::text,
+  item.ticket_item_id::text as ticket_line_id,
+  ticket.player_account_id::text as player_account_reference,
+  ticket.reservation_id::text,
+  item.stake_minor::text as accepted_stake_amount_minor,
+  ticket.currency,
+  ticket.accepted_at,
+  ticket.acceptance_hash,
+  input.math_evaluation_certificate_id::text,
+  input.math_evaluation_certificate_hash
+from game_engine.settlement_input_records input
+join ticket_authority.ticket_items item
+  on input.ticket_reference = item.ticket_item_id::text
+  or input.ticket_reference = item.ticket_id::text || ':' || item.ticket_item_id::text
+  or (
+    input.ticket_reference = item.ticket_id::text
+    and 1 = (select count(*) from ticket_authority.ticket_items sibling where sibling.ticket_id = item.ticket_id)
+  )
+join ticket_authority.tickets ticket
+  on ticket.ticket_id = item.ticket_id
+join public.credit_reservations reservation
+  on reservation.id = ticket.reservation_id
+ and reservation.ticket_id = ticket.ticket_id::text
+ and reservation.player_id = ticket.player_account_id
+ and reservation.tenant_id = ticket.tenant_id
+ and reservation.brand_id = ticket.brand_id
+ and reservation.instrument_code = ticket.funding_instrument
+ and reservation.currency = ticket.currency
+ and reservation.scope_model = 'CANONICAL'
+where input.settlement_input_id = $1::uuid
+  and input.canonical_payload_hash = $2
+  and input.outcome_certificate_id = $3::uuid
+  and input.outcome_certificate_hash = $4
+  and ticket.draw_id = $5::uuid
+order by item.item_index
+limit 2
+`,
+    [
+      payload.settlementInputId,
+      payload.settlementInputHash,
+      payload.outcomeCertificateId,
+      payload.outcomeCertificateHash,
+      payload.drawId,
+    ]
+  );
+
+  if (result.rowCount !== 1) {
+    throw new CanonicalSettlementProcessingError(
+      result.rowCount === 0
+        ? "Canonical ticket financial context was not found for Settlement invocation."
+        : "SettlementInput ticket reference resolves to multiple canonical ticket items.",
+      result.rowCount === 0 ? "TRANSIENT_RETRY" : "TERMINAL_INVALID",
+      result.rowCount === 0
+    );
+  }
+
+  const row = result.rows[0];
+  return {
+    tenantId: row.tenant_id,
+    brandId: row.brand_id,
+    ticketId: row.ticket_id,
+    ticketLineId: row.ticket_line_id,
+    playerAccountReference: row.player_account_reference,
+    reservationId: row.reservation_id,
+    acceptedStakeAmountMinor: Number(row.accepted_stake_amount_minor),
+    currency: row.currency,
+    acceptedAt: row.accepted_at.toISOString(),
+    acceptanceHash: row.acceptance_hash,
+    mathEvaluationCertificateId: row.math_evaluation_certificate_id,
+    mathEvaluationCertificateHash: row.math_evaluation_certificate_hash,
+  };
+}
+
+async function settlementServiceRequest(
+  path: string,
+  body: Record<string, unknown>,
+  correlationId: string
+): Promise<Record<string, unknown>> {
+  const baseUrl = process.env.SETTLEMENT_SERVICE_URL?.trim();
+  if (!baseUrl) {
+    throw new CanonicalSettlementProcessingError(
+      "SETTLEMENT_SERVICE_URL is required for canonical Settlement invocation.",
+      "TRANSIENT_RETRY",
+      true
+    );
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-correlation-id": correlationId,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    let result: Record<string, unknown> = {};
+    if (text) {
+      try {
+        const parsed = JSON.parse(text) as unknown;
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          result = parsed as Record<string, unknown>;
+        }
+      } catch {
+        result = { message: text };
+      }
+    }
+    if (!response.ok) {
+      const detail = typeof result.message === "string"
+        ? result.message.slice(0, 1_000)
+        : typeof result.error === "object" && result.error !== null && "message" in result.error
+          ? String((result.error as { message: unknown }).message)
+          : `HTTP ${response.status}`;
+      throw new CanonicalSettlementProcessingError(
+        `Settlement Service ${path} failed: ${detail}`,
+        response.status >= 500 ? "TRANSIENT_RETRY" : "TERMINAL_INVALID",
+        response.status >= 500
+      );
+    }
+    return result;
+  } catch (error) {
+    if (error instanceof CanonicalSettlementProcessingError) throw error;
+    throw new CanonicalSettlementProcessingError(
+      `Settlement Service ${path} is unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      "TRANSIENT_RETRY",
+      true
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function invokeAuthoritativeSettlement(
+  payload: CanonicalSettlementPayload,
+  context: SettlementInvocationContext,
+  correlationId: string
+) {
+  const idempotencyKey = `canonical-outcome-settlement:${payload.settlementRequestId}`;
+  const financialContextReference = `ticket-acceptance:v1:${context.acceptanceHash}`;
+  const ingestion = await settlementServiceRequest(
+    "/v1/settlement/inputs/ingest",
+    {
+      settlementRequestId: payload.settlementRequestId,
+      idempotencyKey,
+      settlementInputId: payload.settlementInputId,
+      settlementInputHash: payload.settlementInputHash,
+      mathEvaluationCertificateId: context.mathEvaluationCertificateId,
+      mathEvaluationCertificateHash: context.mathEvaluationCertificateHash,
+      outcomeCertificateId: payload.outcomeCertificateId,
+      outcomeCertificateHash: payload.outcomeCertificateHash,
+      tenantId: context.tenantId,
+      brandId: context.brandId,
+      ticketId: context.ticketId,
+      ticketLineId: context.ticketLineId,
+      playerAccountReference: context.playerAccountReference,
+      acceptedWagerFinancialContextReference: financialContextReference,
+      acceptedStakeAmountMinor: context.acceptedStakeAmountMinor,
+      currency: context.currency,
+      minorUnitPrecision: 2,
+      roundingPolicyReference: "rounding-policy:v1",
+      creditReservationReference: context.reservationId,
+      settlementPolicyVersion: "settlement-policy:v1",
+      acceptedAt: context.acceptedAt,
+      requestProvenance: {
+        authority: "CanonicalOutcomeAuthority",
+        outcomeVersionId: payload.outcomeVersionId,
+        drawId: payload.drawId,
+      },
+      mode: "DryRun",
+      acceptedWagerFinancialContext: {
+        contextReference: financialContextReference,
+        tenantId: context.tenantId,
+        brandId: context.brandId,
+        ticketId: context.ticketId,
+        ticketLineId: context.ticketLineId,
+        playerAccountReference: context.playerAccountReference,
+        acceptedStakeAmountMinor: context.acceptedStakeAmountMinor,
+        currency: context.currency,
+        minorUnitPrecision: 2,
+        roundingPolicyReference: "rounding-policy:v1",
+        creditReservationReference: {
+          reservationId: context.reservationId,
+          tenantId: context.tenantId,
+          brandId: context.brandId,
+          playerAccountReference: context.playerAccountReference,
+          ticketId: context.ticketId,
+          ticketLineId: context.ticketLineId,
+        },
+        acceptedAt: context.acceptedAt,
+      },
+      settlementPolicy: { version: "settlement-policy:v1" },
+    },
+    correlationId
+  );
+  if (ingestion.settlementRequestId !== payload.settlementRequestId) {
+    throw new CanonicalSettlementProcessingError(
+      "Settlement Service returned a conflicting Settlement request identity.",
+      "TERMINAL_INVALID"
+    );
+  }
+
+  const execution = await settlementServiceRequest(
+    `/v1/settlement/requests/${payload.settlementRequestId}/execute`,
+    {
+      settlementRequestId: payload.settlementRequestId,
+      idempotencyKey,
+      mode: "DryRun",
+    },
+    correlationId
+  );
+  const settlementRecord = execution.settlementRecord as Record<string, unknown> | undefined;
+  const settlementId = typeof settlementRecord?.settlementId === "string"
+    ? settlementRecord.settlementId
+    : null;
+  if (!settlementId) {
+    throw new CanonicalSettlementProcessingError(
+      "Settlement Service execution returned no authoritative Settlement identity.",
+      "TERMINAL_INVALID"
+    );
+  }
+
+  return settlementId;
+}
+
+async function executeAuthoritativeFinancialInstructions(
+  settlementId: string,
+  correlationId: string
+) {
+  const instructions = await settlementServiceRequest(
+    `/v1/settlement/records/${settlementId}/financial-instructions/execute`,
+    {},
+    correlationId
+  );
+  const results = Array.isArray(instructions.results) ? instructions.results : [];
+  if (results.length === 0 || results.some((item) => {
+    if (!item || typeof item !== "object") return true;
+    return !["Posted", "Skipped", "Reused"].includes(String((item as { status?: unknown }).status));
+  })) {
+    throw new CanonicalSettlementProcessingError(
+      "Settlement financial instructions did not complete authoritatively.",
+      "TRANSIENT_RETRY",
+      true
+    );
+  }
+}
+
+async function loadOriginalSettlementEvidence(
+  client: PoolClient,
+  payload: CanonicalSettlementPayload
+): Promise<OriginalSettlementEvidence> {
+  const result = await client.query<OriginalSettlementEvidence>(
+    `
+select
+  record.settlement_id::text,
+  record.settlement_request_id::text,
+  record.canonical_settlement_hash,
+  record.settlement_input_id::text,
+  record.settlement_input_hash,
+  record.math_evaluation_certificate_id::text,
+  record.math_evaluation_certificate_hash
+from game_engine.canonical_outcome_versions corrected
+join game_engine.outcome_settlement_requests original_request
+  on original_request.outcome_version_id = corrected.previous_outcome_version_id
+join game_engine.outcome_settlement_acknowledgements acknowledgement
+  on acknowledgement.settlement_request_id = original_request.settlement_request_id
+join settlement_service.authoritative_settlement_records record
+  on record.settlement_id = acknowledgement.authoritative_settlement_id
+where corrected.outcome_version_id = $1::uuid
+  and corrected.version_kind = 'Corrected'
+order by record.issued_at, record.settlement_id
+limit 2
+`,
+    [payload.outcomeVersionId]
+  );
+  if (result.rowCount !== 1) {
+    throw new CanonicalSettlementProcessingError(
+      result.rowCount === 0
+        ? "Corrected outcome has no completed original Settlement evidence."
+        : "Corrected outcome resolves to multiple original Settlement records.",
+      result.rowCount === 0 ? "TRANSIENT_RETRY" : "TERMINAL_INVALID",
+      result.rowCount === 0
+    );
+  }
+  return result.rows[0];
+}
+
+async function invokeAuthoritativeResettlement(
+  client: PoolClient,
+  payload: CanonicalSettlementPayload,
+  context: SettlementInvocationContext,
+  correlationId: string
+): Promise<AuthoritativeSettlementEvidence> {
+  const original = await loadOriginalSettlementEvidence(client, payload);
+  const resettlementRequestId = deterministicUuid(
+    `canonical-outcome-resettlement:${payload.settlementRequestId}`
+  );
+  const idempotencyKey = `canonical-outcome-resettlement:${payload.settlementRequestId}`;
+  const create = await settlementServiceRequest(
+    "/v1/settlement/resettlement-chains",
+    {
+      resettlementRequestId,
+      idempotencyKey,
+      originalSettlementId: original.settlement_id,
+      originalSettlementHash: original.canonical_settlement_hash,
+      originalSettlementInputId: original.settlement_input_id,
+      originalSettlementInputHash: original.settlement_input_hash,
+      correctedSettlementInputId: payload.settlementInputId,
+      correctedSettlementInputHash: payload.settlementInputHash,
+      originalMathEvaluationCertificateId: original.math_evaluation_certificate_id,
+      originalMathEvaluationCertificateHash: original.math_evaluation_certificate_hash,
+      correctedMathEvaluationCertificateId: context.mathEvaluationCertificateId,
+      correctedMathEvaluationCertificateHash: context.mathEvaluationCertificateHash,
+      reasonCode: "RESULT_CORRECTION",
+      requestorReference: "canonical-outcome-authority",
+      approvalMetadata: {},
+      requestedAt: new Date().toISOString(),
+      provenance: {
+        authority: "CanonicalOutcomeAuthority",
+        outcomeVersionId: payload.outcomeVersionId,
+        settlementRequestId: payload.settlementRequestId,
+      },
+      mode: "DryRun",
+    },
+    correlationId
+  );
+  const storedRequest = create.request as Record<string, unknown> | undefined;
+  if (storedRequest?.resettlementRequestId !== resettlementRequestId) {
+    throw new CanonicalSettlementProcessingError(
+      "Settlement Service returned a conflicting resettlement request identity.",
+      "TERMINAL_INVALID"
+    );
+  }
+
+  const execution = await settlementServiceRequest(
+    `/v1/settlement/resettlement-chains/${resettlementRequestId}/execute`,
+    { resettlementRequestId, executeFinancialInstructions: true },
+    correlationId
+  );
+  const chain = execution.chain as Record<string, unknown> | undefined;
+  const correctedSettlementId = typeof chain?.correctedSettlementId === "string"
+    ? chain.correctedSettlementId
+    : null;
+  const correctedSettlementHash = typeof chain?.correctedSettlementHash === "string"
+    ? chain.correctedSettlementHash
+    : null;
+  if (!correctedSettlementId || !correctedSettlementHash) {
+    throw new CanonicalSettlementProcessingError(
+      "Settlement resettlement execution returned no corrected Settlement evidence.",
+      "TRANSIENT_RETRY",
+      true
+    );
+  }
+
+  const corrected = await client.query<AuthoritativeSettlementEvidence>(
+    `
+select settlement_id::text, settlement_request_id::text, canonical_settlement_hash
+from settlement_service.authoritative_settlement_records
+where settlement_id = $1::uuid and canonical_settlement_hash = $2
+`,
+    [correctedSettlementId, correctedSettlementHash]
+  );
+  if (corrected.rowCount !== 1) {
+    throw new CanonicalSettlementProcessingError(
+      "Corrected Settlement evidence is not durably visible after resettlement execution.",
+      "TRANSIENT_RETRY",
+      true
+    );
+  }
+  return corrected.rows[0];
+}
+
+async function findAuthoritativeSettlement(
+  client: PoolClient,
+  payload: CanonicalSettlementPayload
+): Promise<AuthoritativeSettlementEvidence[]> {
+  const result = await client.query<AuthoritativeSettlementEvidence>(
+    `
+select
+  record.settlement_id::text,
+  record.settlement_request_id::text,
+  record.canonical_settlement_hash
+from settlement_service.authoritative_settlement_records record
+where record.settlement_request_id = $1::uuid
+  and record.settlement_input_id = $2::uuid
+  and record.settlement_input_hash = $3
+  and record.outcome_certificate_id = $4::uuid
+  and record.outcome_certificate_hash = $5
+order by record.issued_at, record.settlement_id
+limit 2
+`,
+    [
+      payload.settlementRequestId,
+      payload.settlementInputId,
+      payload.settlementInputHash,
+      payload.outcomeCertificateId,
+      payload.outcomeCertificateHash,
+    ]
+  );
+  return result.rows;
+}
+
 export async function handleCanonicalSettlementRequest(
   message: QueueMessage
 ): Promise<FinancialWorkerHandlingResult> {
@@ -282,7 +743,7 @@ export async function handleCanonicalSettlementRequest(
   }
   const eventId = message.id!.trim();
   const messageHash = canonicalMessageHash(message);
-  const pool = new Pool({
+  const pool = createResilientPostgresPool("canonical-settlement-consumer", {
     connectionString: databaseUrl,
     connectionTimeoutMillis: 2_000,
     max: 2,
@@ -439,35 +900,29 @@ on conflict (draw_id, event_type, evidence_reference) do nothing
       );
     }
 
-    const settlementEvidence = await client.query<{
-      settlement_id: string;
-      settlement_request_id: string;
-      canonical_settlement_hash: string;
-    }>(
-      `
-select
-  record.settlement_id::text,
-  record.settlement_request_id::text,
-  record.canonical_settlement_hash
-from settlement_service.authoritative_settlement_records record
-where record.settlement_input_id = $1::uuid
-  and record.settlement_input_hash = $2
-  and record.outcome_certificate_id = $3::uuid
-  and record.outcome_certificate_hash = $4
-order by record.issued_at, record.settlement_id
-limit 2
-`,
-      [
-        payload.settlementInputId,
-        payload.settlementInputHash,
-        payload.outcomeCertificateId,
-        payload.outcomeCertificateHash,
-      ]
-    );
-    if (settlementEvidence.rowCount !== 1) {
-      throw settlementEvidence.rowCount === 0
+    let settlementEvidence = await findAuthoritativeSettlement(client, payload);
+    if (settlementEvidence.length === 0) {
+      const invocationContext = await loadSettlementInvocationContext(client, payload);
+      if (payload.requestKind === "Corrected") {
+        settlementEvidence = [await invokeAuthoritativeResettlement(
+          client,
+          payload,
+          invocationContext,
+          message.correlationId ?? payload.settlementRequestId
+        )];
+      } else {
+        await invokeAuthoritativeSettlement(
+          payload,
+          invocationContext,
+          message.correlationId ?? payload.settlementRequestId
+        );
+        settlementEvidence = await findAuthoritativeSettlement(client, payload);
+      }
+    }
+    if (settlementEvidence.length !== 1) {
+      throw settlementEvidence.length === 0
         ? new CanonicalSettlementProcessingError(
-            "Authoritative Settlement acknowledgement is not available yet.",
+            "Settlement Service invocation produced no authoritative Settlement acknowledgement.",
             "TRANSIENT_RETRY",
             true
           )
@@ -477,7 +932,11 @@ limit 2
           );
     }
 
-    const authority = settlementEvidence.rows[0];
+    const authority = settlementEvidence[0];
+    await executeAuthoritativeFinancialInstructions(
+      authority.settlement_id,
+      message.correlationId ?? payload.settlementRequestId
+    );
     const acknowledgementId = deterministicUuid(
       `settlement-acknowledgement:${payload.settlementRequestId}`
     );

@@ -166,7 +166,6 @@ public sealed class FinancialInstructionExecutionService(
         string correlationId,
         CancellationToken cancellationToken)
     {
-        var walletId = ParseGuid(context.SettlementRecord.PlayerAccountReference, "playerAccountReference");
         if (string.IsNullOrWhiteSpace(context.CreditReservationReference))
         {
             throw new SettlementIntegrationException(
@@ -175,14 +174,18 @@ public sealed class FinancialInstructionExecutionService(
         var reservationId = ParseGuid(
             context.CreditReservationReference,
             "creditReservationReference");
-        var fundingInstrument = await creditClient.GetReservationInstrumentAsync(
+        var funding = await creditClient.GetReservationFundingContextAsync(
             reservationId,
             correlationId,
             cancellationToken);
+        var playerId = ParseGuid(
+            context.SettlementRecord.PlayerAccountReference,
+            "playerAccountReference");
         return await ledgerClient.PostFinancialInstructionAsync(
             context,
-            walletId,
-            fundingInstrument,
+            funding.WalletId,
+            playerId,
+            funding.Instrument,
             targetIdempotencyKey,
             correlationId,
             cancellationToken);

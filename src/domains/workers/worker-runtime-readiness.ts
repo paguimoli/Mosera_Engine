@@ -1,4 +1,10 @@
-import { Pool } from "pg";
+import type { Pool } from "pg";
+
+import {
+  createResilientPostgresPool,
+  queryWithBoundedReconnect,
+} from "@/src/lib/database/resilient-postgres-pool";
+import { logger } from "@/src/lib/observability/logger";
 
 type RuntimeStatus = "READY" | "DEGRADED" | "STOPPED";
 
@@ -10,9 +16,10 @@ function getPool() {
     throw new Error("DATABASE_URL is required for durable worker readiness.");
   }
 
-  pool ??= new Pool({
+  pool ??= createResilientPostgresPool("compiled-worker-runtime", {
     connectionString: databaseUrl,
     connectionTimeoutMillis: 2_000,
+    idleTimeoutMillis: 10_000,
     max: 2,
   });
   return pool;
@@ -27,7 +34,9 @@ export async function recordCompiledWorkerRuntime({
   status: RuntimeStatus;
   metadata?: Record<string, unknown>;
 }) {
-  await getPool().query(
+  await queryWithBoundedReconnect(
+    getPool(),
+    componentName,
     `
 insert into game_engine.canonical_runtime_components (
   component_name,
@@ -74,6 +83,14 @@ export function startCompiledWorkerHeartbeat({
       componentName,
       status: "READY",
       metadata,
+    }).catch((error) => {
+      logger.warn({
+        message: "Compiled worker runtime heartbeat will retry on the next interval.",
+        metadata: {
+          componentName,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
     });
   }, intervalMs);
 

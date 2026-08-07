@@ -1,5 +1,5 @@
 import * as amqp from "amqplib";
-import type { Channel, ChannelModel } from "amqplib";
+import type { ChannelModel, ConfirmChannel } from "amqplib";
 
 import {
   CANONICAL_EVENT_CONTRACT_VERSION,
@@ -11,7 +11,7 @@ import { resolveRabbitMqRouting } from "./rabbitmq.routing";
 
 export class RabbitMqQueuePublisher implements QueuePublisher {
   private connection: ChannelModel | null = null;
-  private channel: Channel | null = null;
+  private channel: ConfirmChannel | null = null;
 
   async publish(message: QueueMessage): Promise<void> {
     if (
@@ -67,8 +67,9 @@ export class RabbitMqQueuePublisher implements QueuePublisher {
     );
 
     if (!published) {
-      throw new Error("RabbitMQ publish buffer is full.");
+      await new Promise<void>((resolve) => channel.once("drain", resolve));
     }
+    await channel.waitForConfirms();
   }
 
   async close(): Promise<void> {
@@ -80,7 +81,7 @@ export class RabbitMqQueuePublisher implements QueuePublisher {
     await connection?.close().catch(() => undefined);
   }
 
-  private async getChannel(): Promise<Channel> {
+  private async getChannel(): Promise<ConfirmChannel> {
     if (this.channel) {
       return this.channel;
     }
@@ -101,7 +102,7 @@ export class RabbitMqQueuePublisher implements QueuePublisher {
     connection.on("error", reset);
     connection.on("close", reset);
     this.connection = connection;
-    this.channel = await connection.createChannel();
+    this.channel = await connection.createConfirmChannel();
 
     return this.channel;
   }

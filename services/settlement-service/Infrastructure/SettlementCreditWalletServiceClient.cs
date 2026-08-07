@@ -6,6 +6,8 @@ using SettlementService.Contracts;
 
 namespace SettlementService.Infrastructure;
 
+public sealed record SettlementReservationFundingContext(Guid WalletId, string Instrument);
+
 public sealed class SettlementCreditWalletServiceClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -27,6 +29,18 @@ public sealed class SettlementCreditWalletServiceClient
         string correlationId,
         CancellationToken cancellationToken)
     {
+        var reservation = await GetReservationFundingContextAsync(
+            reservationId,
+            correlationId,
+            cancellationToken);
+        return reservation.Instrument;
+    }
+
+    public async Task<SettlementReservationFundingContext> GetReservationFundingContextAsync(
+        Guid reservationId,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
         var reservation = await GetReservationContextAsync(
             reservationId,
             correlationId,
@@ -36,7 +50,7 @@ public sealed class SettlementCreditWalletServiceClient
             throw new SettlementIntegrationException(
                 $"Unsupported authoritative funding instrument {reservation.Instrument}.");
         }
-        return reservation.Instrument;
+        return new SettlementReservationFundingContext(reservation.WalletId, reservation.Instrument);
     }
 
     public async Task<SettlementTargetServiceReadiness> CheckReadinessAsync(CancellationToken cancellationToken)
@@ -185,7 +199,9 @@ public sealed class SettlementCreditWalletServiceClient
         }
 
         var operation = role == "reversal" ? "REVERSE" : "SETTLE";
-        var captureAmount = record.StakeAmountMinor;
+        var captureAmount = role == "reversal"
+            ? reservation.CapturedAmount
+            : record.StakeAmountMinor;
         var balanceImpact = record.NetResultAmountMinor == 0 ? record.GrossPayoutAmountMinor : record.NetResultAmountMinor;
         if (balanceImpact == 0)
         {
@@ -250,15 +266,15 @@ public sealed class SettlementCreditWalletServiceClient
         }
 
         using var document = JsonDocument.Parse(body);
-        var settlementApplicationId = document.RootElement.GetProperty("effectReferenceId").GetString()
-            ?? throw new SettlementIntegrationException("Credit Wallet Service response did not include effectReferenceId.");
+        var operationId = document.RootElement.GetProperty("operationId").GetString()
+            ?? throw new SettlementIntegrationException("Credit Wallet Service response did not include operationId.");
 
         return (new SettlementExternalReferenceDto(
             record.SettlementId.ToString(),
             record.TicketId,
             record.TicketLineId,
-            "credit_settlement_application",
-            settlementApplicationId,
+            "wallet_operation_request",
+            operationId,
             targetIdempotencyKey,
             "POSTED"), FinancialInstructionService.HashCanonical(body));
     }

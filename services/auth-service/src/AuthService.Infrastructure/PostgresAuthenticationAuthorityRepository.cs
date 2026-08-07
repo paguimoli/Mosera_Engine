@@ -362,11 +362,16 @@ values (@id, @identity_id, 'ACTIVE', 'canonical-single-session', @created_at, @e
         command.CommandText = """
 update auth_service.canonical_sessions
 set last_seen_at = now(), idle_expires_at = least(@idle_expires_at, absolute_expires_at)
-where session_token_hash = @token_hash and revoked_at is null and idle_expires_at > now() and absolute_expires_at > now();
+where session_token_hash = @token_hash
+  and revoked_at is null
+  and idle_expires_at > now()
+  and absolute_expires_at > now()
+  and (last_seen_at <= now() - interval '30 seconds'
+    or idle_expires_at < least(@idle_expires_at, absolute_expires_at) - interval '30 seconds');
 """;
         command.Parameters.AddWithValue("token_hash", tokenHash);
         command.Parameters.AddWithValue("idle_expires_at", idleExpiresAt);
-        if (await command.ExecuteNonQueryAsync(cancellationToken) == 0) return null;
+        await command.ExecuteNonQueryAsync(cancellationToken);
         return await FindSessionByHash(tokenHash, cancellationToken);
     }
 

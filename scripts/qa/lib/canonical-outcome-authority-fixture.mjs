@@ -30,9 +30,11 @@ join game_engine.game_definition_versions version on version.game_definition_id 
 join game_engine.game_modules module on module.id = definition.game_module_id
 join game_engine.game_module_versions module_version on module_version.id = module.active_version_id
 where version.outcome_generation_definition is not null
+  and ($1::uuid is null or definition.id = $1::uuid)
+  and (not $2::boolean or definition.active_version_id = version.id)
 order by version.version_number desc, assignment.effective_from, assignment.id
 limit 1;
-`);
+`, [options.gameDefinitionId ?? null, options.requireActiveVersion ?? false]);
   if (dependency.rowCount !== 1) throw new Error("Canonical outcome fixture requires one immutable Game Definition.");
   const definition = dependency.rows[0];
   const rules = definition.outcome_generation_definition;
@@ -62,7 +64,17 @@ limit 1;
   const configurationVersion = "1";
   const providerType = category === "INTERNAL_CSPRNG" ? "CERTIFIED_CSPRNG" : "EXTERNAL_OFFICIAL_RESULT";
   const generates = category === "INTERNAL_CSPRNG";
-  const scheduledAt = new Date(Date.now() + 60_000);
+  const drawStatus = options.drawStatus ?? "Certified";
+  const scheduledAt = options.scheduledAt ?? new Date(Date.now() + 60_000);
+  const salesOpenAt = drawStatus === "SalesOpen"
+    ? new Date(Date.now() - 60_000)
+    : new Date(scheduledAt.getTime() - 10 * 60_000);
+  const salesCloseAt = drawStatus === "SalesOpen"
+    ? new Date(Date.now() + 10 * 60_000)
+    : new Date(scheduledAt.getTime() - 60_000);
+  const drawAt = drawStatus === "SalesOpen"
+    ? new Date(Date.now() + 11 * 60_000)
+    : scheduledAt;
   const scheduleHash = canonicalHash(`schedule:${suffix}`);
   const identityHash = canonicalHash(`draw:${drawId}`);
   const manifestHash = canonicalHash(`manifest:${drawId}`);
@@ -128,9 +140,12 @@ insert into game_engine.draw_schedules (
   id, game_definition_id, draw_authority_assignment_id, sales_open_at,
   sales_close_at, draw_at, status, schedule_version_id, scheduled_execution_at,
   schedule_hash, draw_identity_hash)
-values ($1, $2, $3, $4::timestamptz - interval '10 minutes',
-  $4::timestamptz - interval '1 minute', $4, 'Certified', $5, $4, $6, $7);
-`, [drawId, definition.game_definition_id, definition.assignment_id, scheduledAt, scheduleVersionId, scheduleHash, identityHash]);
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);
+`, [
+    drawId, definition.game_definition_id, definition.assignment_id,
+    salesOpenAt, salesCloseAt, drawAt, drawStatus, scheduleVersionId,
+    scheduledAt, scheduleHash, identityHash,
+  ]);
   await pool.query(`
 insert into game_engine.draw_execution_manifests (
   execution_manifest_id, draw_id, schedule_version_id, game_definition_version_id,
@@ -149,6 +164,7 @@ from game_engine.game_definition_versions version where version.id = $4;
 
   return {
     suffix, category, drawId, manifestId, manifestHash, providerId, providerVersion,
+    gameDefinitionId: definition.game_definition_id,
     configurationVersion, gameDefinitionVersionId: definition.game_definition_version_id,
     gameDefinitionHash: definition.definition_hash, evaluatorVersion: definition.evaluator_version,
     engineName: definition.engine_name, engineVersion: definition.engine_version,
