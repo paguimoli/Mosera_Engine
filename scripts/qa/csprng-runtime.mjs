@@ -14,6 +14,8 @@ const runtimeSource = read("services/game-engine/src/GameEngine.Application/Serv
 const providerSource = read("services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs");
 const apiSource = read("services/game-engine/src/GameEngine.Api/Program.cs");
 const persistenceSource = read("services/game-engine/src/GameEngine.Infrastructure/Persistence/PostgresCanonicalOutcomeProviderRepository.cs");
+const serviceConfigurationSource = read("services/game-engine/src/GameEngine.Api/Configuration/ServiceConfiguration.cs");
+const productionEnvironmentTemplate = read(".env.production.example");
 
 addCheck("common OS entropy abstraction exists", runtimeSource.includes("public interface IOsEntropyProvider"));
 addCheck("Linux getrandom provider exists", runtimeSource.includes("LinuxGetRandomEntropyProvider") && runtimeSource.includes("EntryPoint = \"getrandom\""));
@@ -26,7 +28,12 @@ addCheck("DRBG destroy zeroizes state", runtimeSource.includes("MarkDestroyed") 
 addCheck("no live CTR/Hash DRBG runtime added", !runtimeSource.includes("CtrDrbgRuntime") && !runtimeSource.includes("HashDrbgRuntime"));
 addCheck("canonical Internal CSPRNG provider implemented", providerSource.includes("CanonicalOutcomeProviderAuthority") && providerSource.includes("CompleteGeneratedExecutionAsync"));
 addCheck("generation is Game Definition driven", providerSource.includes("OutcomeGenerationDefinition") && !providerSource.includes("UniqueNumbers(session, 1, 90, 5)"));
-addCheck("production activation remains disabled", providerSource.includes("ProductionActive: authority.ProviderEnabled") && providerSource.includes("production activation must remain disabled"));
+addCheck(
+  "production activation remains governed and disabled by default",
+  providerSource.includes("ProductionActive: authority.ProviderEnabled") &&
+    serviceConfigurationSource.includes('IsTrue("GAME_ENGINE_PRODUCTION_ACTIVATION_ENABLED")') &&
+    productionEnvironmentTemplate.includes("GAME_ENGINE_PRODUCTION_ACTIVATION_ENABLED=false"),
+);
 addCheck("canonical provider evidence Postgres adapter exists", persistenceSource.includes("game_engine.outcome_provider_execution_evidence") && persistenceSource.includes("provider_evidence_payload"));
 addCheck("DI registers one canonical CSPRNG provider", apiSource.includes("AddSingleton<InternalCsprngOutcomeProvider>") && !apiSource.includes("ICertifiedCsprngEvidenceRepository"));
 
