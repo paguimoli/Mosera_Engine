@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "1.0.0",
+  "amendmentId": "csprng-1.2b-20260816T185106Z-7eda4e0-amendment-008",
+  "campaignId": "csprng-1.2b-20260816T185106Z-7eda4e0",
+  "recordedAtUtc": "2026-08-16T20:12:40Z",
+  "classification": "EVIDENCE_CHRONOLOGY_CORRECTION",
+  "affectedRecord": "csprng-1.2b-20260816T185106Z-7eda4e0-amendment-002",
+  "correction": {
+    "description": "Amendment 002 contains a manually entered recordedAtUtc value of 2026-08-16T19:13:30Z, which predates the affected execution start times 2026-08-16T19:19:26.011Z and 2026-08-16T19:19:33.871Z.",
+    "originalRecordChanged": false,
+    "affectedExecutionIdentityChanged": false,
+    "failedEvidenceChanged": false,
+    "correctedExecutionEvidenceChanged": false
+  },
+  "disposition": "ORIGINAL_AMENDMENT_PRESERVED; ITS RECORDED TIMESTAMP IS NON-AUTHORITATIVE FOR EXECUTION ORDER"
+}

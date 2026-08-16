@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0.0",
+  "amendmentId": "csprng-1.2b-20260816T185106Z-7eda4e0-amendment-002",
+  "campaignId": "csprng-1.2b-20260816T185106Z-7eda4e0",
+  "recordedAtUtc": "2026-08-16T19:13:30Z",
+  "classification": "MINIMAL_NIST_INVOCATION_CORRECTION",
+  "affectedExecutionIds": [
+    "nist-stream-03-100x1m-all-001",
+    "nist-stream-04-100x1m-all-001"
+  ],
+  "failure": "The NIST STS all-tests path requires an explicit zero to leave parameter adjustment before reading sequence count. EOF otherwise repeats the adjustment prompt.",
+  "correction": {
+    "description": "Insert the required parameter-adjustment terminator before the sequence count.",
+    "qualifiedImplementationChanged": false,
+    "sampleGenerationChanged": false,
+    "qualificationImageChanged": false,
+    "statisticalGeometryChanged": false,
+    "failedEvidenceDeleted": false,
+    "rerunPolicy": "Use new execution IDs ending in -002 and preserve both failed -001 executions."
+  },
+  "disposition": "FAILED_INVOCATIONS_PRESERVED_AND_SEPARATELY_RERUN"
+}

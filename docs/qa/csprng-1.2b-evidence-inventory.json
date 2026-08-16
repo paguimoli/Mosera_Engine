@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "1.0.0",
+  "campaignId": "csprng-1.2b-20260816T185106Z-7eda4e0",
+  "inventoryGeneratedAtUtc": "2026-08-16T20:50:21Z",
+  "evidenceRoot": ".qa/csprng-1.2b/csprng-1.2b-20260816T185106Z-7eda4e0",
+  "localEvidenceBytes": 32244070437,
+  "sampleCount": 5,
+  "rawSampleBytes": 22011707392,
+  "executionCount": 29,
+  "executionStatuses": {
+    "completed": 24,
+    "failedPreserved": 3,
+    "interruptedInvalidInvocationPreserved": 2
+  },
+  "samples": [
+    {
+      "sampleId": "csprng-1.2b-20260816T185106Z-7eda4e0-stream-01-2gib",
+      "bytes": 2147483648,
+      "sha256": "74c1e63f9684e52635500fb67423f6939c2495c6ce9dbcd973c1777e58f5cdb1"
+    },
+    {
+      "sampleId": "csprng-1.2b-20260816T185106Z-7eda4e0-stream-02-1gib",
+      "bytes": 1073741824,
+      "sha256": "f723f6fbeaaef9c5b8fc3784b840d8364deacf98531a6f8024fece77cbf12a18"
+    },
+    {
+      "sampleId": "csprng-1.2b-20260816T185106Z-7eda4e0-stream-03-1gib",
+      "bytes": 1073741824,
+      "sha256": "c3f7a453fb3f53d22173c825c68fb749946fbba352e4430424786efc95c590d5"
+    },
+    {
+      "sampleId": "csprng-1.2b-20260816T185106Z-7eda4e0-stream-04-512mib",
+      "bytes": 536870912,
+      "sha256": "c2fc0e0587459b389c62bb946cbcb05e33b2af6eac00c0c532c38946273f2ccf"
+    },
+    {
+      "sampleId": "csprng-1.2b-20260816T185106Z-7eda4e0-stream-05-16gib-investigation",
+      "bytes": 17179869184,
+      "sha256": "a0bf646234ca9f7cb8e09aa60681e835afe1db4e1b6879037f53ef202b3d121f"
+    }
+  ],
+  "requiredBatteryEvidence": {
+    "practRand": { "completedExecutions": 4, "largestDistinctInputBytes": 2147483648 },
+    "dieharder": { "completedFullBatteryExecutions": 3, "completedInvestigationExecutions": 15 },
+    "nistSp80022": { "completedMultiSequenceExecutions": 2, "completeResultArchives": 2 }
+  },
+  "preservedInvalidEvidence": [
+    "samples/csprng-1.2b-20260816T185106Z-7eda4e0-stream-03-1gib/campaign-runs/nist-stream-03-100x1m-all-001",
+    "samples/csprng-1.2b-20260816T185106Z-7eda4e0-stream-04-512mib/campaign-runs/nist-stream-04-100x1m-all-001",
+    "samples/csprng-1.2b-20260816T185106Z-7eda4e0-stream-04-512mib/campaign-runs/dieharder-stream-04-runs-followup-001",
+    "samples/csprng-1.2b-20260816T185106Z-7eda4e0-stream-04-512mib/campaign-runs/dieharder-stream-04-craps-followup-001",
+    "samples/csprng-1.2b-20260816T185106Z-7eda4e0-stream-04-512mib/campaign-runs/dieharder-stream-04-lagged-sum-followup-001"
+  ],
+  "storage": {
+    "mode": "LOCAL_IMMUTABLE_EVIDENCE_DIRECTORY",
+    "gitContainsLargeBinaries": false,
+    "wormObjectStorageConfigured": false,
+    "followUp": "Transfer the complete directory by hash to production-grade WORM/object retention before laboratory or regulator submission."
+  }
+}

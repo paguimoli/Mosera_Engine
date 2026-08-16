@@ -13,11 +13,13 @@ const secondId = `qa-sample-b-${randomBytes(6).toString("hex")}`;
 
 assert(sha256(readFileSync(join(root, qualifiedSource))) === expectedHash, "Qualified implementation hash changed.");
 const dockerfile = read("scripts/qualification/csprng/external-batteries/Dockerfile");
+const harnessSource = read(harness);
 assert(dockerfile.includes("ARG PRACTRAND_VERSION=0.96") && dockerfile.includes("sourceforge.net/projects/pracrand"), "PractRand source is not pinned.");
 assert(dockerfile.includes("dieharder=${DIEHARDER_VERSION}"), "dieharder package version is not pinned.");
 assert(dockerfile.includes("sts-2_1_2.zip"), "NIST STS source is not pinned.");
 assert(dockerfile.includes("COMPILER_VERSION"), "Qualification image must preserve its build compiler identity.");
 assert(!dockerfile.match(/FROM\s+[^\n]*:latest/i), "Qualification image must not use latest tags.");
+assert(harnessSource.includes("createReadStream") && !harnessSource.includes("sha256(readFileSync(samplePath))"), "Sample verification must stream files larger than Node's 2 GiB buffer limit.");
 
 run("node", [harness, "build"]);
 run("node", [harness, "generate", "--sample-id", firstId, "--bytes", "1048576", "--output-root", qaRoot]);

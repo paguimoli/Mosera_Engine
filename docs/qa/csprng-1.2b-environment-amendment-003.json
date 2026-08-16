@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0.0",
+  "amendmentId": "csprng-1.2b-20260816T185106Z-7eda4e0-amendment-003",
+  "campaignId": "csprng-1.2b-20260816T185106Z-7eda4e0",
+  "recordedAtUtc": "2026-08-16T19:44:55Z",
+  "classification": "MINIMAL_DIEHARDER_INVESTIGATION_SUPPORT",
+  "triggeringObservations": [
+    "diehard_runs WEAK on stream 01",
+    "diehard_craps WEAK on stream 03",
+    "rgb_lagged_sum lag 23 WEAK on streams 01 and 02"
+  ],
+  "correction": {
+    "description": "Allow a separately identified dieharder execution to select one installed test by numeric identifier.",
+    "qualifiedImplementationChanged": false,
+    "sampleGenerationChanged": false,
+    "qualificationImageChanged": false,
+    "existingExecutionChanged": false,
+    "priorEvidenceReplaced": false,
+    "followUpSample": "csprng-1.2b-20260816T185106Z-7eda4e0-stream-04-512mib"
+  },
+  "disposition": "ORIGINAL_RESULTS_PRESERVED_AND_TARGETED_INDEPENDENT_SAMPLE_FOLLOW_UPS_ENABLED"
+}

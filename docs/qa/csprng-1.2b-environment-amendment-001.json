@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "1.0.0",
+  "amendmentId": "csprng-1.2b-20260816T185106Z-7eda4e0-amendment-001",
+  "campaignId": "csprng-1.2b-20260816T185106Z-7eda4e0",
+  "recordedAtUtc": "2026-08-16T18:55:31Z",
+  "classification": "MINIMAL_QUALIFICATION_HARNESS_CORRECTION",
+  "triggeringExecution": {
+    "sampleId": "csprng-1.2b-20260816T185106Z-7eda4e0-stream-01-2gib",
+    "sampleSha256": "74c1e63f9684e52635500fb67423f6939c2495c6ce9dbcd973c1777e58f5cdb1",
+    "sampleStatus": "COMPLETED_IMMUTABLE",
+    "verificationFailure": "Node readFileSync rejected the 2147483648-byte sample at its 2 GiB buffer ceiling after generation completed"
+  },
+  "correction": {
+    "description": "Replace whole-file sample verification with streaming SHA-256 verification.",
+    "qualifiedImplementationChanged": false,
+    "sampleGenerationChanged": false,
+    "batteryImageChanged": false,
+    "statisticalInputChanged": false,
+    "priorEvidenceReplaced": false,
+    "priorHarnessSha256": "f8d2928117503b11c1951e9f2d95467a83f5f7d9803b899c3beb1152cf04e4ff",
+    "amendedHarnessSha256": "83edffb4c80547fce4cbb53c6a7faab3233ba1640d0361deec6c5a7737984de4",
+    "amendedHarnessQaSha256": "da0c8c64e8dc97a06e912657e7b1e5e47d4172eca08ec9a6c8c9c6240fd2bc1d"
+  },
+  "disposition": "CAMPAIGN_CONTINUES_WITH_ORIGINAL_SAMPLE_IDENTITY_AND_STREAMING_VERIFICATION"
+}

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "1.0.0",
+  "amendmentId": "csprng-1.2b-20260816T185106Z-7eda4e0-amendment-005",
+  "campaignId": "csprng-1.2b-20260816T185106Z-7eda4e0",
+  "recordedAtUtc": "2026-08-16T19:49:27Z",
+  "classification": "MINIMAL_DIEHARDER_COMPARABLE_PARAMETER_SUPPORT",
+  "triggeringExecutionId": "dieharder-stream-04-lagged-sum-followup-002",
+  "observation": "The targeted RGB lagged-sum execution completed successfully at dieharder's default lag 0, while the original observations were at lag 23.",
+  "correction": {
+    "description": "Allow the separately identified targeted execution to pass dieharder's numeric -n tuple/lag parameter.",
+    "qualifiedImplementationChanged": false,
+    "sampleGenerationChanged": false,
+    "qualificationImageChanged": false,
+    "priorEvidenceReplaced": false,
+    "comparableFollowUpExecutionId": "dieharder-stream-04-lagged-sum-23-followup-003"
+  },
+  "disposition": "LAG_0_RESULT_PRESERVED_AS_SUPPLEMENTARY; LAG_23_RESULT_REQUIRED_FOR RECURRENCE ASSESSMENT"
+}

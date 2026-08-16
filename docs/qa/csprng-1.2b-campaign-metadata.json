@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "1.0.0",
+  "qualificationPackageId": "CSPRNG-1.2B",
+  "campaignId": "csprng-1.2b-20260816T185106Z-7eda4e0",
+  "status": "ENVIRONMENT_FROZEN",
+  "campaignStartedAtUtc": "2026-08-16T18:51:06Z",
+  "sourceGitCommitSha": "7eda4e0e0d4225bbf098ef3b9587fcd7df5345c9",
+  "qualifiedImplementation": {
+    "algorithm": "HMAC_DRBG",
+    "hash": "SHA-256",
+    "securityStrengthBits": 256,
+    "source": "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs",
+    "sourceSha256": "0c2639d958dd916e0f6d56168ece697c6cff6b2fd0c3415368613425706c8d46",
+    "targetFramework": "net10.0"
+  },
+  "generatorEnvironment": {
+    "sdkVersion": "10.0.301",
+    "sdkCommit": "96856fd726",
+    "runtimeVersion": "10.0.9",
+    "runtimeCommit": "901ca94124",
+    "os": "Mac OS X 26.6",
+    "architecture": "x64"
+  },
+  "productionGameEngineImage": {
+    "reference": "lottery-app-game-engine@sha256:5117947f85f768bd6d84690b1a5b1cc95ec298a62b38ee5a7bda17d3917e1a29",
+    "imageId": "sha256:5117947f85f768bd6d84690b1a5b1cc95ec298a62b38ee5a7bda17d3917e1a29"
+  },
+  "qualificationImage": {
+    "reference": "mosera/csprng-external-batteries@sha256:f3422c599d851ea93444d23a40b11466d75968052bea96eff37a8e57b66d5d81",
+    "imageId": "sha256:f3422c599d851ea93444d23a40b11466d75968052bea96eff37a8e57b66d5d81",
+    "baseImage": "debian:12.11-slim@sha256:b1a741487078b369e78119849663d7f1a5341ef2768798f7b7406c4240f86aef",
+    "compiler": "g++ (Debian 12.2.0-14+deb12u1) 12.2.0",
+    "practRand": {
+      "version": "0.96",
+      "sourceSha256": "e4caf7fda98b2c597bbda3b576753cf5a0f6047aab837c82be370ab798a672e1"
+    },
+    "dieharder": {
+      "binaryVersion": "3.31.1",
+      "packageVersion": "3.31.1.4-1"
+    },
+    "nistSts": {
+      "version": "2.1.2",
+      "sourceSha256": "0238d2f1d26e120e3cc748ed2d4c674cdc636de37fc4027c76cc2a394fff9157"
+    },
+    "testU01": "TESTU01_DEFERRED_NONBLOCKER"
+  },
+  "harness": {
+    "sourceCommitSha": "7eda4e0e0d4225bbf098ef3b9587fcd7df5345c9",
+    "externalBatteryHarnessSha256": "f8d2928117503b11c1951e9f2d95467a83f5f7d9803b899c3beb1152cf04e4ff",
+    "dockerfileSha256": "9225eaee08414c82add0e3481471debdfe2a9066451eadddf090481747259159",
+    "entrypointSha256": "1d8dbd29b451ee64cd6bafa6c6181d3717b2fcb2400252d30c94050d0f49f137",
+    "generatorSourceSha256": "02b433140149ae0ce3dbf0f031ccf3f03f269712ea19989229fa94976ed0805f",
+    "generatorProjectSha256": "10d03ce083e0e149cb20d9754da945c02b14b71a582ba67d4433b368a14d4e7e"
+  },
+  "evidenceRoot": ".qa/csprng-1.2b/csprng-1.2b-20260816T185106Z-7eda4e0",
+  "preExistingUnrelatedWorktreeChanges": [
+    "scripts/operations/local-runtime-inventory.mjs",
+    "scripts/qa/local-integrated-runtime.mjs"
+  ]
+}

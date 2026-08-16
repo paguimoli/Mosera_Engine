@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "1.0.0",
+  "amendmentId": "csprng-1.2b-20260816T185106Z-7eda4e0-amendment-004",
+  "campaignId": "csprng-1.2b-20260816T185106Z-7eda4e0",
+  "recordedAtUtc": "2026-08-16T19:45:59Z",
+  "classification": "QUALIFICATION_RUNNER_PERMISSION_INTERRUPTION",
+  "affectedExecutionIds": [
+    "dieharder-stream-04-runs-followup-001",
+    "dieharder-stream-04-craps-followup-001",
+    "dieharder-stream-04-lagged-sum-followup-001"
+  ],
+  "failure": "The resumed sandboxed shell was denied access to the Docker API before each battery process started.",
+  "evidence": {
+    "batteryStarted": false,
+    "sampleReadByBattery": false,
+    "stdoutBytes": 0,
+    "stderrPreserved": true,
+    "failedExecutionRecordsPreserved": true
+  },
+  "disposition": "INFRASTRUCTURE_FAILURES_PRESERVED; FOLLOW_UPS_USE_NEW -002 EXECUTION IDENTITIES"
+}

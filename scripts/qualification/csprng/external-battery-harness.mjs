@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -26,10 +26,10 @@ switch (command) {
     buildContainer();
     break;
   case "generate":
-    generateSample(flags);
+    await generateSample(flags);
     break;
   case "verify":
-    verifySample(requiredSample(flags));
+    await verifySample(requiredSample(flags));
     break;
   case "show":
     process.stdout.write(readFileSync(join(requiredSample(flags), "manifest.json"), "utf8"));
@@ -38,7 +38,7 @@ switch (command) {
     runChecked("docker", ["run", "--rm", image, "inventory"], { stdio: "inherit" });
     break;
   case "smoke":
-    smoke(flags);
+    await smoke(flags);
     break;
   default:
     console.log(`Usage:
@@ -55,7 +55,7 @@ function buildContainer() {
   runChecked("docker", ["build", "--pull=false", "--tag", image, dockerfileDirectory], { stdio: "inherit" });
 }
 
-function generateSample(options) {
+async function generateSample(options) {
   const sampleId = options["sample-id"] ?? freshId("sample");
   const outputRoot = resolve(root, options["output-root"] ?? defaultEvidenceRoot);
   const bytes = options.bytes ?? String(1024 * 1024);
@@ -77,12 +77,12 @@ function generateSample(options) {
     { cwd: root, stdio: "inherit" },
   );
   const sampleDirectory = join(outputRoot, sampleId);
-  verifySample(sampleDirectory);
+  await verifySample(sampleDirectory);
   console.log(sampleDirectory);
   return sampleDirectory;
 }
 
-function verifySample(sampleDirectory) {
+async function verifySample(sampleDirectory) {
   const manifestPath = join(sampleDirectory, "manifest.json");
   const samplePath = join(sampleDirectory, "sample.bin");
   const sidecarPath = join(sampleDirectory, "manifest.json.sha256");
@@ -95,7 +95,7 @@ function verifySample(sampleDirectory) {
   assert(payload.status === "COMPLETED", "Sample manifest is not completed.");
   assert(payload.qualifiedImplementationHash === qualifiedHash, "Qualified implementation hash changed.");
   assert(statSync(samplePath).size === payload.streamSizeBytes, "Raw sample byte count does not match manifest.");
-  assert(sha256(readFileSync(samplePath)) === payload.rawSampleSha256, "Raw sample SHA-256 does not match manifest.");
+  assert(await sha256File(samplePath) === payload.rawSampleSha256, "Raw sample SHA-256 does not match manifest.");
   assert(sha256(Buffer.from(JSON.stringify(payload))) === manifest.manifestPayloadSha256, "Manifest payload SHA-256 is invalid.");
   const sidecar = readFileSync(sidecarPath, "utf8").trim().split(/\s+/)[0];
   assert(sha256(manifestBytes) === sidecar, "Manifest file SHA-256 sidecar is invalid.");
@@ -103,10 +103,10 @@ function verifySample(sampleDirectory) {
   return manifest;
 }
 
-function smoke(options) {
+async function smoke(options) {
   let sampleDirectory = options.sample ? resolve(root, options.sample) : null;
-  if (!sampleDirectory) sampleDirectory = generateSample({ bytes: String(1024 * 1024) });
-  const manifest = verifySample(sampleDirectory);
+  if (!sampleDirectory) sampleDirectory = await generateSample({ bytes: String(1024 * 1024) });
+  const manifest = await verifySample(sampleDirectory);
   if (manifest.manifestPayload.streamSizeBytes < 125000) {
     throw new Error("NIST STS smoke requires at least one 1,000,000-bit sequence.");
   }
@@ -208,6 +208,12 @@ function freshId(prefix) {
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+async function sha256File(path) {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  return hash.digest("hex");
 }
 
 function git(args) {

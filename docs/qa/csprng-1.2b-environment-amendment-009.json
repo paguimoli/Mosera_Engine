@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "1.0.0",
+  "amendmentId": "csprng-1.2b-20260816T185106Z-7eda4e0-amendment-009",
+  "campaignId": "csprng-1.2b-20260816T185106Z-7eda4e0",
+  "recordedAtUtc": "2026-08-16T20:46:22Z",
+  "classification": "STATISTICAL_ANOMALY_INVESTIGATION_COMPLETENESS",
+  "triggeringResults": [
+    {
+      "executionId": "dieharder-stream-01-full-001",
+      "test": "rgb_lagged_sum",
+      "lag": 23,
+      "pValue": 0.00443904,
+      "assessment": "WEAK"
+    },
+    {
+      "executionId": "dieharder-stream-02-full-001",
+      "test": "rgb_lagged_sum",
+      "lag": 23,
+      "pValue": 0.00246312,
+      "assessment": "WEAK"
+    }
+  ],
+  "investigation": {
+    "description": "Run RGB lagged-sum lag 23 once against the existing 16 GiB independent investigation stream without file rewinds.",
+    "sampleId": "csprng-1.2b-20260816T185106Z-7eda4e0-stream-05-16gib-investigation",
+    "qualifiedImplementationChanged": false,
+    "sampleGeneratorChanged": false,
+    "qualificationImageChanged": false,
+    "priorEvidenceReplaced": false
+  },
+  "blockingRule": "A significant lag-23 anomaly on the no-rewind stream, or inability to obtain a methodologically valid result, blocks CSPRNG-1.2B."
+}

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "1.0.0",
+  "amendmentId": "csprng-1.2b-20260816T185106Z-7eda4e0-amendment-007",
+  "campaignId": "csprng-1.2b-20260816T185106Z-7eda4e0",
+  "recordedAtUtc": "2026-08-16T20:10:53Z",
+  "classification": "STATISTICAL_ANOMALY_INVESTIGATION_SCOPE_EXTENSION",
+  "triggeringResults": [
+    {
+      "executionId": "dieharder-stream-03-full-001",
+      "test": "marsaglia_tsang_gcd",
+      "pValue": 0.00134993,
+      "assessment": "WEAK"
+    },
+    {
+      "executionId": "dieharder-stream-04-gcd-followup-001",
+      "test": "marsaglia_tsang_gcd",
+      "pValue": 0.00012720,
+      "assessment": "WEAK",
+      "sampleRewinds": 14
+    }
+  ],
+  "investigation": {
+    "description": "Use the already declared 16 GiB independent investigation stream for one exact GCD execution without file rewinds in addition to RGB lagged-sum lag 31.",
+    "sampleId": "csprng-1.2b-20260816T185106Z-7eda4e0-stream-05-16gib-investigation",
+    "qualifiedImplementationChanged": false,
+    "sampleGeneratorChanged": false,
+    "qualificationImageChanged": false,
+    "priorEvidenceReplaced": false
+  },
+  "blockingRule": "A recurrent significant GCD anomaly on the no-rewind stream, or inability to obtain a methodologically valid result, blocks CSPRNG-1.2B."
+}
