@@ -8,6 +8,30 @@ namespace GameEngine.Infrastructure.Persistence;
 public sealed class PostgresCanonicalOutcomeProviderRepository(string connectionString)
     : ICanonicalOutcomeProviderRepository
 {
+    public async Task<IAsyncDisposable> AcquireExecutionLockAsync(
+        Guid executionManifestId,
+        CancellationToken cancellationToken)
+    {
+        var connection = await OpenConnectionAsync(cancellationToken);
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandTimeout = 10;
+            command.CommandText =
+                "select pg_advisory_lock(hashtextextended(@scope, 0));";
+            command.Parameters.AddWithValue(
+                "scope",
+                $"canonical-provider-execution:{executionManifestId:N}");
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            return new AdvisoryExecutionLock(connection, executionManifestId);
+        }
+        catch
+        {
+            await connection.DisposeAsync();
+            throw;
+        }
+    }
+
     public async Task<CanonicalOutcomeProviderRegistration?> ResolveRegistrationAsync(
         DrawExecutionManifest manifest,
         CancellationToken cancellationToken)
@@ -584,6 +608,7 @@ insert into game_engine.outcome_provider_execution_evidence (
   status,
   provider_evidence_payload,
   canonical_result_payload,
+  canonical_result_canonical_payload,
   canonical_result_hash,
   started_at,
   completed_at)
@@ -605,6 +630,7 @@ values (
   @status,
   @provider_evidence_payload::jsonb,
   @canonical_result_payload::jsonb,
+  @canonical_result_canonical_payload,
   @canonical_result_hash,
   @started_at,
   @completed_at);
@@ -641,6 +667,9 @@ values (
             evidence.ProviderEvidenceJson);
         command.Parameters.AddWithValue(
             "canonical_result_payload",
+            evidence.CanonicalResultJson is null ? DBNull.Value : evidence.CanonicalResultJson);
+        command.Parameters.AddWithValue(
+            "canonical_result_canonical_payload",
             evidence.CanonicalResultJson is null ? DBNull.Value : evidence.CanonicalResultJson);
         command.Parameters.AddWithValue(
             "canonical_result_hash",
@@ -786,6 +815,29 @@ where idempotency_key = @idempotency_key;
             reader.IsDBNull(16) ? null : reader.GetString(16),
             reader.IsDBNull(17) ? null : reader.GetString(17));
 
+    private sealed class AdvisoryExecutionLock(
+        NpgsqlConnection connection,
+        Guid executionManifestId) : IAsyncDisposable
+    {
+        public async ValueTask DisposeAsync()
+        {
+            try
+            {
+                await using var command = connection.CreateCommand();
+                command.CommandText =
+                    "select pg_advisory_unlock(hashtextextended(@scope, 0));";
+                command.Parameters.AddWithValue(
+                    "scope",
+                    $"canonical-provider-execution:{executionManifestId:N}");
+                await command.ExecuteNonQueryAsync(CancellationToken.None);
+            }
+            finally
+            {
+                await connection.DisposeAsync();
+            }
+        }
+    }
+
     private static CanonicalOutcomeProviderCategory ParseCategory(string value) =>
         value switch
         {
@@ -880,7 +932,7 @@ select
   evidence.idempotency_key,
   evidence.status,
   evidence.provider_evidence_payload::text,
-  evidence.canonical_result_payload::text,
+  evidence.canonical_result_canonical_payload,
   evidence.canonical_result_hash,
   evidence.started_at,
   evidence.completed_at

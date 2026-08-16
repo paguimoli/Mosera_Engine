@@ -30,6 +30,9 @@ public sealed class InternalCsprngOutcomeProvider(
         CancellationToken cancellationToken)
     {
         ValidateRequest(request);
+        await using var executionLock = await providerAuthority.AcquireExecutionLockAsync(
+            manifest.ExecutionManifestId,
+            cancellationToken);
         var registration = await providerAuthority.ResolveAsync(manifest, cancellationToken);
         if (registration.ProviderCategory != CanonicalOutcomeProviderCategory.InternalCsprng)
         {
@@ -75,17 +78,17 @@ public sealed class InternalCsprngOutcomeProvider(
             var existing = await providerAuthority.FindGeneratedEvidenceAsync(
                 manifest.ExecutionManifestId,
                 cancellationToken);
-            if (existing is null)
+            if (existing is not null)
             {
-                throw new InvalidOperationException(
-                    "The Outcome Provider execution is already claimed and has no completed result evidence.");
+                return RestoreResult(manifest, existing, duplicate: true);
             }
-
-            return RestoreResult(manifest, existing, duplicate: true);
         }
 
         var startedAt = DateTimeOffset.UtcNow;
         var startTimestamp = Stopwatch.GetTimestamp();
+        var attemptNumber = await providerAuthority.GetNextAttemptNumberAsync(
+            claim.Claim.ExecutionId,
+            cancellationToken);
         try
         {
             var health = BuildHealthEvidence();
@@ -108,7 +111,9 @@ public sealed class InternalCsprngOutcomeProvider(
             };
             var attempt = CompletedAttempt(
                 claim.Claim,
+                attemptNumber,
                 requestHash,
+                startedAt,
                 generated.Evidence.CompletedAt);
             await providerAuthority.CompleteGeneratedExecutionAsync(
                 attempt,
@@ -126,7 +131,7 @@ public sealed class InternalCsprngOutcomeProvider(
         {
             var completedAt = DateTimeOffset.UtcNow;
             await providerAuthority.AppendAttemptAsync(
-                FailedAttempt(claim.Claim, requestHash, error, startedAt, completedAt),
+                FailedAttempt(claim.Claim, attemptNumber, requestHash, error, startedAt, completedAt),
                 cancellationToken);
             throw new InvalidOperationException(
                 "Internal CSPRNG provider failed closed.",
@@ -408,24 +413,27 @@ public sealed class InternalCsprngOutcomeProvider(
 
     private static OutcomeProviderExecutionAttempt CompletedAttempt(
         OutcomeProviderExecutionClaim claim,
+        int attemptNumber,
         string requestHash,
+        DateTimeOffset startedAt,
         DateTimeOffset completedAt) =>
         new(
             Guid.NewGuid(),
             claim.ExecutionId,
-            1,
+            attemptNumber,
             OutcomeProviderExecutionStatus.Completed,
             OutcomeProviderFailureClassification.None,
             null,
             null,
             requestHash,
             HashCanonical(
-                $"{claim.ExecutionId:N}|1|COMPLETED|{requestHash}|{completedAt:O}"),
-            claim.ClaimedAt,
+                $"{claim.ExecutionId:N}|{attemptNumber}|COMPLETED|{requestHash}|{completedAt:O}"),
+            startedAt,
             completedAt);
 
     private static OutcomeProviderExecutionAttempt FailedAttempt(
         OutcomeProviderExecutionClaim claim,
+        int attemptNumber,
         string requestHash,
         Exception error,
         DateTimeOffset startedAt,
@@ -433,14 +441,14 @@ public sealed class InternalCsprngOutcomeProvider(
         new(
             Guid.NewGuid(),
             claim.ExecutionId,
-            1,
+            attemptNumber,
             OutcomeProviderExecutionStatus.NonRetryableFailure,
             OutcomeProviderFailureClassification.NonRetryable,
             error.GetType().Name,
             error.Message,
             requestHash,
             HashCanonical(
-                $"{claim.ExecutionId:N}|1|FAILED|{requestHash}|{error.GetType().Name}|{completedAt:O}"),
+                $"{claim.ExecutionId:N}|{attemptNumber}|FAILED|{requestHash}|{error.GetType().Name}|{completedAt:O}"),
             startedAt,
             completedAt);
 

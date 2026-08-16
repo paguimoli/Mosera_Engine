@@ -46,6 +46,7 @@ public static class GameEngineEndpoints
 
         var group = app.MapGroup("/api/game-engine");
 
+        group.MapPost("/draw-executions/{drawId:guid}/execute", ExecuteCanonicalDrawAsync);
         group.MapPost("/outcome-publications", PublishCanonicalOutcomeAsync);
         group.MapGet("/outcome-publications/current/{drawId:guid}", GetCurrentCanonicalOutcomeAsync);
         group.MapPost("/outcome-settlement-requests", EmitOutcomeSettlementRequestAsync);
@@ -1061,6 +1062,61 @@ public static class GameEngineEndpoints
                 });
             }
         });
+    }
+
+    private static async Task<IResult> ExecuteCanonicalDrawAsync(
+        Guid drawId,
+        CanonicalDrawExecutionCommand command,
+        HttpContext context,
+        CanonicalDrawExecutionAuthority executionAuthority,
+        IOperationalSecurityAuthority operationalSecurityAuthority)
+    {
+        if (command.DrawId != drawId)
+        {
+            return Results.BadRequest(new
+            {
+                success = false,
+                message = "Route draw id must match the canonical execution command.",
+                correlationId = context.GetCorrelationId()
+            });
+        }
+
+        try
+        {
+            await operationalSecurityAuthority.ValidateAsync(
+                context.Request.Headers["x-operational-command-id"].FirstOrDefault(),
+                context.Request.Headers["x-privileged-session-id"].FirstOrDefault(),
+                context.Request.Headers["x-operational-executor-id"].FirstOrDefault(),
+                "CANONICAL_DRAW_EXECUTION",
+                context.RequestAborted);
+            var result = await executionAuthority.ExecuteAsync(command, context.RequestAborted);
+            return Results.Ok(new
+            {
+                success = true,
+                data = result,
+                providerSelectedByRequest = false,
+                authority = "CanonicalDrawExecutionAuthority",
+                correlationId = context.GetCorrelationId()
+            });
+        }
+        catch (ArgumentException error)
+        {
+            return Results.BadRequest(new
+            {
+                success = false,
+                message = error.Message,
+                correlationId = context.GetCorrelationId()
+            });
+        }
+        catch (InvalidOperationException error)
+        {
+            return Results.Conflict(new
+            {
+                success = false,
+                message = error.Message,
+                correlationId = context.GetCorrelationId()
+            });
+        }
     }
 
     private static async Task<IResult> ReadinessResponse(

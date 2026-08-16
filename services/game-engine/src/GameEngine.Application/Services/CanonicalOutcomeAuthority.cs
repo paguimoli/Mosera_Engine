@@ -18,6 +18,10 @@ public interface ICanonicalOutcomePipelineRepository
         Guid drawId,
         CancellationToken cancellationToken);
 
+    Task<CanonicalDrawExecutionState?> FindDrawExecutionStateAsync(
+        Guid drawId,
+        CancellationToken cancellationToken);
+
     Task<CanonicalOutcomeCertificateVerificationEvidence?> FindCertificateEvidenceAsync(
         Guid certificateId,
         string certificateHash,
@@ -473,6 +477,11 @@ public sealed class DisabledCanonicalOutcomePipelineRepository : ICanonicalOutco
         Guid drawId,
         CancellationToken cancellationToken) =>
         Task.FromResult<DrawExecutionManifest?>(null);
+
+    public Task<CanonicalDrawExecutionState?> FindDrawExecutionStateAsync(
+        Guid drawId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<CanonicalDrawExecutionState?>(null);
 
     public Task<CanonicalOutcomeCertificateVerificationEvidence?> FindCertificateEvidenceAsync(
         Guid certificateId,

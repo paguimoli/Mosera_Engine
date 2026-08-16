@@ -279,6 +279,7 @@
     "qa:internal-csprng-statistical": "node scripts/qa/internal-csprng-statistical.mjs",
     "qa:csprng-qualification-fast": "node scripts/qa/csprng-qualification.mjs fast",
     "qa:csprng-qualification-extended": "node scripts/qa/csprng-qualification.mjs extended",
+    "qa:canonical-csprng-production-invocation": "node scripts/qa/canonical-csprng-production-invocation.mjs",
     "qa:backend-launch-api-consolidation": "node scripts/qa/backend-launch-api-consolidation.mjs",
     "qa:backend-authority-consolidation": "node scripts/run-ts-script.mjs scripts/qa/backend-authority-consolidation.ts",
     "qa:cross-authority-integrity": "node scripts/run-ts-script.mjs scripts/qa/cross-authority-integrity.ts",

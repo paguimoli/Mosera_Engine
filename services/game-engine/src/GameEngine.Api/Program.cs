@@ -66,6 +66,7 @@ builder.Services.AddSingleton<DurableMathEvaluationService>();
 builder.Services.AddSingleton<MathEvaluationBatchService>();
 builder.Services.AddSingleton<SettlementInputAdapter>();
 builder.Services.AddSingleton<CanonicalOutcomeAuthority>();
+builder.Services.AddSingleton<CanonicalDrawExecutionAuthority>();
 builder.Services.AddSingleton<CanonicalOutcomeLifecycleAuthority>();
 builder.Services.AddSingleton<GameEngineProductionReadinessAuthority>();
 builder.Services.AddSingleton<GameEngineProductionActivationAuthority>();

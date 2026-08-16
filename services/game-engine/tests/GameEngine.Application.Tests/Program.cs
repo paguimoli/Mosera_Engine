@@ -4523,6 +4523,14 @@ sealed class CanonicalCsprngTestRepository(
 
     public IReadOnlyCollection<OutcomeProviderExecutionAttempt> Attempts => attempts;
 
+    public Task<IAsyncDisposable> AcquireExecutionLockAsync(
+        Guid executionManifestId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult<IAsyncDisposable>(new NoopAsyncDisposable());
+    }
+
     public Task<CanonicalOutcomeProviderRegistration?> ResolveRegistrationAsync(
         DrawExecutionManifest manifest,
         CancellationToken cancellationToken)
@@ -4739,6 +4747,11 @@ sealed class CanonicalCsprngTestRepository(
             .OrderByDescending(item =>
                 claimsByExecution[item.ExecutionId].ExecutionVersion)
             .FirstOrDefault();
+}
+
+sealed class NoopAsyncDisposable : IAsyncDisposable
+{
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }
 
 sealed class TestOperationalSecurityAuthority : IOperationalSecurityAuthority

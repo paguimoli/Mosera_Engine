@@ -1092,6 +1092,33 @@
       "reason": "Allows multiple immutable tickets to retain the same effective availability decision hash while preserving deterministic hash lookup."
     },
     {
+      "id": "116_bind_canonical_outcome_payload",
+      "path": "scripts/migrations/local/116_bind_canonical_outcome_payload.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Persists the exact immutable outcome payload bytes used by production certificate hashing and canonical publication verification."
+    },
+    {
+      "id": "117_bind_canonical_provider_result_payload",
+      "path": "scripts/migrations/local/117_bind_canonical_provider_result_payload.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Persists exact immutable provider-result bytes so CSPRNG evidence hashes survive PostgreSQL JSONB projection without drift."
+    },
+    {
+      "id": "118_scope_canonical_payload_hash_enforcement",
+      "path": "scripts/migrations/local/118_scope_canonical_payload_hash_enforcement.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Scopes strict byte-for-byte hash enforcement to production adapters that explicitly supply canonical payload bytes, preserving legacy dry-run fixtures."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

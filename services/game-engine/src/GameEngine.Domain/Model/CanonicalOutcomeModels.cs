@@ -112,6 +112,43 @@ public sealed record DrawExecutionManifest(
     string CanonicalManifestHash,
     DateTimeOffset CreatedAt);
 
+public sealed record CanonicalDrawExecutionCommand(
+    Guid DrawId,
+    string ProductReference,
+    string IdempotencyKey,
+    Guid? OutcomeCertificateId,
+    Guid? SettlementInputId,
+    string CorrelationId,
+    string CausationId,
+    string AuditReference,
+    string ActorReference,
+    string ReasonCode);
+
+public enum CanonicalDrawExecutionStatus
+{
+    AwaitingCertification,
+    Published,
+    SettlementRequested
+}
+
+public sealed record CanonicalDrawExecutionResult(
+    CanonicalDrawExecutionStatus Status,
+    Guid DrawId,
+    Guid ExecutionManifestId,
+    CanonicalOutcomeProviderCategory ProviderCategory,
+    Guid ProviderExecutionId,
+    string GeneratedOutcomeHash,
+    string ProviderEvidenceHash,
+    bool ExistingGeneration,
+    CanonicalOutcomeVersion? Outcome,
+    OutcomeSettlementRequest? SettlementRequest);
+
+public sealed record CanonicalDrawExecutionState(
+    Guid DrawId,
+    string LifecycleStatus,
+    DateTimeOffset SalesCloseAt,
+    DateTimeOffset ScheduledExecutionAt);
+
 public sealed record OutcomeSettlementRequestCommand(
     string IdempotencyKey,
     Guid OutcomeVersionId,

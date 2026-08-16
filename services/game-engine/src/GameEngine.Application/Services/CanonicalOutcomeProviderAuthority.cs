@@ -4,6 +4,10 @@ namespace GameEngine.Application.Services;
 
 public interface ICanonicalOutcomeProviderRepository
 {
+    Task<IAsyncDisposable> AcquireExecutionLockAsync(
+        Guid executionManifestId,
+        CancellationToken cancellationToken);
+
     Task<CanonicalOutcomeProviderRegistration?> ResolveRegistrationAsync(
         DrawExecutionManifest manifest,
         CancellationToken cancellationToken);
@@ -56,6 +60,11 @@ public interface ICanonicalOutcomeProviderRepository
 
 public sealed class CanonicalOutcomeProviderAuthority(ICanonicalOutcomeProviderRepository repository)
 {
+    public Task<IAsyncDisposable> AcquireExecutionLockAsync(
+        Guid executionManifestId,
+        CancellationToken cancellationToken) =>
+        repository.AcquireExecutionLockAsync(executionManifestId, cancellationToken);
+
     public async Task<CanonicalOutcomeProviderRegistration> ResolveAsync(
         DrawExecutionManifest manifest,
         CancellationToken cancellationToken)
@@ -346,6 +355,11 @@ public sealed class DisabledCanonicalOutcomeProviderRepository : ICanonicalOutco
 {
     private const string Message =
         "Canonical Outcome Provider Authority requires durable PostgreSQL persistence.";
+
+    public Task<IAsyncDisposable> AcquireExecutionLockAsync(
+        Guid executionManifestId,
+        CancellationToken cancellationToken) =>
+        Task.FromException<IAsyncDisposable>(new InvalidOperationException(Message));
 
     public Task<CanonicalOutcomeProviderRegistration?> ResolveRegistrationAsync(
         DrawExecutionManifest manifest,

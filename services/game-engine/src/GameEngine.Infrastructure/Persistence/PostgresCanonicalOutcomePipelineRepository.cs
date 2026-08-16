@@ -581,6 +581,29 @@ where version.outcome_version_id = @outcome_version_id;
         return await FindExecutionManifestAsync(connection, null, drawId, cancellationToken);
     }
 
+    public async Task<CanonicalDrawExecutionState?> FindDrawExecutionStateAsync(
+        Guid drawId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+select id, status, sales_close_at, scheduled_execution_at
+from game_engine.draw_schedules
+where id = @draw_id;
+""";
+        command.Parameters.AddWithValue("draw_id", drawId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new CanonicalDrawExecutionState(
+                reader.GetGuid(0),
+                reader.GetString(1),
+                reader.GetFieldValue<DateTimeOffset>(2),
+                reader.GetFieldValue<DateTimeOffset>(3))
+            : null;
+    }
+
     public async Task<CanonicalOutcomeCertificateVerificationEvidence?> FindCertificateEvidenceAsync(
         Guid certificateId,
         string certificateHash,
@@ -593,7 +616,7 @@ where version.outcome_version_id = @outcome_version_id;
 select
   event.outcome_id,
   event.draw_id,
-  event.outcome_payload::text,
+  event.canonical_payload,
   event.canonical_outcome_hash,
   event.generated_at,
   signature.signature_id,

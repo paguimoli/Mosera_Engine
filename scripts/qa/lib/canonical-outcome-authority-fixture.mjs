@@ -66,15 +66,15 @@ limit 1;
   const generates = category === "INTERNAL_CSPRNG";
   const drawStatus = options.drawStatus ?? "Certified";
   const scheduledAt = options.scheduledAt ?? new Date(Date.now() + 60_000);
-  const salesOpenAt = drawStatus === "SalesOpen"
+  const salesOpenAt = options.salesOpenAt ?? (drawStatus === "SalesOpen"
     ? new Date(Date.now() - 60_000)
-    : new Date(scheduledAt.getTime() - 10 * 60_000);
-  const salesCloseAt = drawStatus === "SalesOpen"
+    : new Date(scheduledAt.getTime() - 10 * 60_000));
+  const salesCloseAt = options.salesCloseAt ?? (drawStatus === "SalesOpen"
     ? new Date(Date.now() + 10 * 60_000)
-    : new Date(scheduledAt.getTime() - 60_000);
-  const drawAt = drawStatus === "SalesOpen"
+    : new Date(scheduledAt.getTime() - 60_000));
+  const drawAt = options.drawAt ?? (drawStatus === "SalesOpen"
     ? new Date(Date.now() + 11 * 60_000)
-    : scheduledAt;
+    : scheduledAt);
   const scheduleHash = canonicalHash(`schedule:${suffix}`);
   const identityHash = canonicalHash(`draw:${drawId}`);
   const manifestHash = canonicalHash(`manifest:${drawId}`);
