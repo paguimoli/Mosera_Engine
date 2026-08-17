@@ -1,0 +1,127 @@
+{
+  "schemaVersion": "mosera.csprng.cryptographic-claims.v3",
+  "packageId": "CSPRNG-1.3C",
+  "reviewedCommit": "1061cfcec9fb1fc78b2d2609ea7f283157842791",
+  "candidateSourceSha256": "53ecf20c1690b3e240f00d8df611b7bc57f413aba6434236ed72eb4ac9b74d30",
+  "claims": [
+    {
+      "claimId": "C1",
+      "claim": "The canonical Internal CSPRNG production profile implements HMAC_DRBG with SHA-256 and a requested 256-bit security strength.",
+      "classification": "internally demonstrated",
+      "allowed": true,
+      "qualification": "Source review, deterministic vectors, one traceable NIST CAVP response vector, and focused runtime QA support the claim. It is not NIST validation."
+    },
+    {
+      "claimId": "C2",
+      "claim": "The selected HMAC_DRBG SHA-256/256 application implementation is structurally conformant with the applicable SP 800-90A Rev. 1 state transitions and request envelope.",
+      "classification": "supported with assumptions",
+      "allowed": true,
+      "qualification": "Assumes correct .NET HMAC implementation and OS/runtime behavior. Two LOW exceptional-path/audit findings remain and formal validation has not occurred."
+    },
+    {
+      "claimId": "C3",
+      "claim": "Mosera enforces a maximum of 65,536 bytes per Generate request and the 2^48 reseed interval.",
+      "classification": "internally demonstrated",
+      "allowed": true,
+      "qualification": "Boundary tests verify allowed/rejected values and unchanged state after precondition rejection."
+    },
+    {
+      "claimId": "C4",
+      "claim": "The production profile requests 48 OS entropy bytes for Instantiate, 32 OS bytes for nonce, and 48 fresh OS bytes for immediate reseed per draw.",
+      "classification": "internally demonstrated",
+      "allowed": true,
+      "qualification": "This states requested byte counts and call behavior, not min-entropy."
+    },
+    {
+      "claimId": "C5",
+      "claim": "The production provider uses OS cryptographic entropy APIs and fails closed when acquisition or readiness fails.",
+      "classification": "supported with assumptions",
+      "allowed": true,
+      "qualification": "Linux getrandom, Windows BCryptGenRandom, and macOS SecRandomCopyBytes are application trust boundaries. Host/kernel integrity and source quality remain external."
+    },
+    {
+      "claimId": "C6",
+      "claim": "Every canonical Internal CSPRNG draw has isolated session state and no cross-draw shared Key/V state.",
+      "classification": "internally demonstrated",
+      "allowed": true,
+      "qualification": "Runtime services are stateless and the provider creates and destroys one session inside each generation call."
+    },
+    {
+      "claimId": "C7",
+      "claim": "Bounded integers and Keno/Matrix/Pick transformations avoid modulo bias and preserve their defined sampling semantics.",
+      "classification": "internally demonstrated",
+      "allowed": true,
+      "qualification": "Reviewed logic uses unsigned rejection sampling, explicit big-endian conversion, partial Fisher-Yates, and positional with-replacement arrays."
+    },
+    {
+      "claimId": "C8",
+      "claim": "Canonical Internal CSPRNG outcome generation is exactly once, durable, replay-verifiable, manifest-bound, and certificate-bound without provider fallback.",
+      "classification": "internally demonstrated",
+      "allowed": true,
+      "qualification": "Focused full-chain QA demonstrated same-draw concurrency, restart recovery, result reuse, certificate binding, settlement handoff, and rejection of Official/Manual fallback. Cancellation attempt audit completeness remains LOW risk."
+    },
+    {
+      "claimId": "C9",
+      "claim": "New provider evidence persists no raw entropy, nonce, reseed material, Key, V, DRBG state, or secret-derived SeedIdentifier.",
+      "classification": "internally demonstrated",
+      "allowed": true,
+      "qualification": "Migration 119 versions the contract and leaves historical version-1 evidence interpretable and immutable."
+    },
+    {
+      "claimId": "C10",
+      "claim": "Mosera implements formal SP 800-90A prediction-resistance request semantics.",
+      "classification": "prohibited until external validation",
+      "allowed": false,
+      "qualification": "Per-draw instantiation and immediate reseed are not the standard prediction-resistance request interface."
+    },
+    {
+      "claimId": "C11",
+      "claim": "Mosera has a 256-bit SP 800-90B validated entropy source or proven 256 bits of min-entropy.",
+      "classification": "external dependency",
+      "allowed": false,
+      "qualification": "SP800_90B_VALIDATION_NOT_ESTABLISHED. Byte count and API success do not prove min-entropy."
+    },
+    {
+      "claimId": "C12",
+      "claim": "Mosera is formally conformant with a final SP 800-90C construction profile.",
+      "classification": "external dependency",
+      "allowed": false,
+      "qualification": "SP800_90C_CLASSIFICATION_INSUFFICIENT_EVIDENCE. RBG2 is the closest structural candidate, subject to entropy and module-boundary evidence."
+    },
+    {
+      "claimId": "C13",
+      "claim": "The NIST CAVP response vector makes the implementation CAVP or CMVP validated.",
+      "classification": "prohibited until external validation",
+      "allowed": false,
+      "qualification": "The vector is internal test coverage only; no validation certificate exists."
+    },
+    {
+      "claimId": "C14",
+      "claim": "Mosera's Internal CSPRNG is NIST certified, independently audited, laboratory certified, or regulator approved.",
+      "classification": "prohibited until external validation",
+      "allowed": false,
+      "qualification": "No independent assessment, laboratory certificate, NIST certificate, or regulator approval exists."
+    },
+    {
+      "claimId": "C15",
+      "claim": "CSPRNG-1.2B directly statistically qualified source hash 53ecf20c...d30.",
+      "classification": "prohibited until external validation",
+      "allowed": false,
+      "qualification": "The full campaign belongs to historical hash 0c2639d9...d46. The remediated hash has separately identified targeted regression evidence."
+    },
+    {
+      "claimId": "C16",
+      "claim": "Best-effort zeroization guarantees physical erasure of all secret material in .NET and the host.",
+      "classification": "prohibited until external validation",
+      "allowed": false,
+      "qualification": "Managed memory, JIT/runtime copies, cryptographic internals, dumps, debuggers, and host compromise remain outside that guarantee."
+    },
+    {
+      "claimId": "C17",
+      "claim": "The current local Game Engine container image is the immutable remediated production artifact.",
+      "classification": "prohibited until external validation",
+      "allowed": false,
+      "qualification": "The local image predates remediation and base image tags are not digest-pinned. A fresh attested image is required."
+    }
+  ]
+}

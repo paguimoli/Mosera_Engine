@@ -1,0 +1,138 @@
+{
+  "schemaVersion": "mosera.csprng.findings.v3",
+  "packageId": "CSPRNG-1.3C",
+  "reviewedCommit": "1061cfcec9fb1fc78b2d2609ea7f283157842791",
+  "sourceSha256": "53ecf20c1690b3e240f00d8df611b7bc57f413aba6434236ed72eb4ac9b74d30",
+  "status": "CSPRNG_1_3C_PASS_WITH_LOW_RISK_FINDINGS",
+  "findings": [
+    {
+      "findingId": "CSPRNG-1.3C-F001",
+      "severity": "LOW",
+      "title": "Reusable DRBG session is not terminal after every exceptional state transition",
+      "source": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:409-480",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:669-678",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:278-371"
+      ],
+      "standardsReference": "NIST SP 800-90A Rev. 1 sections 8.8 and 10.1.2.5; implementation state-protection and fail-closed policy",
+      "consequence": "A non-canonical caller that catches a state-transition exception could reuse a changed session. One direct V replacement leaves the prior managed array for garbage collection rather than immediately zeroing it.",
+      "exploitability": "Minimal in the canonical provider because its finally block always destroys the per-draw session and no result is accepted after an exception. Misuse requires a future direct in-process caller outside the canonical wrapper.",
+      "remediation": "In a separate narrow package, zero the replaced V in the Generate loop and terminally destroy or invalidate a session after an exception that may follow state mutation. Add fault-injection tests for pre-update, block generation, continuous-test, post-update, and output-hash failures.",
+      "certificationRelevance": "External reviewers commonly inspect exceptional-path state custody and API misuse resistance. Close before formal specialist or laboratory review.",
+      "blocker": false,
+      "owner": "Game Engine cryptographic runtime",
+      "disposition": "REMEDIATION_RECOMMENDED_BEFORE_EXTERNAL_REVIEW"
+    },
+    {
+      "findingId": "CSPRNG-1.3C-F002",
+      "severity": "LOW",
+      "title": "Cancellation may omit terminal non-authoritative attempt evidence",
+      "source": [
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:88-140"
+      ],
+      "standardsReference": "Mosera immutable evidence and fail-closed operational audit requirements",
+      "consequence": "A cancellation after a durable execution claim but before completion may leave no explicit canceled attempt row, reducing audit completeness and recovery diagnosis.",
+      "exploitability": "Low. Cancellation creates no fallback result, certificate, outcome, settlement, or financial effect; locks and session secrets are released. The gap is evidence completeness, not output authority.",
+      "remediation": "Append a distinct canceled attempt with a bounded non-request cancellation token before propagating cancellation, while preserving the original cancellation reason and never accepting output.",
+      "certificationRelevance": "Likely to be noted where immutable execution-attempt evidence is an asserted control. Close before external review.",
+      "blocker": false,
+      "owner": "Outcome Provider runtime operations",
+      "disposition": "REMEDIATION_RECOMMENDED_BEFORE_EXTERNAL_REVIEW"
+    },
+    {
+      "findingId": "CSPRNG-1.3C-F003",
+      "severity": "INFO",
+      "title": "Unused generic security-strength and hash profiles expand review scope",
+      "source": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:367-368",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:680-720",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:17-20,298-304"
+      ],
+      "standardsReference": "NIST SP 800-90A Rev. 1 selected mechanism and security-strength profile",
+      "consequence": "SHA-384/SHA-512 and 128/192 profiles require extra review if included in a certification boundary even though production uses only SHA-256/256.",
+      "exploitability": "No authority bypass was found; the production provider hardcodes SHA-256/256.",
+      "remediation": "Define the certified production boundary as SHA-256/256 or narrow the production-facing runtime in a future package. Do not claim unused profiles as qualified without evidence.",
+      "certificationRelevance": "Scope clarification before external review.",
+      "blocker": false,
+      "owner": "Game Engine cryptographic governance",
+      "disposition": "DOCUMENT_CERTIFICATION_BOUNDARY"
+    },
+    {
+      "findingId": "CSPRNG-1.3C-F004",
+      "severity": "INFO",
+      "title": "No remediated digest-pinned production image is frozen",
+      "source": [
+        "services/game-engine/Dockerfile:1-34",
+        "local image sha256:5117947f85f768bd6d84690b1a5b1cc95ec298a62b38ee5a7bda17d3917e1a29"
+      ],
+      "standardsReference": "External review module-boundary and supply-chain evidence",
+      "consequence": "The current local image predates remediation and Docker base tags are mutable, so source review cannot yet be tied to an immutable deployable artifact.",
+      "exploitability": "No defect in the reviewed source. Risk appears during release packaging or dependency drift.",
+      "remediation": "Build from the reviewed commit, pin base image digests, capture runtime/package inventory, SBOM, image digest, and provenance attestation.",
+      "certificationRelevance": "Required for a coherent external module package and production release evidence.",
+      "blocker": false,
+      "owner": "Release engineering",
+      "disposition": "EXTERNAL_PACKAGE_PREREQUISITE"
+    },
+    {
+      "findingId": "CSPRNG-1.3C-F005",
+      "severity": "INFO",
+      "title": "SP 800-90B entropy validation is not established",
+      "source": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:25-245"
+      ],
+      "standardsReference": "NIST SP 800-90B",
+      "consequence": "Successful OS byte requests and byte-length checks do not prove source min-entropy, physical-source health, or a validated entropy boundary.",
+      "exploitability": "Depends on platform, kernel, VM, and host compromise. Application logic cannot independently repair a compromised source.",
+      "remediation": "Obtain platform/module entropy documentation and validation evidence, or define a validated entropy-source integration for the certification boundary.",
+      "certificationRelevance": "External dependency for formal entropy claims.",
+      "blocker": false,
+      "owner": "Platform security and external assessor",
+      "disposition": "ACCEPTED_EXTERNAL_DEPENDENCY"
+    },
+    {
+      "findingId": "CSPRNG-1.3C-F006",
+      "severity": "INFO",
+      "title": "Formal SP 800-90C construction classification lacks evidence",
+      "source": [
+        "CSPRNG-1.3C conformance matrix and entropy boundary assessment"
+      ],
+      "standardsReference": "NIST SP 800-90C final",
+      "consequence": "The construction is structurally closest to RBG2, but formal conformance cannot be stated without entropy and module-boundary evidence.",
+      "exploitability": "Claiming conformance prematurely would create assurance and regulatory risk; no runtime exploit follows from the classification gap itself.",
+      "remediation": "Retain `SP800_90C_CLASSIFICATION_INSUFFICIENT_EVIDENCE` until the entropy and module boundary are externally established.",
+      "certificationRelevance": "External dependency.",
+      "blocker": false,
+      "owner": "Cryptographic governance and external assessor",
+      "disposition": "ACCEPTED_EXTERNAL_DEPENDENCY"
+    },
+    {
+      "findingId": "CSPRNG-1.3C-F007",
+      "severity": "INFO",
+      "title": "Managed-runtime physical erasure and host hardening remain external boundaries",
+      "source": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:280-359,409-480",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:278-371"
+      ],
+      "standardsReference": "NIST SP 800-90A Rev. 1 state protection; deployment security boundary",
+      "consequence": "GC movement, JIT temporaries, HMAC internals, crash dumps, debuggers, and a compromised host can retain or expose state despite best-effort zeroization.",
+      "exploitability": "Requires process/host privilege or memory compromise and is outside the application-only threat boundary.",
+      "remediation": "Use hardened hosts, disable or encrypt dumps, restrict ptrace/debug, minimize process privilege, and document managed-runtime limitations. Consider a validated module/HSM boundary only if required by certification goals.",
+      "certificationRelevance": "Must be documented in external threat and deployment reviews.",
+      "blocker": false,
+      "owner": "Platform security",
+      "disposition": "ACCEPTED_EXTERNAL_DEPENDENCY"
+    }
+  ],
+  "remainingBySeverity": {
+    "CRITICAL": 0,
+    "HIGH": 0,
+    "MEDIUM": 0,
+    "LOW": 2,
+    "INFO": 5
+  },
+  "internalExcellenceGate": {
+    "passed": true,
+    "rationale": "No CRITICAL, HIGH, or MEDIUM finding remains. Both LOW findings have minimal exploitability in the canonical path, preserve fail-closed authority, and have narrow remediations assigned before external review."
+  }
+}

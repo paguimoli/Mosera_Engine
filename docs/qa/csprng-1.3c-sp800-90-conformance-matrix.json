@@ -1,0 +1,245 @@
+{
+  "schemaVersion": "mosera.csprng.sp800-90-conformance.v3",
+  "packageId": "CSPRNG-1.3C",
+  "reviewedCommit": "1061cfcec9fb1fc78b2d2609ea7f283157842791",
+  "sourceSha256": "53ecf20c1690b3e240f00d8df611b7bc57f413aba6434236ed72eb4ac9b74d30",
+  "normativeStandards": [
+    "NIST SP 800-90A Rev. 1",
+    "NIST SP 800-90B",
+    "NIST SP 800-90C final"
+  ],
+  "overallAssessment": "CONFORMS_WITH_ASSUMPTION",
+  "formalValidationClaimed": false,
+  "requirements": [
+    {
+      "id": "90A-HMAC-001",
+      "reference": "SP 800-90A Rev. 1, 10.1.2.3",
+      "requirement": "Instantiate initializes Key to 0x00 and V to 0x01 at the selected output length.",
+      "codeEvidence": "CertifiedCsprngRuntimeServices.cs:393-401",
+      "behavior": "Creates a zero-filled Key, all-ones V, then applies Update to seed material.",
+      "assessment": "CONFORMS",
+      "residualAssumptions": [],
+      "findingId": null
+    },
+    {
+      "id": "90A-HMAC-002",
+      "reference": "SP 800-90A Rev. 1, 10.1.2.2",
+      "requirement": "HMAC_DRBG_Update performs the 0x00 round and the conditional 0x01 round in order.",
+      "codeEvidence": "CertifiedCsprngRuntimeServices.cs:635-667",
+      "behavior": "Updates Key then V for both rounds and omits the second round when provided_data is empty.",
+      "assessment": "CONFORMS",
+      "residualAssumptions": [],
+      "findingId": null
+    },
+    {
+      "id": "90A-HMAC-003",
+      "reference": "SP 800-90A Rev. 1, 10.1.2.3",
+      "requirement": "Seed material is entropy_input || nonce || personalization_string.",
+      "codeEvidence": "CertifiedCsprngRuntimeServices.cs:396,730-737",
+      "behavior": "Concatenates exact byte spans in normative order without conversion or truncation.",
+      "assessment": "CONFORMS",
+      "residualAssumptions": [],
+      "findingId": null
+    },
+    {
+      "id": "90A-HMAC-004",
+      "reference": "SP 800-90A Rev. 1, 8.6.7 and 10.1.2.3",
+      "requirement": "Requested strength is supported and entropy/nonce input lengths meet the selected profile.",
+      "codeEvidence": "CertifiedCsprngRuntimeServices.cs:367-390,704-720",
+      "behavior": "Accepts 128/192/256, enforces entropy bytes >= strength/8 and nonce bytes >= strength/16; production uses SHA-256/256 with 48 and 32 bytes.",
+      "assessment": "CONFORMS_WITH_ASSUMPTION",
+      "residualAssumptions": [
+        "Input byte length does not establish source min-entropy.",
+        "Only the SHA-256/256 profile is selected in the canonical production provider."
+      ],
+      "findingId": "CSPRNG-1.3C-F003"
+    },
+    {
+      "id": "90A-HMAC-005",
+      "reference": "SP 800-90A Rev. 1, 10.1.2.4",
+      "requirement": "Reseed updates state from fresh entropy and additional input, then sets reseed_counter to 1.",
+      "codeEvidence": "CertifiedCsprngRuntimeServices.cs:482-516; InternalCsprngOutcomeProvider.cs:287-304",
+      "behavior": "Enforces minimum input, concatenates entropy and additional input, updates Key/V, and resets the counter; production obtains a fresh 48-byte buffer.",
+      "assessment": "CONFORMS_WITH_ASSUMPTION",
+      "residualAssumptions": [
+        "OS API success is trusted for freshness and entropy quality."
+      ],
+      "findingId": "CSPRNG-1.3C-F005"
+    },
+    {
+      "id": "90A-HMAC-006",
+      "reference": "SP 800-90A Rev. 1, 10.1.2.5",
+      "requirement": "Generate rejects when reseed_counter exceeds the interval.",
+      "codeEvidence": "CertifiedCsprngRuntimeServices.cs:364-365,429-432,471",
+      "behavior": "Allows entry at 2^48, increments after success, and rejects the next request.",
+      "assessment": "CONFORMS",
+      "residualAssumptions": [],
+      "findingId": null
+    },
+    {
+      "id": "90A-HMAC-007",
+      "reference": "SP 800-90A Rev. 1, 10.1.2.5",
+      "requirement": "Generate applies optional pre-update, repeated HMAC(Key,V), post-update, and counter increment in order.",
+      "codeEvidence": "CertifiedCsprngRuntimeServices.cs:434-473",
+      "behavior": "Implements the normative ordering and passes continuation vectors.",
+      "assessment": "CONFORMS",
+      "residualAssumptions": [],
+      "findingId": null
+    },
+    {
+      "id": "90A-HMAC-008",
+      "reference": "SP 800-90A Rev. 1, Table 2 and 10.1",
+      "requirement": "One Generate request returns no more than 2^19 bits.",
+      "codeEvidence": "CertifiedCsprngRuntimeServices.cs:364,417-427",
+      "behavior": "Rejects non-positive counts and counts above 65,536 bytes before state mutation.",
+      "assessment": "CONFORMS",
+      "residualAssumptions": [],
+      "findingId": null
+    },
+    {
+      "id": "90A-HMAC-009",
+      "reference": "SP 800-90A Rev. 1, 9.3.1 and 10.1.2",
+      "requirement": "Errors return no partial output and do not create an accepted DRBG result.",
+      "codeEvidence": "CertifiedCsprngRuntimeServices.cs:451-479; InternalCsprngOutcomeProvider.cs:93-140,360-371",
+      "behavior": "Generate zeroes its output on exception and the production wrapper destroys the session and fails closed.",
+      "assessment": "CONFORMS_WITH_ASSUMPTION",
+      "residualAssumptions": [
+        "A non-canonical direct caller must not reuse a session after a state-transition exception."
+      ],
+      "findingId": "CSPRNG-1.3C-F001"
+    },
+    {
+      "id": "90A-HMAC-010",
+      "reference": "SP 800-90A Rev. 1, 8.8",
+      "requirement": "DRBG internal state is protected and destroyed when no longer needed.",
+      "codeEvidence": "CertifiedCsprngRuntimeServices.cs:280-359,669-678; InternalCsprngOutcomeProvider.cs:360-370",
+      "behavior": "Key/V are internal, per-session, and best-effort zeroed; canonical execution always destroys the session.",
+      "assessment": "CONFORMS_WITH_ASSUMPTION",
+      "residualAssumptions": [
+        ".NET managed memory and platform crypto internals cannot guarantee physical erasure.",
+        "One direct Generate V replacement should zero the replaced array."
+      ],
+      "findingId": "CSPRNG-1.3C-F001"
+    },
+    {
+      "id": "90A-HMAC-011",
+      "reference": "SP 800-90A Rev. 1, 8.8 and 9.3",
+      "requirement": "DRBG instances do not share mutable state across requests.",
+      "codeEvidence": "CertifiedCsprngRuntimeServices.cs:280-362; InternalCsprngOutcomeProvider.cs:287-371",
+      "behavior": "Every authoritative draw creates and destroys its own session; runtime and sampler singletons are stateless.",
+      "assessment": "CONFORMS",
+      "residualAssumptions": [],
+      "findingId": null
+    },
+    {
+      "id": "90A-HMAC-012",
+      "reference": "SP 800-90A Rev. 1, 8.5",
+      "requirement": "Prediction resistance is implemented only when the defined request semantics are supported.",
+      "codeEvidence": "No prediction-resistance request API exists.",
+      "behavior": "Per-draw instantiate/reseed is used, but formal prediction resistance is not claimed.",
+      "assessment": "NOT_APPLICABLE",
+      "residualAssumptions": [
+        "Claims and external materials must retain the explicit non-claim."
+      ],
+      "findingId": null
+    },
+    {
+      "id": "90A-TEST-001",
+      "reference": "SP 800-90A Rev. 1, 11",
+      "requirement": "Known-answer tests demonstrate the selected mechanism's deterministic behavior.",
+      "codeEvidence": "CertifiedCsprngRuntimeServices.cs:524-617",
+      "behavior": "Runs deterministic SHA-2 regression vectors and NIST CAVS 14.3 HMAC_DRBG SHA-256 PR=False COUNT=0 at readiness.",
+      "assessment": "CONFORMS_WITH_ASSUMPTION",
+      "residualAssumptions": [
+        "Internal vector execution is not CAVP or CMVP validation."
+      ],
+      "findingId": null
+    },
+    {
+      "id": "90A-TEST-002",
+      "reference": "SP 800-90A Rev. 1, implementation health testing boundary",
+      "requirement": "Catastrophic repetition is detected and fails closed in the selected implementation policy.",
+      "codeEvidence": "CertifiedCsprngRuntimeServices.cs:619-633",
+      "behavior": "Compares consecutive generated HMAC blocks in fixed time and throws on repetition.",
+      "assessment": "CONFORMS_WITH_ASSUMPTION",
+      "residualAssumptions": [
+        "This application control is not a substitute for SP 800-90B entropy-source health tests."
+      ],
+      "findingId": null
+    },
+    {
+      "id": "90B-BOUNDARY-001",
+      "reference": "SP 800-90B",
+      "requirement": "Entropy-source min-entropy and health behavior are validated at the source boundary.",
+      "codeEvidence": "AutoOsEntropyProvider platform API wrappers and readiness checks.",
+      "behavior": "Requests cryptographic OS bytes and fails closed, but does not characterize min-entropy or validate the physical source.",
+      "assessment": "INSUFFICIENT_EVIDENCE",
+      "residualAssumptions": [
+        "Platform entropy source and validated module evidence are external dependencies."
+      ],
+      "findingId": "CSPRNG-1.3C-F005"
+    },
+    {
+      "id": "90C-CONSTRUCTION-001",
+      "reference": "SP 800-90C final",
+      "requirement": "The complete RBG construction has a defined, validated entropy and DRBG module boundary.",
+      "codeEvidence": "Per-draw OS entropy -> HMAC_DRBG -> bounded sampler architecture.",
+      "behavior": "Structurally resembles RBG2, but entropy and formal module-boundary evidence are incomplete.",
+      "assessment": "INSUFFICIENT_EVIDENCE",
+      "residualAssumptions": [
+        "SP800_90C_CLASSIFICATION_INSUFFICIENT_EVIDENCE"
+      ],
+      "findingId": "CSPRNG-1.3C-F006"
+    },
+    {
+      "id": "INTEGRATION-001",
+      "reference": "Mosera canonical authority requirements",
+      "requirement": "Exactly one manifest-bound provider executes and no fallback can create an outcome.",
+      "codeEvidence": "CanonicalDrawExecutionAuthority.cs:25-76",
+      "behavior": "Exact provider/version/config resolution; Official and Manual missing evidence rejects without CSPRNG fallback.",
+      "assessment": "CONFORMS",
+      "residualAssumptions": [],
+      "findingId": null
+    },
+    {
+      "id": "INTEGRATION-002",
+      "reference": "Mosera immutable evidence requirements",
+      "requirement": "The authoritative result is exactly once, immutable, replayable, and certificate bound.",
+      "codeEvidence": "InternalCsprngOutcomeProvider.cs:28-236; CanonicalDrawExecutionAuthority.cs:78-176; migrations 094, 095, 117, 119",
+      "behavior": "Durable claim, append-only attempts/evidence, exact certificate hash/signing binding, persisted retry, and settlement handoff passed QA.",
+      "assessment": "CONFORMS_WITH_ASSUMPTION",
+      "residualAssumptions": [
+        "Canceled pre-commit attempts can lack a terminal attempt row."
+      ],
+      "findingId": "CSPRNG-1.3C-F002"
+    },
+    {
+      "id": "SAMPLING-001",
+      "reference": "Unbiased deterministic transformation requirement",
+      "requirement": "Bounded integers avoid modulo bias and use a fixed byte order.",
+      "codeEvidence": "CertifiedCsprngRuntimeServices.cs:914-945",
+      "behavior": "Uses 64-bit rejection sampling, explicit big-endian interpretation, and modulo only after acceptance.",
+      "assessment": "CONFORMS",
+      "residualAssumptions": [],
+      "findingId": null
+    },
+    {
+      "id": "SAMPLING-002",
+      "reference": "Uniform without-replacement sampling requirement",
+      "requirement": "Keno/Matrix selection is uniform, bounded, and duplicate-free; Pick preserves positions and replacement.",
+      "codeEvidence": "CertifiedCsprngRuntimeServices.cs:784-879",
+      "behavior": "Uses partial Fisher-Yates for no-replacement products and independent array positions for replacement products.",
+      "assessment": "CONFORMS",
+      "residualAssumptions": [],
+      "findingId": null
+    }
+  ],
+  "counts": {
+    "CONFORMS": 10,
+    "CONFORMS_WITH_ASSUMPTION": 7,
+    "PARTIAL": 0,
+    "NOT_APPLICABLE": 1,
+    "NONCONFORMING": 0,
+    "INSUFFICIENT_EVIDENCE": 2
+  }
+}
