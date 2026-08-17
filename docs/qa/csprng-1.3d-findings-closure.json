@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "mosera.csprng.findings-closure.v1",
+  "packageId": "CSPRNG-1.3D",
+  "baselineCommit": "1061cfcec9fb1fc78b2d2609ea7f283157842791",
+  "baselineSourceSha256": "53ecf20c1690b3e240f00d8df611b7bc57f413aba6434236ed72eb4ac9b74d30",
+  "candidateSourceSha256": "2f766c198298a8c1038cde1c50e49e34bf89c3645af8fc0ef16221789be9cb6c",
+  "status": "CSPRNG_1_3D_PASS",
+  "closures": [
+    {
+      "findingId": "CSPRNG-1.3C-F001",
+      "previousSeverity": "LOW",
+      "disposition": "REMEDIATED",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs",
+        "services/game-engine/tests/GameEngine.Application.Tests/Program.cs",
+        "scripts/qa/csprng-low-risk-hardening.mjs",
+        "scripts/qa/csprng-runtime-envelope.mjs"
+      ]
+    },
+    {
+      "findingId": "CSPRNG-1.3C-F002",
+      "previousSeverity": "LOW",
+      "disposition": "REMEDIATED",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs",
+        "services/game-engine/tests/GameEngine.Application.Tests/Program.cs",
+        "scripts/qa/csprng-low-risk-hardening.mjs"
+      ]
+    }
+  ],
+  "remainingBySeverity": {
+    "CRITICAL": 0,
+    "HIGH": 0,
+    "MEDIUM": 0,
+    "LOW": 0,
+    "INFO": 5
+  },
+  "newFindings": [],
+  "validOutputSemanticsChanged": false,
+  "statisticalRequalificationRequired": false
+}

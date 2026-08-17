@@ -31,6 +31,10 @@ addCheck("instantiate entropy boundary enforced", runtime.includes("MinimumEntro
 addCheck("nonce boundary enforced", runtime.includes("MinimumNonceBytes(securityStrengthBits)"));
 addCheck("reseed entropy boundary enforced", runtime.includes("MinimumEntropyBytes(session.SecurityStrengthBits)"));
 addCheck("boundary and rejected-state tests exist", tests.includes("VerifyHmacDrbgRuntimeEnvelope") && tests.includes("Rejected oversized Generate changed HMAC-DRBG state"));
+addCheck("replaced V is explicitly cleared", runtime.includes("ReplaceWithHmac(session.HashAlgorithm, ref value, session.Key, value)"));
+addCheck("terminal Generate failure invalidates session", runtime.includes("CryptographicOperations.ZeroMemory(output);\n            session.MarkDestroyed();"));
+addCheck("terminal reseed failure invalidates session", runtime.includes("UpdateSession(session, seedMaterial)") && runtime.includes("session.MarkDestroyed();\n            throw;"));
+addCheck("exceptional lifecycle tests exist", tests.includes("VerifyExceptionalSessionLifecycle") && tests.includes("Replaced HMAC-DRBG V buffer was not explicitly cleared"));
 addCheck("reseed counter boundary test avoids production mutator", tests.includes("SetReseedCounterForTest") && !runtime.includes("SetReseedCounterForTest"));
 addCheck("qualification generator uses compliant chunks", generator.includes("GenerateRequestBytes = HmacDrbgRuntime.MaximumBytesPerGenerateRequest") && generator.includes("Math.Min(GenerateRequestBytes, remaining)"));
 addCheck("new evidence omits secret-derived seed identifier", provider.includes("SeedIdentifier: null") || (provider.includes("Guid.NewGuid(),\n                null,") && provider.includes("ExecutionProvenanceIdentifier")));

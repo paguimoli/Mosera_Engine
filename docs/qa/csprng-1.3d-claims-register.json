@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "mosera.csprng.cryptographic-claims.v4",
+  "packageId": "CSPRNG-1.3D",
+  "candidateSourceSha256": "2f766c198298a8c1038cde1c50e49e34bf89c3645af8fc0ef16221789be9cb6c",
+  "inherits": "docs/qa/csprng-1.3c-claims-register.json",
+  "permittedInternalClaims": [
+    "The canonical production profile implements HMAC_DRBG with SHA-256 and requested 256-bit security strength.",
+    "The application enforces the reviewed SP 800-90A request envelope and state-transition order.",
+    "Canonical draws use isolated per-draw Key/V state and fail closed after terminal state-transition failures.",
+    "Bounded range and configured number transformations use unbiased integer sampling.",
+    "Internal cryptographic review is complete with no unresolved CRITICAL, HIGH, MEDIUM, or LOW finding."
+  ],
+  "prohibitedClaims": [
+    "NIST certified or CAVP/CMVP validated",
+    "SP 800-90B validated entropy source or proven min-entropy",
+    "Formally SP 800-90C validated",
+    "Independent audit complete",
+    "Accredited laboratory certified",
+    "Regulator approved",
+    "Guaranteed physical erasure in managed memory",
+    "Historical statistical evidence directly qualifies the 1.3D source hash"
+  ],
+  "externalDependencies": [
+    "SP 800-90B entropy evidence",
+    "SP 800-90C module classification",
+    "digest-pinned image, SBOM, and provenance",
+    "immutable WORM evidence custody",
+    "independent specialist and laboratory review"
+  ]
+}

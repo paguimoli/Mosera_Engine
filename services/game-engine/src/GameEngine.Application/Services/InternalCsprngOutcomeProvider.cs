@@ -18,6 +18,7 @@ public sealed class InternalCsprngOutcomeProvider(
     private const int SecurityStrengthBits = 256;
     private const int EntropyBytes = 48;
     private const int NonceBytes = 32;
+    private static readonly TimeSpan CancellationEvidenceTimeout = TimeSpan.FromSeconds(5);
     private static readonly JsonSerializerOptions CanonicalJsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -74,24 +75,26 @@ public sealed class InternalCsprngOutcomeProvider(
             requestHash,
             cancellationToken);
 
-        if (claim.Duplicate)
-        {
-            var existing = await providerAuthority.FindGeneratedEvidenceAsync(
-                manifest.ExecutionManifestId,
-                cancellationToken);
-            if (existing is not null)
-            {
-                return RestoreResult(manifest, existing, duplicate: true);
-            }
-        }
-
         var startedAt = DateTimeOffset.UtcNow;
         var startTimestamp = Stopwatch.GetTimestamp();
-        var attemptNumber = await providerAuthority.GetNextAttemptNumberAsync(
-            claim.Claim.ExecutionId,
-            cancellationToken);
+        int? attemptNumber = null;
         try
         {
+            if (claim.Duplicate)
+            {
+                var existing = await providerAuthority.FindGeneratedEvidenceAsync(
+                    manifest.ExecutionManifestId,
+                    cancellationToken);
+                if (existing is not null)
+                {
+                    return RestoreResult(manifest, existing, duplicate: true);
+                }
+            }
+
+            attemptNumber = await providerAuthority.GetNextAttemptNumberAsync(
+                claim.Claim.ExecutionId,
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             var health = BuildHealthEvidence();
             if (health.Blockers.Count > 0)
             {
@@ -105,14 +108,15 @@ public sealed class InternalCsprngOutcomeProvider(
                 generationDefinition,
                 startedAt,
                 startTimestamp,
-                health) with
+                health,
+                cancellationToken) with
             {
                 ExecutionId = claim.Claim.ExecutionId,
                 CanonicalRequestHash = requestHash
             };
             var attempt = CompletedAttempt(
                 claim.Claim,
-                attemptNumber,
+                attemptNumber.Value,
                 requestHash,
                 startedAt,
                 generated.Evidence.CompletedAt);
@@ -128,11 +132,53 @@ public sealed class InternalCsprngOutcomeProvider(
                 cancellationToken);
             return generated;
         }
+        catch (OperationCanceledException cancellation)
+        {
+            using var evidenceTimeout = new CancellationTokenSource(CancellationEvidenceTimeout);
+            try
+            {
+                var accepted = await providerAuthority.FindGeneratedEvidenceAsync(
+                    manifest.ExecutionManifestId,
+                    evidenceTimeout.Token);
+                if (accepted is not null)
+                {
+                    return RestoreResult(manifest, accepted, duplicate: true);
+                }
+
+                attemptNumber ??= await providerAuthority.GetNextAttemptNumberAsync(
+                    claim.Claim.ExecutionId,
+                    evidenceTimeout.Token);
+                var completedAt = DateTimeOffset.UtcNow;
+                await providerAuthority.AppendAttemptAsync(
+                    CancelledAttempt(
+                        claim.Claim,
+                        attemptNumber.Value,
+                        requestHash,
+                        startedAt,
+                        completedAt),
+                    evidenceTimeout.Token);
+            }
+            catch (Exception evidenceError)
+            {
+                throw new InvalidOperationException(
+                    "Internal CSPRNG cancellation evidence could not be persisted.",
+                    new AggregateException(cancellation, evidenceError));
+            }
+
+            throw;
+        }
         catch (Exception error) when (error is not OperationCanceledException)
         {
             var completedAt = DateTimeOffset.UtcNow;
+            if (attemptNumber is null)
+            {
+                throw new InvalidOperationException(
+                    "Internal CSPRNG provider failed before an execution attempt could be established.",
+                    error);
+            }
+
             await providerAuthority.AppendAttemptAsync(
-                FailedAttempt(claim.Claim, attemptNumber, requestHash, error, startedAt, completedAt),
+                FailedAttempt(claim.Claim, attemptNumber.Value, requestHash, error, startedAt, completedAt),
                 cancellationToken);
             throw new InvalidOperationException(
                 "Internal CSPRNG provider failed closed.",
@@ -282,7 +328,8 @@ public sealed class InternalCsprngOutcomeProvider(
         NumberOutcomeGenerationDefinition definition,
         DateTimeOffset startedAt,
         long startTimestamp,
-        InternalCsprngHealthEvidence initialHealth)
+        InternalCsprngHealthEvidence initialHealth,
+        CancellationToken cancellationToken)
     {
         var entropy = new byte[EntropyBytes];
         var nonce = new byte[NonceBytes];
@@ -292,16 +339,22 @@ public sealed class InternalCsprngOutcomeProvider(
         HmacDrbgSession? session = null;
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             entropyProvider.Fill(entropy);
+            cancellationToken.ThrowIfCancellationRequested();
             entropyProvider.Fill(nonce);
+            cancellationToken.ThrowIfCancellationRequested();
             entropyProvider.Fill(reseedEntropy);
+            cancellationToken.ThrowIfCancellationRequested();
             session = drbgRuntime.Instantiate(
                 CertifiedCsprngHashAlgorithm.Sha256,
                 entropy,
                 nonce,
                 personalization,
                 SecurityStrengthBits);
+            cancellationToken.ThrowIfCancellationRequested();
             drbgRuntime.Reseed(session, reseedEntropy, personalization);
+            cancellationToken.ThrowIfCancellationRequested();
             var numbers = sampler.SelectNumbers(
                 session,
                 definition.NumberUniverse,
@@ -309,6 +362,7 @@ public sealed class InternalCsprngOutcomeProvider(
                 definition.Unique,
                 definition.WithReplacement,
                 definition.Ordering);
+            cancellationToken.ThrowIfCancellationRequested();
             var completedAt = DateTimeOffset.UtcNow;
             var states = initialHealth.States
                 .Concat([
@@ -452,6 +506,26 @@ public sealed class InternalCsprngOutcomeProvider(
             requestHash,
             HashCanonical(
                 $"{claim.ExecutionId:N}|{attemptNumber}|FAILED|{requestHash}|{error.GetType().Name}|{completedAt:O}"),
+            startedAt,
+            completedAt);
+
+    private static OutcomeProviderExecutionAttempt CancelledAttempt(
+        OutcomeProviderExecutionClaim claim,
+        int attemptNumber,
+        string requestHash,
+        DateTimeOffset startedAt,
+        DateTimeOffset completedAt) =>
+        new(
+            Guid.NewGuid(),
+            claim.ExecutionId,
+            attemptNumber,
+            OutcomeProviderExecutionStatus.RetryableFailure,
+            OutcomeProviderFailureClassification.Retryable,
+            "OPERATION_CANCELLED",
+            "Internal CSPRNG execution was cancelled before authority; no result or financial effect was accepted.",
+            requestHash,
+            HashCanonical(
+                $"{claim.ExecutionId:N}|{attemptNumber}|CANCELLED|{requestHash}|{completedAt:O}"),
             startedAt,
             completedAt);
 

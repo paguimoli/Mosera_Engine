@@ -400,6 +400,12 @@ public sealed class HmacDrbgRuntime : IHmacDrbgRuntime
             Update(hashAlgorithm, ref key, ref value, seedMaterial);
             return new HmacDrbgSession(hashAlgorithm, key, value, securityStrengthBits);
         }
+        catch
+        {
+            CryptographicOperations.ZeroMemory(key);
+            CryptographicOperations.ZeroMemory(value);
+            throw;
+        }
         finally
         {
             CryptographicOperations.ZeroMemory(seedMaterial);
@@ -431,30 +437,28 @@ public sealed class HmacDrbgRuntime : IHmacDrbgRuntime
             throw new CryptographicException("HMAC-DRBG reseed is required before another Generate request.");
         }
 
-        if (!additionalInput.IsEmpty)
-        {
-            var additional = additionalInput.ToArray();
-            try
-            {
-                var key = session.Key;
-                var value = session.Value;
-                Update(session.HashAlgorithm, ref key, ref value, additional);
-                session.Key = key;
-                session.Value = value;
-            }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(additional);
-            }
-        }
-
         var output = new byte[byteCount];
         var offset = 0;
         try
         {
+            if (!additionalInput.IsEmpty)
+            {
+                var additional = additionalInput.ToArray();
+                try
+                {
+                    UpdateSession(session, additional);
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(additional);
+                }
+            }
+
             while (offset < byteCount)
             {
-                session.Value = Hmac(session.HashAlgorithm, session.Key, session.Value);
+                var value = session.Value;
+                ReplaceWithHmac(session.HashAlgorithm, ref value, session.Key, value);
+                session.Value = value;
                 VerifyContinuousTest(session, session.Value);
 
                 var copyLength = Math.Min(session.Value.Length, byteCount - offset);
@@ -462,12 +466,10 @@ public sealed class HmacDrbgRuntime : IHmacDrbgRuntime
                 offset += copyLength;
             }
 
-            var key = session.Key;
-            var value = session.Value;
-            var additional = additionalInput.IsEmpty ? ReadOnlySpan<byte>.Empty : additionalInput;
-            Update(session.HashAlgorithm, ref key, ref value, additional);
-            session.Key = key;
-            session.Value = value;
+            var postGenerationInput = additionalInput.IsEmpty
+                ? ReadOnlySpan<byte>.Empty
+                : additionalInput;
+            UpdateSession(session, postGenerationInput);
             session.ReseedCounter++;
             session.RecordGeneratedOutput(output);
             return output;
@@ -475,6 +477,7 @@ public sealed class HmacDrbgRuntime : IHmacDrbgRuntime
         catch
         {
             CryptographicOperations.ZeroMemory(output);
+            session.MarkDestroyed();
             throw;
         }
     }
@@ -497,17 +500,18 @@ public sealed class HmacDrbgRuntime : IHmacDrbgRuntime
         var seedMaterial = Combine(entropy, additionalInput);
         try
         {
-            var key = session.Key;
-            var value = session.Value;
-            Update(session.HashAlgorithm, ref key, ref value, seedMaterial);
-            session.Key = key;
-            session.Value = value;
+            UpdateSession(session, seedMaterial);
             session.ReseedCounter = 1;
             if (session.PreviousGeneratedBlock is not null)
             {
                 CryptographicOperations.ZeroMemory(session.PreviousGeneratedBlock);
                 session.PreviousGeneratedBlock = null;
             }
+        }
+        catch
+        {
+            session.MarkDestroyed();
+            throw;
         }
         finally
         {
@@ -663,6 +667,24 @@ public sealed class HmacDrbgRuntime : IHmacDrbgRuntime
         finally
         {
             CryptographicOperations.ZeroMemory(secondMaterial);
+        }
+    }
+
+    private static void UpdateSession(HmacDrbgSession session, ReadOnlySpan<byte> providedData)
+    {
+        var key = session.Key;
+        var value = session.Value;
+        try
+        {
+            Update(session.HashAlgorithm, ref key, ref value, providedData);
+            session.Key = key;
+            session.Value = value;
+        }
+        catch
+        {
+            CryptographicOperations.ZeroMemory(key);
+            CryptographicOperations.ZeroMemory(value);
+            throw;
         }
     }
 

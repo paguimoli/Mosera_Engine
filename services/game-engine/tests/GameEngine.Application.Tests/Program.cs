@@ -625,6 +625,19 @@ if (replacementGeneration.Evidence.GeneratedNumbers.Count != 6 ||
         "Internal CSPRNG generation must support a second Game Definition without hardcoded universe assumptions.");
 }
 
+await VerifyInternalCsprngCancellationEvidenceAsync(
+    canonicalGameDefinitions,
+    canonicalManifest,
+    canonicalRequest,
+    drbgRuntime,
+    sampler);
+
+if (args.Contains("csprng-low-risk-hardening", StringComparer.Ordinal))
+{
+    Console.WriteLine("CSPRNG-1.3D focused lifecycle and cancellation tests passed.");
+    return;
+}
+
 var statisticalEntropy = Enumerable.Range(1, 48).Select(value => (byte)value).ToArray();
 var statisticalNonce = Enumerable.Range(65, 16).Select(value => (byte)value).ToArray();
 var statisticalPersonalization = Encoding.UTF8.GetBytes("bf-4.4-frequency-validation");
@@ -4544,6 +4557,47 @@ static void VerifyHmacDrbgRuntimeEnvelope(HmacDrbgRuntime runtime)
     VerifyInstantiateInputBoundaries(runtime);
     VerifyReseedBoundaries(runtime);
     VerifyReseedCounterBoundary(runtime);
+    VerifyExceptionalSessionLifecycle(runtime);
+}
+
+static void VerifyExceptionalSessionLifecycle(HmacDrbgRuntime runtime)
+{
+    using (var session = NewEnvelopeSession(runtime))
+    {
+        var replacedValue = ReadDrbgStateBuffer(session, "Value");
+        var output = runtime.Generate(session, 32);
+        CryptographicOperations.ZeroMemory(output);
+        if (replacedValue.Any(value => value != 0))
+        {
+            throw new InvalidOperationException(
+                "Replaced HMAC-DRBG V buffer was not explicitly cleared.");
+        }
+    }
+
+    var failedSession = NewEnvelopeSession(runtime);
+    var key = ReadDrbgStateBuffer(failedSession, "Key");
+    var value = ReadDrbgStateBuffer(failedSession, "Value");
+    byte[] repeatedBlock;
+    using (var hmac = new HMACSHA256(key))
+    {
+        repeatedBlock = hmac.ComputeHash(value);
+    }
+
+    SetDrbgStateBuffer(failedSession, "PreviousGeneratedBlock", repeatedBlock);
+    ExpectFailure<CryptographicException>(() => runtime.Generate(failedSession, 1));
+    if (!failedSession.Destroyed ||
+        key.Any(item => item != 0) ||
+        value.Any(item => item != 0) ||
+        repeatedBlock.Any(item => item != 0))
+    {
+        throw new InvalidOperationException(
+            "Terminal HMAC-DRBG failure must invalidate the session and clear retained state buffers.");
+    }
+
+    ExpectFailure<ObjectDisposedException>(() => runtime.Generate(failedSession, 1));
+    ExpectFailure<ObjectDisposedException>(() => runtime.Reseed(failedSession, new byte[32]));
+    failedSession.Dispose();
+    failedSession.Dispose();
 }
 
 static void VerifyInstantiateInputBoundaries(HmacDrbgRuntime runtime)
@@ -4655,6 +4709,226 @@ static string DrbgStateFingerprint(HmacDrbgSession session)
         Convert.ToHexString(ReadBytes(session, "GeneratedOutputHash")));
 }
 
+static byte[] ReadDrbgStateBuffer(HmacDrbgSession session, string propertyName)
+{
+    const System.Reflection.BindingFlags Flags =
+        System.Reflection.BindingFlags.Instance |
+        System.Reflection.BindingFlags.NonPublic;
+    return ((byte[]?)typeof(HmacDrbgSession).GetProperty(propertyName, Flags)?.GetValue(session))
+        ?? throw new InvalidOperationException($"HMAC-DRBG state property {propertyName} was not found.");
+}
+
+static void SetDrbgStateBuffer(HmacDrbgSession session, string propertyName, byte[] value)
+{
+    const System.Reflection.BindingFlags Flags =
+        System.Reflection.BindingFlags.Instance |
+        System.Reflection.BindingFlags.NonPublic;
+    var property = typeof(HmacDrbgSession).GetProperty(propertyName, Flags)
+        ?? throw new InvalidOperationException($"HMAC-DRBG state property {propertyName} was not found.");
+    property.SetValue(session, value);
+}
+
+static async Task VerifyInternalCsprngCancellationEvidenceAsync(
+    InMemoryGameDefinitionVersionRepository gameDefinitions,
+    DrawExecutionManifest baseManifest,
+    InternalCsprngExecutionRequest baseRequest,
+    HmacDrbgRuntime runtime,
+    ICertifiedCsprngSampler sampler)
+{
+    static DrawExecutionManifest NewManifest(DrawExecutionManifest source, string boundary) => source with
+    {
+        ExecutionManifestId = Guid.NewGuid(),
+        DrawId = Guid.NewGuid(),
+        CanonicalManifestHash = $"sha256:cancellation-{boundary}-{Guid.NewGuid():N}"
+    };
+
+    static InternalCsprngExecutionRequest NewRequest(
+        InternalCsprngExecutionRequest source,
+        string boundary) => source with
+    {
+        RequestId = Guid.NewGuid(),
+        IdempotencyKey = $"internal-csprng:cancellation:{boundary}:{Guid.NewGuid():N}",
+        CorrelationId = $"cancellation-{boundary}"
+    };
+
+    static async Task AssertCancelledAsync(
+        string boundary,
+        InternalCsprngOutcomeProvider provider,
+        CanonicalCsprngTestRepository repository,
+        DrawExecutionManifest manifest,
+        InternalCsprngExecutionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var cancelled = false;
+        try
+        {
+            await provider.GenerateAsync(manifest, request, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            cancelled = true;
+        }
+
+        var attempt = repository.Attempts.LastOrDefault();
+        if (!cancelled ||
+            attempt is null ||
+            attempt.Status != OutcomeProviderExecutionStatus.RetryableFailure ||
+            attempt.FailureClassification != OutcomeProviderFailureClassification.Retryable ||
+            attempt.FailureCode != "OPERATION_CANCELLED" ||
+            repository.GeneratedEvidence.Count != 0 ||
+            repository.AuthoritativeEvidence.Count != 0)
+        {
+            throw new InvalidOperationException(
+                $"Internal CSPRNG cancellation at {boundary} must persist one non-authoritative terminal attempt.");
+        }
+    }
+
+    var beforeEntropyRepository = new CanonicalCsprngTestRepository();
+    using var beforeEntropyCancellation = new CancellationTokenSource();
+    beforeEntropyRepository.AfterExecutionClaimed = beforeEntropyCancellation.Cancel;
+    var beforeEntropyManifest = NewManifest(baseManifest, "before-entropy");
+    var beforeEntropyRequest = NewRequest(baseRequest, "before-entropy");
+    var beforeEntropyProvider = new InternalCsprngOutcomeProvider(
+        new CanonicalOutcomeProviderAuthority(beforeEntropyRepository),
+        gameDefinitions,
+        new FixedEntropyProvider([0x11]),
+        runtime,
+        sampler);
+    await AssertCancelledAsync(
+        "before entropy acquisition",
+        beforeEntropyProvider,
+        beforeEntropyRepository,
+        beforeEntropyManifest,
+        beforeEntropyRequest,
+        beforeEntropyCancellation.Token);
+
+    beforeEntropyRepository.AfterExecutionClaimed = null;
+    var recovered = await beforeEntropyProvider.GenerateAsync(
+        beforeEntropyManifest,
+        beforeEntropyRequest,
+        CancellationToken.None);
+    if (recovered.Duplicate ||
+        beforeEntropyRepository.Attempts.Count != 2 ||
+        beforeEntropyRepository.GeneratedEvidence.Count != 1 ||
+        beforeEntropyRepository.Attempts.Last().Status != OutcomeProviderExecutionStatus.Completed)
+    {
+        throw new InvalidOperationException(
+            "Internal CSPRNG retry after cancellation must complete as a separate, deterministic attempt.");
+    }
+
+    using var afterEntropyCancellation = new CancellationTokenSource();
+    var afterEntropyRepository = new CanonicalCsprngTestRepository();
+    var afterEntropyManifest = NewManifest(baseManifest, "after-entropy");
+    var afterEntropyRequest = NewRequest(baseRequest, "after-entropy");
+    await AssertCancelledAsync(
+        "after entropy acquisition",
+        new InternalCsprngOutcomeProvider(
+            new CanonicalOutcomeProviderAuthority(afterEntropyRepository),
+            gameDefinitions,
+            new CancellationEntropyProvider([0x22], afterEntropyCancellation, 3),
+            runtime,
+            sampler),
+        afterEntropyRepository,
+        afterEntropyManifest,
+        afterEntropyRequest,
+        afterEntropyCancellation.Token);
+
+    foreach (var boundary in new[] { DrbgCancellationBoundary.Instantiate, DrbgCancellationBoundary.Reseed })
+    {
+        using var cancellation = new CancellationTokenSource();
+        var repository = new CanonicalCsprngTestRepository();
+        var manifest = NewManifest(baseManifest, boundary.ToString().ToLowerInvariant());
+        var request = NewRequest(baseRequest, boundary.ToString().ToLowerInvariant());
+        await AssertCancelledAsync(
+            $"after {boundary}",
+            new InternalCsprngOutcomeProvider(
+                new CanonicalOutcomeProviderAuthority(repository),
+                gameDefinitions,
+                new FixedEntropyProvider([0x33]),
+                new CancellationDrbgRuntime(runtime, cancellation, boundary),
+                new CertifiedCsprngSampler(runtime)),
+            repository,
+            manifest,
+            request,
+            cancellation.Token);
+    }
+
+    using var afterGenerateCancellation = new CancellationTokenSource();
+    var afterGenerateRepository = new CanonicalCsprngTestRepository();
+    var afterGenerateManifest = NewManifest(baseManifest, "after-generate");
+    var afterGenerateRequest = NewRequest(baseRequest, "after-generate");
+    await AssertCancelledAsync(
+        "after Generate before persistence",
+        new InternalCsprngOutcomeProvider(
+            new CanonicalOutcomeProviderAuthority(afterGenerateRepository),
+            gameDefinitions,
+            new FixedEntropyProvider([0x44]),
+            runtime,
+            new CancellationSampler(sampler, afterGenerateCancellation)),
+        afterGenerateRepository,
+        afterGenerateManifest,
+        afterGenerateRequest,
+        afterGenerateCancellation.Token);
+
+    var duringPersistenceRepository = new CanonicalCsprngTestRepository
+    {
+        CancelBeforeCompletionPersistence = true
+    };
+    var duringPersistenceManifest = NewManifest(baseManifest, "during-persistence");
+    var duringPersistenceRequest = NewRequest(baseRequest, "during-persistence");
+    var duringPersistenceProvider = new InternalCsprngOutcomeProvider(
+        new CanonicalOutcomeProviderAuthority(duringPersistenceRepository),
+        gameDefinitions,
+        new FixedEntropyProvider([0x55]),
+        runtime,
+        sampler);
+    await AssertCancelledAsync(
+        "during persistence",
+        duringPersistenceProvider,
+        duringPersistenceRepository,
+        duringPersistenceManifest,
+        duringPersistenceRequest,
+        CancellationToken.None);
+    await AssertCancelledAsync(
+        "during repeated persistence cancellation",
+        duringPersistenceProvider,
+        duringPersistenceRepository,
+        duringPersistenceManifest,
+        duringPersistenceRequest,
+        CancellationToken.None);
+    if (duringPersistenceRepository.Attempts.Count != 2 ||
+        duringPersistenceRepository.Attempts.Select(attempt => attempt.AttemptNumber).Distinct().Count() != 2)
+    {
+        throw new InvalidOperationException(
+            "Repeated cancellation must produce unique, non-contradictory attempt evidence.");
+    }
+
+    var afterPersistenceRepository = new CanonicalCsprngTestRepository
+    {
+        CancelAfterCompletionPersistence = true
+    };
+    var afterPersistenceManifest = NewManifest(baseManifest, "after-persistence");
+    var afterPersistenceRequest = NewRequest(baseRequest, "after-persistence");
+    var accepted = await new InternalCsprngOutcomeProvider(
+        new CanonicalOutcomeProviderAuthority(afterPersistenceRepository),
+        gameDefinitions,
+        new FixedEntropyProvider([0x66]),
+        runtime,
+        sampler).GenerateAsync(
+            afterPersistenceManifest,
+            afterPersistenceRequest,
+            CancellationToken.None);
+    if (!accepted.Duplicate ||
+        afterPersistenceRepository.Attempts.Count != 1 ||
+        afterPersistenceRepository.Attempts.Single().Status != OutcomeProviderExecutionStatus.Completed ||
+        afterPersistenceRepository.GeneratedEvidence.Count != 1 ||
+        afterPersistenceRepository.AuthoritativeEvidence.Count != 0)
+    {
+        throw new InvalidOperationException(
+            "Cancellation after durable result persistence must preserve the accepted result without contradictory evidence.");
+    }
+}
+
 static void SetReseedCounterForTest(HmacDrbgSession session, long value)
 {
     var property = typeof(HmacDrbgSession).GetProperty(nameof(HmacDrbgSession.ReseedCounter))
@@ -4697,6 +4971,133 @@ sealed class FixedEntropyProvider(byte[] fixedBytes) : IOsEntropyProvider
     }
 }
 
+sealed class CancellationEntropyProvider(
+    byte[] fixedBytes,
+    CancellationTokenSource cancellation,
+    int cancelAfterFillCount) : IOsEntropyProvider
+{
+    private int fillCount;
+
+    public OsEntropyPlatform Platform => OsEntropyPlatform.Unsupported;
+
+    public bool IsSupported => true;
+
+    public void Fill(byte[] buffer)
+    {
+        for (var index = 0; index < buffer.Length; index++)
+        {
+            buffer[index] = fixedBytes[index % fixedBytes.Length];
+        }
+
+        if (++fillCount == cancelAfterFillCount)
+        {
+            cancellation.Cancel();
+        }
+    }
+
+    public OsEntropyReadiness CheckReadiness() =>
+        new(Platform, Supported: true, Ready: true, []);
+}
+
+enum DrbgCancellationBoundary
+{
+    Instantiate,
+    Reseed
+}
+
+sealed class CancellationDrbgRuntime(
+    IHmacDrbgRuntime inner,
+    CancellationTokenSource cancellation,
+    DrbgCancellationBoundary boundary) : IHmacDrbgRuntime
+{
+    public HmacDrbgSession Instantiate(
+        CertifiedCsprngHashAlgorithm hashAlgorithm,
+        ReadOnlySpan<byte> entropy,
+        ReadOnlySpan<byte> nonce,
+        ReadOnlySpan<byte> personalization,
+        int securityStrengthBits)
+    {
+        var session = inner.Instantiate(
+            hashAlgorithm,
+            entropy,
+            nonce,
+            personalization,
+            securityStrengthBits);
+        if (boundary == DrbgCancellationBoundary.Instantiate)
+        {
+            cancellation.Cancel();
+        }
+
+        return session;
+    }
+
+    public byte[] Generate(
+        HmacDrbgSession session,
+        int byteCount,
+        ReadOnlySpan<byte> additionalInput = default) =>
+        inner.Generate(session, byteCount, additionalInput);
+
+    public void Reseed(
+        HmacDrbgSession session,
+        ReadOnlySpan<byte> entropy,
+        ReadOnlySpan<byte> additionalInput = default)
+    {
+        inner.Reseed(session, entropy, additionalInput);
+        if (boundary == DrbgCancellationBoundary.Reseed)
+        {
+            cancellation.Cancel();
+        }
+    }
+
+    public void Destroy(HmacDrbgSession session) => inner.Destroy(session);
+
+    public HmacDrbgRuntimeReadiness RunHealthChecks() => inner.RunHealthChecks();
+}
+
+sealed class CancellationSampler(
+    ICertifiedCsprngSampler inner,
+    CancellationTokenSource cancellation) : ICertifiedCsprngSampler
+{
+    public int NextInt32(HmacDrbgSession session, int minInclusive, int maxInclusive) =>
+        inner.NextInt32(session, minInclusive, maxInclusive);
+
+    public IReadOnlyList<int> FisherYatesShuffle(
+        HmacDrbgSession session,
+        IReadOnlyList<int> values) =>
+        inner.FisherYatesShuffle(session, values);
+
+    public IReadOnlyList<int> UniqueNumbers(
+        HmacDrbgSession session,
+        int minInclusive,
+        int maxInclusive,
+        int count) =>
+        inner.UniqueNumbers(session, minInclusive, maxInclusive, count);
+
+    public IReadOnlyList<int> SelectNumbers(
+        HmacDrbgSession session,
+        IReadOnlyList<int> universe,
+        int count,
+        bool unique,
+        bool withReplacement,
+        OutcomeNumberOrdering ordering)
+    {
+        var numbers = inner.SelectNumbers(
+            session,
+            universe,
+            count,
+            unique,
+            withReplacement,
+            ordering);
+        cancellation.Cancel();
+        return numbers;
+    }
+
+    public string WeightedSelection(
+        HmacDrbgSession session,
+        IReadOnlyDictionary<string, long> weights) =>
+        inner.WeightedSelection(session, weights);
+}
+
 sealed class ConfiguredEntropyProvider(OsEntropyPlatform platform) : IOsEntropyProvider
 {
     public OsEntropyPlatform Platform => platform;
@@ -4724,6 +5125,12 @@ sealed class CanonicalCsprngTestRepository(
         new(StringComparer.Ordinal);
     private readonly List<OutcomeProviderExecutionAttempt> attempts = [];
     private readonly List<OutcomeProviderExecutionEvidence> evidence = [];
+
+    public Action? AfterExecutionClaimed { get; set; }
+
+    public bool CancelBeforeCompletionPersistence { get; set; }
+
+    public bool CancelAfterCompletionPersistence { get; set; }
 
     public IReadOnlyCollection<OutcomeProviderExecutionEvidence> GeneratedEvidence =>
         evidence.Where(item => item.Stage == OutcomeProviderEvidenceStage.Generated).ToArray();
@@ -4799,6 +5206,7 @@ sealed class CanonicalCsprngTestRepository(
 
         claimsByExecution.Add(claim.ExecutionId, claim);
         executionByIdempotencyKey.Add(claim.IdempotencyKey, claim.ExecutionId);
+        AfterExecutionClaimed?.Invoke();
         return Task.FromResult(new OutcomeProviderClaimResult(
             claim,
             Created: true,
@@ -4897,8 +5305,17 @@ sealed class CanonicalCsprngTestRepository(
         OutcomeProviderExecutionEvidence item,
         CancellationToken cancellationToken)
     {
+        if (CancelBeforeCompletionPersistence)
+        {
+            throw new OperationCanceledException("Cancellation injected before durable completion.");
+        }
+
         await AppendAttemptAsync(attempt, cancellationToken);
         await AppendEvidenceAsync(item, cancellationToken);
+        if (CancelAfterCompletionPersistence)
+        {
+            throw new OperationCanceledException("Cancellation injected after durable completion.");
+        }
     }
 
     public Task<OutcomeProviderExecutionEvidence?> FindGeneratedEvidenceAsync(
