@@ -8,8 +8,8 @@ namespace GameEngine.Application.Services;
 
 public sealed class OutcomeAuthorityHardeningService
 {
-    public const string HmacDrbgSuiteId = "NIST-SP800-90A-REV1-HMAC-DRBG-CONFORMANCE";
-    public const string HmacDrbgSuiteVersion = "p0-007.13-v1";
+    public const string HmacDrbgSuiteId = "MOSERA-HMAC-DRBG-DETERMINISTIC-REGRESSION";
+    public const string HmacDrbgSuiteVersion = "csprng-1.3b-v1";
     private const string LockDerivationAlgorithm = "sha256(outcome-authority-lock|purpose|namespace|resource-scope)";
 
     private readonly IHmacDrbgRuntime drbgRuntime;
@@ -37,7 +37,7 @@ public sealed class OutcomeAuthorityHardeningService
         var results = new List<HmacDrbgConformanceVectorResult>();
         var blockers = new List<string>();
 
-        foreach (var vector in vectors ?? OfficialHmacDrbgConformanceVectors())
+        foreach (var vector in vectors ?? MoseraHmacDrbgRegressionVectors())
         {
             var result = EvaluateVector(vector, providerBuildIdentity);
             results.Add(result);
@@ -354,9 +354,9 @@ public sealed class OutcomeAuthorityHardeningService
             ProductionAuthorityDisabled: true);
     }
 
-    public static IReadOnlyCollection<HmacDrbgConformanceVector> OfficialHmacDrbgConformanceVectors()
+    public static IReadOnlyCollection<HmacDrbgConformanceVector> MoseraHmacDrbgRegressionVectors()
     {
-        const string source = "NIST SP 800-90A Rev.1 HMAC_DRBG algorithm conformance fixture; external CAVP/lab import remains evidence-importable.";
+        const string source = "Mosera deterministic HMAC_DRBG regression fixture; not an authoritative NIST CAVP vector.";
         return
         [
             CreateVector(

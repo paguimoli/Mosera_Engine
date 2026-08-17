@@ -1676,6 +1676,34 @@ addCheck(
   "availability_decision_hash_not_globally_unique",
   !constraintExists("ticket_authority", "availability_decisions", "availability_decisions_decision_hash_key")
 );
+addCheck(
+  "csprng_remediated_evidence_configuration",
+  queryScalar(`
+select exists (
+  select 1
+  from game_engine.outcome_provider_configuration_versions
+  where provider_id = 'mosera-internal-csprng'
+    and provider_version = '2.0.0'
+    and configuration_version = '2'
+    and not (evidence_requirements ? 'seedIdentifier')
+    and evidence_requirements ->> 'executionProvenanceIdentifier' = 'true'
+    and evidence_requirements ->> 'generateRequestMaximumBytes' = '65536'
+    and evidence_requirements ->> 'reseedIntervalMaximum' = '281474976710656'
+);
+`) === "t"
+);
+addCheck(
+  "csprng_remediated_configuration_disabled_by_default",
+  queryScalar(`
+select activation_state
+from game_engine.outcome_provider_activation_events
+where provider_id = 'mosera-internal-csprng'
+  and provider_version = '2.0.0'
+  and configuration_version = '2'
+order by effective_at desc, created_at desc
+limit 1;
+`) === "DISABLED"
+);
 addCheck("game_engine_duplicate_create_conflict_resolved_or_blocked", true, {
   resolution: manifest.knownConflicts?.find((conflict) => conflict.id === "game_engine_evaluation_table_duplicate_create")?.resolution,
 });

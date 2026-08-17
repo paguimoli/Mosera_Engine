@@ -1,0 +1,67 @@
+{
+  "schemaVersion": "mosera.csprng.cryptographic-claims.v2",
+  "packageId": "CSPRNG-1.3B",
+  "candidateSourceSha256": "53ecf20c1690b3e240f00d8df611b7bc57f413aba6434236ed72eb4ac9b74d30",
+  "claims": [
+    {
+      "claim": "Mosera implements HMAC_DRBG with SHA-256 in the canonical Internal CSPRNG provider and enforces its selected SP 800-90A runtime envelope.",
+      "classification": "internally demonstrated",
+      "allowed": true,
+      "qualification": "The implementation enforces explicit strengths, input minima, 65536 bytes per Generate request, and the 2^48 reseed interval. This is not NIST validation."
+    },
+    {
+      "claim": "Mosera uses operating-system cryptographic entropy APIs and fails closed when they are unavailable or report failure.",
+      "classification": "internally demonstrated",
+      "allowed": true,
+      "qualification": "Linux getrandom, Windows BCryptGenRandom, and macOS SecRandomCopyBytes are supported. Source quality remains platform-dependent."
+    },
+    {
+      "claim": "Each canonical Internal CSPRNG draw uses isolated per-draw Key/V state, immediate fresh-entropy reseed, and best-effort zeroization.",
+      "classification": "internally demonstrated",
+      "allowed": true,
+      "qualification": "Managed-runtime physical erasure is not guaranteed."
+    },
+    {
+      "claim": "Mosera's bounded integer and without-replacement sampling are unbiased and architecture-independent.",
+      "classification": "internally demonstrated",
+      "allowed": true,
+      "qualification": "The reviewed path uses rejection sampling, explicit big-endian interpretation, and partial Fisher-Yates selection."
+    },
+    {
+      "claim": "Mosera has traceable NIST CAVP vector coverage for the HMAC_DRBG SHA-256 reseed profile.",
+      "classification": "internally demonstrated",
+      "allowed": true,
+      "qualification": "CAVS 14.3 drbg_pr, PredictionResistance=False, SHA-256, COUNT=0 is executed. Coverage is not CAVP certification."
+    },
+    {
+      "claim": "Mosera has 256 bits of validated entropy assurance or an SP 800-90B validated entropy source.",
+      "classification": "prohibited/unsupported",
+      "allowed": false,
+      "qualification": "Byte-length validation and 48 requested OS bytes do not establish min-entropy."
+    },
+    {
+      "claim": "Mosera is formally SP 800-90C conformant.",
+      "classification": "requires external evidence",
+      "allowed": false,
+      "qualification": "SP800_90C_CLASSIFICATION_INSUFFICIENT_EVIDENCE; RBG2 remains the closest candidate construction."
+    },
+    {
+      "claim": "Mosera implements formal prediction-resistance request semantics.",
+      "classification": "prohibited/unsupported",
+      "allowed": false,
+      "qualification": "Per-draw instantiation and immediate reseed do not expose the standard prediction-resistance request profile."
+    },
+    {
+      "claim": "Mosera is NIST certified, CAVP validated, CMVP validated, independently audited, laboratory certified, or regulator approved.",
+      "classification": "prohibited/unsupported",
+      "allowed": false,
+      "qualification": "No external certificate, accredited assessment, or regulator approval exists."
+    },
+    {
+      "claim": "CSPRNG-1.2B directly qualifies the remediated source hash.",
+      "classification": "prohibited/unsupported",
+      "allowed": false,
+      "qualification": "CSPRNG-1.2B remains valid historical statistical evidence for source 0c2639d9...d46. The remediated 53ecf20c...d30 baseline has targeted regression evidence only."
+    }
+  ]
+}

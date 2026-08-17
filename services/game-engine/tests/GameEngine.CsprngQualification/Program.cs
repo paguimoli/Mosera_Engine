@@ -38,7 +38,7 @@ var worktree = RunCommand("git", "status --short");
 var conformanceService = new OutcomeAuthorityHardeningService(
     runtime,
     new OutcomeValidationFrameworkService());
-var vectors = OutcomeAuthorityHardeningService.OfficialHmacDrbgConformanceVectors();
+var vectors = OutcomeAuthorityHardeningService.MoseraHmacDrbgRegressionVectors();
 var conformance = conformanceService.RunHmacDrbgConformanceVectors(
     $"{commit}:{implementationHashes[implementationFiles[0]]}");
 var vectorEvidence = vectors.Select(vector => new
@@ -104,7 +104,7 @@ for (var sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++)
         nonce,
         personalization,
         256);
-    var bytes = runtime.Generate(session, sampleBytes);
+    var bytes = GenerateCompliantStream(runtime, session, sampleBytes);
     var sampleId = $"sample-{sampleIndex + 1:D2}";
     var rawPath = Path.Combine(rawDirectory, $"{sampleId}.bin");
     if (extended)
@@ -264,7 +264,7 @@ await Parallel.ForEachAsync(
     (_, _) =>
     {
         using var session = NewOsSession(runtime, entropyProvider, $"concurrency:{Guid.NewGuid():N}");
-        var bytes = runtime.Generate(session, concurrencyBytes);
+        var bytes = GenerateCompliantStream(runtime, session, concurrencyBytes);
         concurrentHashes.Add(Sha256Hex(bytes));
         CryptographicOperations.ZeroMemory(bytes);
         return ValueTask.CompletedTask;
@@ -531,6 +531,47 @@ static byte[] GenerateDeterministic(
         personalization,
         256);
     return runtime.Generate(session, byteCount);
+}
+
+static byte[] GenerateCompliantStream(
+    IHmacDrbgRuntime runtime,
+    HmacDrbgSession session,
+    int byteCount)
+{
+    if (byteCount <= 0)
+    {
+        throw new ArgumentOutOfRangeException(nameof(byteCount));
+    }
+
+    var output = new byte[byteCount];
+    var offset = 0;
+    try
+    {
+        while (offset < output.Length)
+        {
+            var count = Math.Min(
+                HmacDrbgRuntime.MaximumBytesPerGenerateRequest,
+                output.Length - offset);
+            var chunk = runtime.Generate(session, count);
+            try
+            {
+                chunk.CopyTo(output, offset);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(chunk);
+            }
+
+            offset += count;
+        }
+
+        return output;
+    }
+    catch
+    {
+        CryptographicOperations.ZeroMemory(output);
+        throw;
+    }
 }
 
 static UniformResult ChiSquareUniform(IReadOnlyList<long> counts, double alpha)

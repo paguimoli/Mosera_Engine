@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace GameEngine.Domain.Model;
 
 public enum InternalCsprngHealthState
@@ -28,7 +30,8 @@ public sealed record InternalCsprngExecutionEvidence(
     string ProviderVersion,
     string ConfigurationVersion,
     Guid DrbgInstanceIdentifier,
-    string SeedIdentifier,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SeedIdentifier,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ExecutionProvenanceIdentifier,
     long ReseedCounter,
     Guid RequestIdentifier,
     string GeneratedBytesHash,

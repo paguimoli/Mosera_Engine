@@ -21,6 +21,7 @@ public sealed class InternalCsprngOutcomeProvider(
     private static readonly JsonSerializerOptions CanonicalJsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         Converters = { new JsonStringEnumConverter() }
     };
 
@@ -294,7 +295,6 @@ public sealed class InternalCsprngOutcomeProvider(
             entropyProvider.Fill(entropy);
             entropyProvider.Fill(nonce);
             entropyProvider.Fill(reseedEntropy);
-            var seedIdentifier = $"seed:{HashMaterial(entropy, nonce, personalization)}";
             session = drbgRuntime.Instantiate(
                 CertifiedCsprngHashAlgorithm.Sha256,
                 entropy,
@@ -328,7 +328,10 @@ public sealed class InternalCsprngOutcomeProvider(
                 registration.ProviderVersion,
                 registration.ConfigurationVersion,
                 Guid.NewGuid(),
-                seedIdentifier,
+                null,
+                HashCanonical(
+                    $"{manifest.DrawId:N}|{manifest.ExecutionManifestId:N}|{request.RequestId:N}|" +
+                    $"{registration.ProviderId}|{registration.ProviderVersion}|{registration.ConfigurationVersion}"),
                 session.ReseedCounter,
                 request.RequestId,
                 session.GetGeneratedBytesHash(),
@@ -516,6 +519,7 @@ public sealed class InternalCsprngOutcomeProvider(
                 evidence.ConfigurationVersion,
                 evidence.DrbgInstanceIdentifier,
                 evidence.SeedIdentifier,
+                evidence.ExecutionProvenanceIdentifier,
                 evidence.ReseedCounter,
                 evidence.RequestIdentifier,
                 evidence.GeneratedBytesHash,
@@ -527,27 +531,6 @@ public sealed class InternalCsprngOutcomeProvider(
                 evidence.Health
             },
             CanonicalJsonOptions));
-
-    private static string HashMaterial(params byte[][] inputs)
-    {
-        var length = inputs.Sum(input => input.Length);
-        var material = new byte[length];
-        try
-        {
-            var offset = 0;
-            foreach (var input in inputs)
-            {
-                input.CopyTo(material, offset);
-                offset += input.Length;
-            }
-
-            return HashCanonicalBytes(material);
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(material);
-        }
-    }
 
     private static string HashCanonical(string value) =>
         HashCanonicalBytes(Encoding.UTF8.GetBytes(value));

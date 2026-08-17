@@ -14,8 +14,8 @@ const generatorAssembly = join(
   root,
   "services/game-engine/tests/GameEngine.CsprngExternalSampleGenerator/bin/Release/net10.0/GameEngine.CsprngExternalSampleGenerator.dll",
 );
-const defaultEvidenceRoot = join(root, ".qa/csprng-1.2a/evidence");
-const qualifiedHash = "0c2639d958dd916e0f6d56168ece697c6cff6b2fd0c3415368613425706c8d46";
+const defaultEvidenceRoot = join(root, ".qa/csprng-1.3b/evidence");
+const qualifiedHash = "53ecf20c1690b3e240f00d8df611b7bc57f413aba6434236ed72eb4ac9b74d30";
 const classification = "NON_QUALIFICATION_SMOKE_TEST";
 
 const [command = "help", ...argv] = process.argv.slice(2);
@@ -155,7 +155,7 @@ async function smoke(options) {
 
   const executionPayload = {
     schemaVersion: "1.0.0",
-    qualificationPackageId: "CSPRNG-1.2A",
+    qualificationPackageId: "CSPRNG-1.3B",
     classification,
     runId,
     sampleId: manifest.manifestPayload.sampleId,

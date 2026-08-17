@@ -8,11 +8,11 @@ using System.Text.RegularExpressions;
 using GameEngine.Application.Services;
 using GameEngine.Domain.Model;
 
-const string PackageId = "CSPRNG-1.2A";
-const string QualifiedImplementationHash = "0c2639d958dd916e0f6d56168ece697c6cff6b2fd0c3415368613425706c8d46";
+const string PackageId = "CSPRNG-1.3B";
+const string QualifiedImplementationHash = "53ecf20c1690b3e240f00d8df611b7bc57f413aba6434236ed72eb4ac9b74d30";
 const int EntropyBytes = 48;
 const int NonceBytes = 32;
-const int ChunkBytes = 1024 * 1024;
+const int GenerateRequestBytes = HmacDrbgRuntime.MaximumBytesPerGenerateRequest;
 
 var options = ParseArguments(args);
 var repositoryRoot = FindRepositoryRoot();
@@ -46,6 +46,11 @@ var publicInitialization = new
     entropyBytes = EntropyBytes,
     nonceBytes = NonceBytes,
     immediateReseedBytes = EntropyBytes,
+    generateRequestMaximumBytes = GenerateRequestBytes,
+    generateRequestCount = 1 + ((options.ByteCount - 1) / GenerateRequestBytes),
+    finalGenerateRequestBytes = options.ByteCount % GenerateRequestBytes == 0
+        ? GenerateRequestBytes
+        : options.ByteCount % GenerateRequestBytes,
     personalizationSha256 = Sha256(personalization),
     sessionIsolation = "one qualification session per immutable sample identity",
     secretsPersisted = false
@@ -103,13 +108,13 @@ try
         FileMode.CreateNew,
         FileAccess.Write,
         FileShare.None,
-        ChunkBytes,
+        GenerateRequestBytes,
         FileOptions.SequentialScan))
     {
         long remaining = options.ByteCount;
         while (remaining > 0)
         {
-            var count = checked((int)Math.Min(ChunkBytes, remaining));
+            var count = checked((int)Math.Min(GenerateRequestBytes, remaining));
             var bytes = runtime.Generate(session, count);
             try
             {

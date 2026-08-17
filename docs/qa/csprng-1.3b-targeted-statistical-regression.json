@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "packageId": "CSPRNG-1.3B",
+  "purpose": "Targeted statistical regression for the remediated request-chunking path",
+  "candidateSourceHash": "53ecf20c1690b3e240f00d8df611b7bc57f413aba6434236ed72eb4ac9b74d30",
+  "fullCampaignRerun": false,
+  "runs": [
+    {
+      "runId": "csprng-1.3b-fast-20260817T001034Z",
+      "generatedAt": "2026-08-17T00:10:34.69316+00:00",
+      "profile": "fast",
+      "status": "CSPRNG_INTERNAL_QUALIFICATION_BLOCKED",
+      "blockers": [
+        "Pick qualification failed."
+      ],
+      "rawSamples": [
+        {
+          "sampleId": "sample-01",
+          "outputSha256": "4a1f4f2671dae04a560aca1d36712e6411b3f9f56ad60e97d040a4896b559123"
+        },
+        {
+          "sampleId": "sample-02",
+          "outputSha256": "c2ba8d07b98c00f6b45d197fa8f277bfbd9490e41ef9da6806244cbd568ffbd0"
+        }
+      ],
+      "pick": {
+        "samples": 2000,
+        "failedPosition": 5,
+        "chiSquare": 21.73,
+        "pValue": 0.009775221021193757,
+        "acceptanceThreshold": 0.01,
+        "maximumAbsoluteAdjacentCorrelationZ": 1.8838542103102414
+      },
+      "keno": {
+        "draws": 500,
+        "passed": true,
+        "duplicates": 0,
+        "outOfRange": 0,
+        "inclusionPValue": 0.9449204142851887,
+        "positionFailures": 0
+      },
+      "matrix": {
+        "draws": 1000,
+        "passed": true,
+        "duplicates": 0,
+        "inclusionPValue": 0.33674697298887263
+      },
+      "independence": {
+        "workers": 8,
+        "passed": true,
+        "uniqueOutputHashes": 8
+      },
+      "restart": {
+        "cycles": 3,
+        "passed": true,
+        "uniqueOutputHashes": 3
+      },
+      "disposition": "PRESERVED_FOR_REVIEW",
+      "interpretation": "One of six Pick-position tests fell narrowly below the predeclared threshold in a deliberately small regression sample. This result is not replaced or reclassified. A separately identified larger follow-up is required to assess recurrence."
+    },
+    {
+      "runId": "csprng-1.3b-extended-20260817T001239Z",
+      "generatedAt": "2026-08-17T00:12:39.417214+00:00",
+      "profile": "extended",
+      "status": "CSPRNG_INTERNAL_QUALIFICATION_PASS_WITH_EXTERNAL_GATES",
+      "blockers": [],
+      "rawSamples": [
+        {
+          "sampleId": "sample-01",
+          "outputSha256": "0ba2c17175e70da76f85a091ff3f15f304f2ab6edc17b489f7285c4c6fd90f33"
+        },
+        {
+          "sampleId": "sample-02",
+          "outputSha256": "d8d63434b8263a8e4c1206a5d830874130ea30f8d26060e86735e6156eafdb49"
+        },
+        {
+          "sampleId": "sample-03",
+          "outputSha256": "23d51e099c047ffc29e74af8763884a36ced2e3338df15c5d1d7c2e5f66cebd0"
+        },
+        {
+          "sampleId": "sample-04",
+          "outputSha256": "0e73bd286d1c3276bd5b204878ebd57f38118f2fd50976de1ab34bc8ec58389f"
+        }
+      ],
+      "pick": {
+        "samples": 50000,
+        "passed": true,
+        "positionPValues": [
+          0.31656603535588623,
+          0.8081472610176187,
+          0.9920664025214404,
+          0.896117333531899,
+          0.4911858745976905,
+          0.8007869639837237
+        ],
+        "maximumAbsoluteAdjacentCorrelationZ": 1.6619116874157918
+      },
+      "keno": {
+        "draws": 20000,
+        "passed": true,
+        "duplicates": 0,
+        "outOfRange": 0,
+        "inclusionPValue": 0.7893619128372726,
+        "positionFailures": 0
+      },
+      "matrix": {
+        "draws": 30000,
+        "passed": true,
+        "duplicates": 0,
+        "inclusionPValue": 0.7258360820204104
+      },
+      "independence": {
+        "workers": 32,
+        "passed": true,
+        "uniqueOutputHashes": 32
+      },
+      "restart": {
+        "cycles": 12,
+        "passed": true,
+        "uniqueOutputHashes": 12
+      },
+      "externalSuites": {
+        "nistSp80022": "DEFERRED_EXTERNAL_QUALIFICATION",
+        "practRand": "DEFERRED_EXTERNAL_QUALIFICATION",
+        "dieharder": "DEFERRED_EXTERNAL_QUALIFICATION"
+      },
+      "disposition": "PASS_WITH_EXTERNAL_GATES",
+      "interpretation": "The separately identified larger follow-up did not reproduce the small-run Pick anomaly. It exercises the remediated chunking path and representative bounded samplers without replacing the first run or the historical CSPRNG-1.2B campaign."
+    }
+  ],
+  "limitations": [
+    "This targeted regression does not replace the CSPRNG-1.2B campaign.",
+    "Statistical tests do not establish cryptographic security or entropy-source conformance."
+  ]
+}

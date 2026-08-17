@@ -1,0 +1,156 @@
+{
+  "schemaVersion": "mosera.csprng.findings-closure.v1",
+  "packageId": "CSPRNG-1.3B",
+  "baselineCommit": "4fdaa7fc4851741f7df9b9ea842409bd33eb72e9",
+  "oldSourceSha256": "0c2639d958dd916e0f6d56168ece697c6cff6b2fd0c3415368613425706c8d46",
+  "newCandidateSourceSha256": "53ecf20c1690b3e240f00d8df611b7bc57f413aba6434236ed72eb4ac9b74d30",
+  "sourceChanged": true,
+  "fullStatisticalCampaignRerun": false,
+  "findings": [
+    {
+      "findingId": "CSPRNG-1.3A-F001",
+      "originalSeverity": "HIGH",
+      "remediation": "Generate rejects requests above 65536 bytes before state mutation; reseed_counter greater than 2^48 rejects before generation; qualification streams use repeated compliant calls.",
+      "filesChanged": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs",
+        "services/game-engine/tests/GameEngine.CsprngExternalSampleGenerator/Program.cs",
+        "services/game-engine/tests/GameEngine.CsprngQualification/Program.cs"
+      ],
+      "testsAdded": [
+        "Generate sizes 1, 32, 65535, 65536 and rejected 65537",
+        "reseed counter maximum allowed call, exact rejection boundary, and reset",
+        "rejected-call state fingerprint and deterministic continuation"
+      ],
+      "finalDisposition": "REMEDIATED",
+      "remainingResidualRisk": "None identified in the enforced application boundary.",
+      "externalDependency": null
+    },
+    {
+      "findingId": "CSPRNG-1.3A-F002",
+      "originalSeverity": "HIGH",
+      "remediation": "The runtime accepts only explicit 128, 192, and 256-bit profiles and enforces entropy, nonce, and reseed-entropy byte minima before state changes.",
+      "filesChanged": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs",
+        "services/game-engine/tests/GameEngine.Application.Tests/Program.cs"
+      ],
+      "testsAdded": [
+        "supported and unsupported strengths",
+        "instantiate entropy exact/under/empty/missing",
+        "nonce exact/under/empty/missing",
+        "reseed entropy exact/under/empty/missing"
+      ],
+      "finalDisposition": "REMEDIATED",
+      "remainingResidualRisk": "Byte-length checks enforce the application contract but do not prove source min-entropy.",
+      "externalDependency": "SP 800-90B entropy-source validation"
+    },
+    {
+      "findingId": "CSPRNG-1.3A-F003",
+      "originalSeverity": "MEDIUM",
+      "remediation": "Mosera-created fixtures were relabeled as deterministic regression vectors and a traceable NIST CAVP CAVS 14.3 HMAC_DRBG SHA-256 PR=False COUNT=0 reseed vector was added to runtime readiness.",
+      "filesChanged": [
+        "services/game-engine/src/GameEngine.Application/Services/OutcomeAuthorityHardeningService.cs",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs",
+        "scripts/qa/drbg-official-vectors.mjs"
+      ],
+      "testsAdded": [
+        "NIST CAVP instantiate, reseed, and two Generate operations",
+        "authoritative ReturnedBits fixed-time comparison"
+      ],
+      "finalDisposition": "REMEDIATED",
+      "remainingResidualRisk": "This is vector coverage, not CAVP or CMVP validation.",
+      "externalDependency": "Formal CAVP/CMVP validation if certification is pursued"
+    },
+    {
+      "findingId": "CSPRNG-1.3A-F004",
+      "originalSeverity": "MEDIUM",
+      "remediation": "New provider evidence omits SeedIdentifier and records a non-secret execution provenance hash. Configuration version 2 removes seedIdentifier from requirements while historical configuration and JSON remain replayable.",
+      "filesChanged": [
+        "services/game-engine/src/GameEngine.Domain/Model/InternalCsprngProviderModels.cs",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs",
+        "scripts/migrations/local/119_version_csprng_evidence_minimization.sql"
+      ],
+      "testsAdded": [
+        "new evidence has null/omitted seedIdentifier",
+        "non-secret execution provenance exists",
+        "configuration 2 evidence contract validation"
+      ],
+      "finalDisposition": "REMEDIATED",
+      "remainingResidualRisk": "Historical records retain their original hash for interpretation and replay; they are not rewritten.",
+      "externalDependency": null
+    },
+    {
+      "findingId": "CSPRNG-1.3A-F005",
+      "originalSeverity": "LOW",
+      "remediation": "Linux entropy chunks and all OS readiness probes are zeroed in finally blocks, including exceptional paths.",
+      "filesChanged": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs"
+      ],
+      "testsAdded": ["existing OS entropy readiness and provider failure regression"],
+      "finalDisposition": "REMEDIATED",
+      "remainingResidualRisk": "Managed-runtime physical erasure limitations remain under F010.",
+      "externalDependency": null
+    },
+    {
+      "findingId": "CSPRNG-1.3A-F006",
+      "originalSeverity": "LOW",
+      "remediation": "Bounded-integer sampling now interprets DRBG bytes with explicit big-endian conversion.",
+      "filesChanged": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs"
+      ],
+      "testsAdded": ["bounded-range, Keno, Matrix, and Pick sampling regression"],
+      "finalDisposition": "REMEDIATED",
+      "remainingResidualRisk": "The mapping remains uniform; deterministic byte-to-integer mapping is now architecture-independent.",
+      "externalDependency": null
+    },
+    {
+      "findingId": "CSPRNG-1.3A-F007",
+      "originalSeverity": "LOW",
+      "remediation": "No change in this focused cryptographic envelope package. Cancellation before authoritative completion remains fail closed and creates no outcome or financial effect.",
+      "filesChanged": [],
+      "testsAdded": ["existing provider recovery/idempotency regression"],
+      "finalDisposition": "ACCEPTED_LOW_RISK",
+      "remainingResidualRisk": "A canceled pre-commit attempt can lack non-authoritative failure-attempt evidence.",
+      "externalDependency": "Operational cancellation evidence policy decision"
+    },
+    {
+      "findingId": "CSPRNG-1.3A-F008",
+      "originalSeverity": "INFO",
+      "remediation": "Claims remain limited to successful use of OS cryptographic entropy APIs; no min-entropy validation claim is made.",
+      "filesChanged": ["docs/qa/csprng-1.3b-claims-register.json"],
+      "testsAdded": ["existing OS entropy fail-closed readiness"],
+      "finalDisposition": "ACCEPTED_EXTERNAL_DEPENDENCY",
+      "remainingResidualRisk": "Entropy quality depends on the selected operating platform and module boundary.",
+      "externalDependency": "SP 800-90B evidence or a validated platform/module"
+    },
+    {
+      "findingId": "CSPRNG-1.3A-F009",
+      "originalSeverity": "INFO",
+      "remediation": "The closest construction remains RBG2, but formal SP 800-90C classification is not claimed.",
+      "filesChanged": ["docs/qa/csprng-1.3b-claims-register.json"],
+      "testsAdded": [],
+      "finalDisposition": "ACCEPTED_EXTERNAL_DEPENDENCY",
+      "remainingResidualRisk": "Validated entropy and DRBG module-boundary evidence is absent.",
+      "externalDependency": "SP 800-90B and certification-boundary evidence"
+    },
+    {
+      "findingId": "CSPRNG-1.3A-F010",
+      "originalSeverity": "INFO",
+      "remediation": "Best-effort logical zeroization was strengthened; no physical-erasure claim is made for managed runtime internals.",
+      "filesChanged": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs",
+        "docs/qa/csprng-1.3b-claims-register.json"
+      ],
+      "testsAdded": ["destroyed-session and exceptional temporary-buffer regression"],
+      "finalDisposition": "ACCEPTED_EXTERNAL_DEPENDENCY",
+      "remainingResidualRisk": "GC movement, cryptographic library internals, crash dumps, and debuggers can retain copies.",
+      "externalDependency": "Host hardening and external module-boundary review"
+    }
+  ],
+  "remainingBySeverity": {
+    "CRITICAL": 0,
+    "HIGH": 0,
+    "MEDIUM": 0,
+    "LOW": 1,
+    "INFO": 3
+  }
+}

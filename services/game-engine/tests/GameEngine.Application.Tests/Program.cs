@@ -5,6 +5,7 @@ using GameEngine.Domain.Randomness;
 using GameEngine.Infrastructure.Persistence;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 var registry = new GameModuleRegistry();
 var drawAuthorityRegistry = new DrawAuthorityRegistry();
@@ -318,11 +319,15 @@ CryptographicOperations.ZeroMemory(entropyProbe);
 var drbgRuntime = new HmacDrbgRuntime();
 var drbgReadiness = drbgRuntime.RunHealthChecks();
 if (!drbgReadiness.IsReady ||
-    drbgReadiness.KnownAnswerResults.Count != 3 ||
-    drbgReadiness.KnownAnswerResults.Any(result => !result.Passed))
+    drbgReadiness.KnownAnswerResults.Count != 4 ||
+    drbgReadiness.KnownAnswerResults.Any(result => !result.Passed) ||
+    drbgReadiness.KnownAnswerResults.All(result =>
+        result.VectorId != "nist-cavp-cavs14.3-drbg-pr-false-hmac-sha256-count0"))
 {
     throw new InvalidOperationException("HMAC-DRBG startup, KAT, and continuous health checks must pass.");
 }
+
+VerifyHmacDrbgRuntimeEnvelope(drbgRuntime);
 
 foreach (var hashAlgorithm in Enum.GetValues<CertifiedCsprngHashAlgorithm>())
 {
@@ -505,6 +510,9 @@ if (canonicalGeneration.Evidence.GeneratedNumbers.Count != 20 ||
         canonicalGeneration.Evidence.GeneratedNumbers.Order()) ||
     canonicalGeneration.Evidence.GeneratedByteCount <= 0 ||
     !canonicalGeneration.Evidence.GeneratedBytesHash.StartsWith("sha256:", StringComparison.Ordinal) ||
+    canonicalGeneration.Evidence.SeedIdentifier is not null ||
+    string.IsNullOrWhiteSpace(canonicalGeneration.Evidence.ExecutionProvenanceIdentifier) ||
+    JsonSerializer.Serialize(canonicalGeneration.Evidence).Contains("seedIdentifier", StringComparison.OrdinalIgnoreCase) ||
     !canonicalGeneration.Evidence.Health.States.Contains(
         InternalCsprngHealthState.ExecutionSucceeded))
 {
@@ -3377,7 +3385,7 @@ if (!vectorSuite.Passed ||
     throw new InvalidOperationException("Official HMAC-DRBG conformance vectors must pass for SHA-256, SHA-384, and SHA-512.");
 }
 
-var tamperedVector = OutcomeAuthorityHardeningService.OfficialHmacDrbgConformanceVectors()
+var tamperedVector = OutcomeAuthorityHardeningService.MoseraHmacDrbgRegressionVectors()
     .Select(vector => vector.HashAlgorithm == CertifiedCsprngHashAlgorithm.Sha256
         ? vector with { ExpectedFirstGenerateHex = vector.ExpectedFirstGenerateHex.Replace('8', '9') }
         : vector)
@@ -4465,6 +4473,208 @@ static OutcomeCertificate MathEvalOutcomeCertificate(IReadOnlyDictionary<string,
         null,
         OutcomeCustodyState.Generated,
         DateTimeOffset.UnixEpoch);
+}
+
+static void VerifyHmacDrbgRuntimeEnvelope(HmacDrbgRuntime runtime)
+{
+    foreach (var securityStrength in new[] { 128, 192, 256 })
+    {
+        using var supported = NewEnvelopeSession(runtime, securityStrength);
+    }
+
+    foreach (var invalidStrength in new[] { 0, 112, 257 })
+    {
+        ExpectFailure<CryptographicException>(() => runtime.Instantiate(
+            CertifiedCsprngHashAlgorithm.Sha256,
+            new byte[48],
+            new byte[32],
+            ReadOnlySpan<byte>.Empty,
+            invalidStrength));
+    }
+
+    ExpectFailure<ArgumentOutOfRangeException>(() =>
+    {
+        using var session = NewEnvelopeSession(runtime);
+        runtime.Generate(session, 0);
+    });
+    ExpectFailure<ArgumentOutOfRangeException>(() =>
+    {
+        using var session = NewEnvelopeSession(runtime);
+        runtime.Generate(session, -1);
+    });
+
+    foreach (var byteCount in new[] { 1, 32, 65_535, 65_536 })
+    {
+        using var session = NewEnvelopeSession(runtime);
+        var output = runtime.Generate(session, byteCount);
+        if (output.Length != byteCount)
+        {
+            throw new InvalidOperationException("HMAC-DRBG Generate returned an unexpected byte count.");
+        }
+
+        CryptographicOperations.ZeroMemory(output);
+    }
+
+    using (var rejected = NewEnvelopeSession(runtime))
+    using (var control = NewEnvelopeSession(runtime))
+    {
+        var before = DrbgStateFingerprint(rejected);
+        ExpectFailure<ArgumentOutOfRangeException>(() => runtime.Generate(rejected, 65_537));
+        if (before != DrbgStateFingerprint(rejected))
+        {
+            throw new InvalidOperationException("Rejected oversized Generate changed HMAC-DRBG state.");
+        }
+
+        var rejectedOutput = runtime.Generate(rejected, 64);
+        var controlOutput = runtime.Generate(control, 64);
+        try
+        {
+            if (!CryptographicOperations.FixedTimeEquals(rejectedOutput, controlOutput))
+            {
+                throw new InvalidOperationException("Rejected Generate altered subsequent deterministic output.");
+            }
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(rejectedOutput);
+            CryptographicOperations.ZeroMemory(controlOutput);
+        }
+    }
+
+    VerifyInstantiateInputBoundaries(runtime);
+    VerifyReseedBoundaries(runtime);
+    VerifyReseedCounterBoundary(runtime);
+}
+
+static void VerifyInstantiateInputBoundaries(HmacDrbgRuntime runtime)
+{
+    using var production = runtime.Instantiate(
+        CertifiedCsprngHashAlgorithm.Sha256,
+        new byte[48],
+        new byte[32],
+        ReadOnlySpan<byte>.Empty,
+        256);
+    using var exact = runtime.Instantiate(
+        CertifiedCsprngHashAlgorithm.Sha256,
+        new byte[32],
+        new byte[16],
+        ReadOnlySpan<byte>.Empty,
+        256);
+
+    foreach (var entropy in new byte[]?[] { new byte[31], [], null })
+    {
+        ExpectFailure<CryptographicException>(() => runtime.Instantiate(
+            CertifiedCsprngHashAlgorithm.Sha256,
+            entropy,
+            new byte[16],
+            ReadOnlySpan<byte>.Empty,
+            256));
+    }
+
+    foreach (var nonce in new byte[]?[] { new byte[15], [], null })
+    {
+        ExpectFailure<CryptographicException>(() => runtime.Instantiate(
+            CertifiedCsprngHashAlgorithm.Sha256,
+            new byte[32],
+            nonce,
+            ReadOnlySpan<byte>.Empty,
+            256));
+    }
+
+    ExpectFailure<ArgumentOutOfRangeException>(() => runtime.Instantiate(
+        (CertifiedCsprngHashAlgorithm)999,
+        new byte[32],
+        new byte[16],
+        ReadOnlySpan<byte>.Empty,
+        256));
+}
+
+static void VerifyReseedBoundaries(HmacDrbgRuntime runtime)
+{
+    using var session = NewEnvelopeSession(runtime);
+    runtime.Reseed(session, new byte[48]);
+    runtime.Reseed(session, new byte[32]);
+    foreach (var entropy in new byte[]?[] { new byte[31], [], null })
+    {
+        var before = DrbgStateFingerprint(session);
+        ExpectFailure<CryptographicException>(() => runtime.Reseed(session, entropy));
+        if (before != DrbgStateFingerprint(session))
+        {
+            throw new InvalidOperationException("Rejected reseed changed HMAC-DRBG state.");
+        }
+    }
+}
+
+static void VerifyReseedCounterBoundary(HmacDrbgRuntime runtime)
+{
+    using var session = NewEnvelopeSession(runtime);
+    SetReseedCounterForTest(session, HmacDrbgRuntime.MaximumReseedInterval);
+    var allowed = runtime.Generate(session, 1);
+    CryptographicOperations.ZeroMemory(allowed);
+    if (session.ReseedCounter != HmacDrbgRuntime.MaximumReseedInterval + 1)
+    {
+        throw new InvalidOperationException("HMAC-DRBG reseed counter boundary increment is incorrect.");
+    }
+
+    var before = DrbgStateFingerprint(session);
+    ExpectFailure<CryptographicException>(() => runtime.Generate(session, 1));
+    if (before != DrbgStateFingerprint(session))
+    {
+        throw new InvalidOperationException("Reseed-required rejection changed HMAC-DRBG state.");
+    }
+
+    runtime.Reseed(session, new byte[32]);
+    if (session.ReseedCounter != 1)
+    {
+        throw new InvalidOperationException("HMAC-DRBG reseed must reset reseed_counter to one.");
+    }
+}
+
+static HmacDrbgSession NewEnvelopeSession(HmacDrbgRuntime runtime, int securityStrength = 256) =>
+    runtime.Instantiate(
+        CertifiedCsprngHashAlgorithm.Sha256,
+        Enumerable.Range(0, 48).Select(value => (byte)value).ToArray(),
+        Enumerable.Range(0, 32).Select(value => (byte)(value + 64)).ToArray(),
+        Encoding.UTF8.GetBytes("csprng-1.3b-runtime-envelope"),
+        securityStrength);
+
+static string DrbgStateFingerprint(HmacDrbgSession session)
+{
+    const System.Reflection.BindingFlags Flags =
+        System.Reflection.BindingFlags.Instance |
+        System.Reflection.BindingFlags.NonPublic;
+    static byte[] ReadBytes(HmacDrbgSession value, string name) =>
+        ((byte[]?)typeof(HmacDrbgSession).GetProperty(name, Flags)?.GetValue(value)) ?? [];
+
+    return string.Join("|",
+        session.ReseedCounter,
+        session.GeneratedByteCount,
+        Convert.ToHexString(ReadBytes(session, "Key")),
+        Convert.ToHexString(ReadBytes(session, "Value")),
+        Convert.ToHexString(ReadBytes(session, "PreviousGeneratedBlock")),
+        Convert.ToHexString(ReadBytes(session, "GeneratedOutputHash")));
+}
+
+static void SetReseedCounterForTest(HmacDrbgSession session, long value)
+{
+    var property = typeof(HmacDrbgSession).GetProperty(nameof(HmacDrbgSession.ReseedCounter))
+        ?? throw new InvalidOperationException("ReseedCounter property was not found.");
+    property.SetValue(session, value);
+}
+
+static void ExpectFailure<TException>(Action action)
+    where TException : Exception
+{
+    try
+    {
+        action();
+    }
+    catch (TException)
+    {
+        return;
+    }
+
+    throw new InvalidOperationException($"Expected {typeof(TException).Name} was not thrown.");
 }
 
 sealed class FixedEntropyProvider(byte[] fixedBytes) : IOsEntropyProvider

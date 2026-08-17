@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using GameEngine.Domain.Model;
@@ -100,15 +101,21 @@ public sealed class LinuxGetRandomEntropyProvider : IOsEntropyProvider
         while (offset < buffer.Length)
         {
             var chunk = new byte[buffer.Length - offset];
-            var read = GetRandom(chunk, (nuint)chunk.Length, 0);
-            if (read <= 0)
+            try
             {
-                throw new CryptographicException($"getrandom() failed with errno {Marshal.GetLastPInvokeError()}.");
-            }
+                var read = GetRandom(chunk, (nuint)chunk.Length, 0);
+                if (read <= 0)
+                {
+                    throw new CryptographicException($"getrandom() failed with errno {Marshal.GetLastPInvokeError()}.");
+                }
 
-            Buffer.BlockCopy(chunk, 0, buffer, offset, (int)read);
-            CryptographicOperations.ZeroMemory(chunk);
-            offset += (int)read;
+                Buffer.BlockCopy(chunk, 0, buffer, offset, (int)read);
+                offset += (int)read;
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(chunk);
+            }
         }
     }
 
@@ -119,16 +126,19 @@ public sealed class LinuxGetRandomEntropyProvider : IOsEntropyProvider
             return new OsEntropyReadiness(Platform, Supported: false, Ready: false, ["Linux getrandom() is unavailable on this OS."]);
         }
 
+        var probe = new byte[32];
         try
         {
-            var probe = new byte[32];
             Fill(probe);
-            CryptographicOperations.ZeroMemory(probe);
             return new OsEntropyReadiness(Platform, Supported: true, Ready: true, []);
         }
         catch (Exception error) when (error is CryptographicException or PlatformNotSupportedException)
         {
             return new OsEntropyReadiness(Platform, Supported: true, Ready: false, [error.Message]);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(probe);
         }
     }
 
@@ -166,16 +176,19 @@ public sealed class WindowsBCryptEntropyProvider : IOsEntropyProvider
             return new OsEntropyReadiness(Platform, Supported: false, Ready: false, ["BCryptGenRandom() is unavailable on this OS."]);
         }
 
+        var probe = new byte[32];
         try
         {
-            var probe = new byte[32];
             Fill(probe);
-            CryptographicOperations.ZeroMemory(probe);
             return new OsEntropyReadiness(Platform, Supported: true, Ready: true, []);
         }
         catch (Exception error) when (error is CryptographicException or PlatformNotSupportedException)
         {
             return new OsEntropyReadiness(Platform, Supported: true, Ready: false, [error.Message]);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(probe);
         }
     }
 
@@ -211,16 +224,19 @@ public sealed class MacOsSecRandomEntropyProvider : IOsEntropyProvider
             return new OsEntropyReadiness(Platform, Supported: false, Ready: false, ["SecRandomCopyBytes() is unavailable on this OS."]);
         }
 
+        var probe = new byte[32];
         try
         {
-            var probe = new byte[32];
             Fill(probe);
-            CryptographicOperations.ZeroMemory(probe);
             return new OsEntropyReadiness(Platform, Supported: true, Ready: true, []);
         }
         catch (Exception error) when (error is CryptographicException or PlatformNotSupportedException)
         {
             return new OsEntropyReadiness(Platform, Supported: true, Ready: false, [error.Message]);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(probe);
         }
     }
 
@@ -229,6 +245,7 @@ public sealed class MacOsSecRandomEntropyProvider : IOsEntropyProvider
 }
 
 public sealed record HmacDrbgKnownAnswerResult(
+    string VectorId,
     CertifiedCsprngHashAlgorithm HashAlgorithm,
     bool Passed,
     string? FailureReason);
@@ -344,6 +361,12 @@ public sealed class HmacDrbgSession : IDisposable
 
 public sealed class HmacDrbgRuntime : IHmacDrbgRuntime
 {
+    public const int MaximumBytesPerGenerateRequest = 65_536;
+    public const long MaximumReseedInterval = 1L << 48;
+
+    private static readonly IReadOnlySet<int> SupportedSecurityStrengths =
+        new HashSet<int> { 128, 192, 256 };
+
     public HmacDrbgSession Instantiate(
         CertifiedCsprngHashAlgorithm hashAlgorithm,
         ReadOnlySpan<byte> entropy,
@@ -351,14 +374,20 @@ public sealed class HmacDrbgRuntime : IHmacDrbgRuntime
         ReadOnlySpan<byte> personalization,
         int securityStrengthBits)
     {
-        if (securityStrengthBits < 128)
+        ValidateProfile(hashAlgorithm, securityStrengthBits);
+
+        var minimumEntropyBytes = MinimumEntropyBytes(securityStrengthBits);
+        if (entropy.Length < minimumEntropyBytes)
         {
-            throw new CryptographicException("Certified CSPRNG security strength must be at least 128 bits.");
+            throw new CryptographicException(
+                $"Entropy input must be at least {minimumEntropyBytes} bytes for the selected HMAC-DRBG profile.");
         }
 
-        if (entropy.Length * 8 < securityStrengthBits)
+        var minimumNonceBytes = MinimumNonceBytes(securityStrengthBits);
+        if (nonce.Length < minimumNonceBytes)
         {
-            throw new CryptographicException("Entropy input does not satisfy the requested security strength.");
+            throw new CryptographicException(
+                $"Nonce input must be at least {minimumNonceBytes} bytes for the selected HMAC-DRBG profile.");
         }
 
         var outputLength = OutputLength(hashAlgorithm);
@@ -388,6 +417,18 @@ public sealed class HmacDrbgRuntime : IHmacDrbgRuntime
         if (byteCount <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(byteCount), "Byte count must be positive.");
+        }
+
+        if (byteCount > MaximumBytesPerGenerateRequest)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(byteCount),
+                $"Byte count must not exceed {MaximumBytesPerGenerateRequest} bytes per HMAC-DRBG Generate request.");
+        }
+
+        if (session.ReseedCounter > MaximumReseedInterval)
+        {
+            throw new CryptographicException("HMAC-DRBG reseed is required before another Generate request.");
         }
 
         if (!additionalInput.IsEmpty)
@@ -446,6 +487,13 @@ public sealed class HmacDrbgRuntime : IHmacDrbgRuntime
             throw new ObjectDisposedException(nameof(HmacDrbgSession), "HMAC-DRBG session has been destroyed.");
         }
 
+        var minimumEntropyBytes = MinimumEntropyBytes(session.SecurityStrengthBits);
+        if (entropy.Length < minimumEntropyBytes)
+        {
+            throw new CryptographicException(
+                $"Reseed entropy must be at least {minimumEntropyBytes} bytes for the selected HMAC-DRBG profile.");
+        }
+
         var seedMaterial = Combine(entropy, additionalInput);
         try
         {
@@ -488,9 +536,17 @@ public sealed class HmacDrbgRuntime : IHmacDrbgRuntime
             }
 
             results.Add(new HmacDrbgKnownAnswerResult(
+                result.VectorId,
                 result.HashAlgorithm,
                 result.Passed,
                 result.FailureReason));
+        }
+
+        var cavp = RunNistCavpSha256ReseedVector();
+        results.Add(cavp);
+        if (!cavp.Passed)
+        {
+            blockers.Add($"{cavp.VectorId} failed: {cavp.FailureReason}");
         }
 
         return new HmacDrbgRuntimeReadiness(
@@ -498,6 +554,66 @@ public sealed class HmacDrbgRuntime : IHmacDrbgRuntime
             KnownAnswerResults: results,
             ContinuousTestReady: true,
             Blockers: blockers);
+    }
+
+    private HmacDrbgKnownAnswerResult RunNistCavpSha256ReseedVector()
+    {
+        const string vectorId = "nist-cavp-cavs14.3-drbg-pr-false-hmac-sha256-count0";
+        const string expected =
+            "76fc79fe9b50beccc991a11b5635783a83536add03c157fb30645e611c2898bb" +
+            "2b1bc215000209208cd506cb28da2a51bdb03826aaf2bd2335d576d519160842" +
+            "e7158ad0949d1a9ec3e66ea1b1a064b005de914eac2e9d4f2d72a8616a8022" +
+            "5422918250ff66a41bd2f864a6a38cc5b6499dc43f7f2bd09e1e0f8f5885935124";
+
+        var entropy = Convert.FromHexString(
+            "06032cd5eed33f39265f49ecb142c511da9aff2af71203bffaf34a9ca5bd9c0d");
+        var nonce = Convert.FromHexString("0e66f71edc43e42a45ad3c6fc6cdc4df");
+        var reseedEntropy = Convert.FromHexString(
+            "01920a4e669ed3a85ae8a33b35a74ad7fb2a6bb4cf395ce00334a9c9a5a5d552");
+        var first = Array.Empty<byte>();
+        var second = Array.Empty<byte>();
+        var expectedBytes = Convert.FromHexString(expected);
+        HmacDrbgSession? session = null;
+        try
+        {
+            session = Instantiate(
+                CertifiedCsprngHashAlgorithm.Sha256,
+                entropy,
+                nonce,
+                ReadOnlySpan<byte>.Empty,
+                256);
+            Reseed(session, reseedEntropy);
+            first = Generate(session, expectedBytes.Length);
+            second = Generate(session, expectedBytes.Length);
+            var passed = CryptographicOperations.FixedTimeEquals(second, expectedBytes);
+            return new HmacDrbgKnownAnswerResult(
+                vectorId,
+                CertifiedCsprngHashAlgorithm.Sha256,
+                passed,
+                passed ? null : "ReturnedBits did not match the NIST CAVP response vector.");
+        }
+        catch (Exception error) when (error is CryptographicException or ArgumentException)
+        {
+            return new HmacDrbgKnownAnswerResult(
+                vectorId,
+                CertifiedCsprngHashAlgorithm.Sha256,
+                false,
+                error.Message);
+        }
+        finally
+        {
+            if (session is not null)
+            {
+                Destroy(session);
+            }
+
+            CryptographicOperations.ZeroMemory(entropy);
+            CryptographicOperations.ZeroMemory(nonce);
+            CryptographicOperations.ZeroMemory(reseedEntropy);
+            CryptographicOperations.ZeroMemory(first);
+            CryptographicOperations.ZeroMemory(second);
+            CryptographicOperations.ZeroMemory(expectedBytes);
+        }
     }
 
     private static void VerifyContinuousTest(HmacDrbgSession session, byte[] currentBlock)
@@ -584,6 +700,24 @@ public sealed class HmacDrbgRuntime : IHmacDrbgRuntime
             _ => throw new ArgumentOutOfRangeException(nameof(hashAlgorithm), hashAlgorithm, "Unsupported HMAC-DRBG hash algorithm.")
         };
     }
+
+    private static void ValidateProfile(
+        CertifiedCsprngHashAlgorithm hashAlgorithm,
+        int securityStrengthBits)
+    {
+        _ = OutputLength(hashAlgorithm);
+        if (!SupportedSecurityStrengths.Contains(securityStrengthBits))
+        {
+            throw new CryptographicException(
+                "HMAC-DRBG security strength must be one of the supported profiles: 128, 192, or 256 bits.");
+        }
+    }
+
+    private static int MinimumEntropyBytes(int securityStrengthBits) =>
+        checked((securityStrengthBits + 7) / 8);
+
+    private static int MinimumNonceBytes(int securityStrengthBits) =>
+        checked(((securityStrengthBits / 2) + 7) / 8);
 
     private static byte[] Combine(ReadOnlySpan<byte> first, ReadOnlySpan<byte> second)
     {
@@ -791,7 +925,7 @@ public sealed class CertifiedCsprngSampler(IHmacDrbgRuntime drbgRuntime) : ICert
             while (true)
             {
                 buffer = drbgRuntime.Generate(session, sizeof(ulong));
-                var value = BitConverter.ToUInt64(buffer, 0);
+                var value = BinaryPrimitives.ReadUInt64BigEndian(buffer);
                 if (value >= threshold)
                 {
                     return value % exclusiveUpperBound;

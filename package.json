@@ -238,6 +238,7 @@
     "qa:outcome-runtime-durable-persistence": "node scripts/qa/outcome-runtime-durable-persistence.mjs",
     "qa:outcome-runtime-locking": "node scripts/qa/outcome-runtime-locking.mjs",
     "qa:csprng-runtime": "node scripts/qa/csprng-runtime.mjs",
+    "qa:csprng-runtime-envelope": "node scripts/qa/csprng-runtime-envelope.mjs",
     "qa:drbg-known-answer-tests": "node scripts/qa/drbg-known-answer-tests.mjs",
     "qa:unbiased-sampling": "node scripts/qa/unbiased-sampling.mjs",
     "qa:provably-fair-runtime": "node scripts/qa/provably-fair-runtime.mjs",
