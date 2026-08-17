@@ -1,0 +1,412 @@
+{
+  "schemaVersion": "mosera.csprng.sp800-90-conformance-matrix.v1",
+  "reviewId": "CSPRNG-1.3A",
+  "reviewedAtUtc": "2026-08-16T22:35:36Z",
+  "reviewTarget": {
+    "gitCommit": "4fdaa7fc4851741f7df9b9ea842409bd33eb72e9",
+    "qualifiedSource": "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs",
+    "qualifiedSourceSha256": "0c2639d958dd916e0f6d56168ece697c6cff6b2fd0c3415368613425706c8d46",
+    "targetFramework": "net10.0",
+    "dotnetSdk": "10.0.301",
+    "dotnetRuntime": "10.0.9",
+    "productionImageDigestObservedLocally": "lottery-app-game-engine@sha256:5117947f85f768bd6d84690b1a5b1cc95ec298a62b38ee5a7bda17d3917e1a29"
+  },
+  "assessmentValues": [
+    "CONFORMS",
+    "CONFORMS_WITH_ASSUMPTION",
+    "PARTIAL",
+    "NOT_APPLICABLE",
+    "NONCONFORMING",
+    "INSUFFICIENT_EVIDENCE"
+  ],
+  "requirements": [
+    {
+      "id": "90A-HMAC-001",
+      "standard": "NIST SP 800-90A Rev. 1",
+      "reference": "10.1.2.2 HMAC_DRBG_Update",
+      "requirement": "Initialize and update Key and V with the prescribed 0x00 and optional 0x01 rounds.",
+      "moseraImplementation": "Key begins as all zeroes, V as all ones, and Update performs both prescribed HMAC rounds when provided_data is nonempty.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:364",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:365",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:366",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:519"
+      ],
+      "assessment": "CONFORMS",
+      "securityImpact": "The core state transition is structurally equivalent to the standard.",
+      "remediation": null
+    },
+    {
+      "id": "90A-HMAC-002",
+      "standard": "NIST SP 800-90A Rev. 1",
+      "reference": "10.1.2.3 Instantiate",
+      "requirement": "Seed material is entropy_input || nonce || personalization_string and reseed_counter is set to 1.",
+      "moseraImplementation": "Instantiate concatenates those inputs in order, updates the initial state, and the session constructor sets reseed_counter to 1.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:263",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:271",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:367",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:371"
+      ],
+      "assessment": "CONFORMS",
+      "securityImpact": "Production input ordering and state initialization are correct.",
+      "remediation": null
+    },
+    {
+      "id": "90A-HMAC-003",
+      "standard": "NIST SP 800-90A Rev. 1",
+      "reference": "10.1 Table 2 and 10.1.2.3",
+      "requirement": "Security strength must be one of the permitted values and no greater than the hash mechanism maximum.",
+      "moseraImplementation": "The runtime accepts every integer at least 128 and does not reject SHA-256 requests above 256 bits or non-table values.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:354",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:359"
+      ],
+      "assessment": "NONCONFORMING",
+      "securityImpact": "The reusable production runtime can accept an unsupported security-strength claim, although the canonical caller passes 256 for SHA-256.",
+      "remediation": "In a new qualified baseline, enforce the permitted security strengths and each hash function's maximum strength before instantiation."
+    },
+    {
+      "id": "90A-HMAC-004",
+      "standard": "NIST SP 800-90A Rev. 1",
+      "reference": "8.6.7 and 10.1 Table 2",
+      "requirement": "Instantiation obtains entropy meeting the requested strength and a nonce satisfying the applicable entropy or uniqueness requirement.",
+      "moseraImplementation": "Production requests 48 bytes of OS entropy and a separate 32-byte OS nonce, but the low-level runtime checks only entropy byte length and accepts an empty nonce.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:18",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:19",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:20",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:294",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:295",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:359"
+      ],
+      "assessment": "PARTIAL",
+      "securityImpact": "Canonical production parameters are defensible assuming the OS source, but the runtime API does not enforce the nonce contract.",
+      "remediation": "Enforce the nonce requirement at the runtime boundary or make production-safe construction the only callable instantiation path."
+    },
+    {
+      "id": "90A-HMAC-005",
+      "standard": "NIST SP 800-90A Rev. 1",
+      "reference": "10.1.2.4 Reseed",
+      "requirement": "Reseed uses entropy_input || additional_input, updates state, and resets reseed_counter to 1.",
+      "moseraImplementation": "The state transition and counter reset match the pseudocode.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:449",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:454",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:457"
+      ],
+      "assessment": "CONFORMS",
+      "securityImpact": "The reseed transition itself is correct.",
+      "remediation": null
+    },
+    {
+      "id": "90A-HMAC-006",
+      "standard": "NIST SP 800-90A Rev. 1",
+      "reference": "10.1 Table 2 and 10.1.2.4",
+      "requirement": "Reseed entropy input provides at least the instantiated security strength.",
+      "moseraImplementation": "Production obtains 48 fresh OS bytes, but Reseed accepts empty or undersized entropy without validation.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:288",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:296",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:304",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:441"
+      ],
+      "assessment": "NONCONFORMING",
+      "securityImpact": "Future callers can perform a nominal reseed without the required entropy while the runtime reports success.",
+      "remediation": "Enforce reseed entropy length/assurance against session.SecurityStrengthBits in a new qualified source version."
+    },
+    {
+      "id": "90A-HMAC-007",
+      "standard": "NIST SP 800-90A Rev. 1",
+      "reference": "10.1.2.5 Generate",
+      "requirement": "Generate updates with additional input before output, emits leftmost bits from repeated HMAC(K,V), updates again after output, and increments reseed_counter.",
+      "moseraImplementation": "All prescribed state transitions are present; the same additional input is used for both updates.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:393",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:416",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:419",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:424",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:430"
+      ],
+      "assessment": "CONFORMS",
+      "securityImpact": "The core generation transition is structurally correct.",
+      "remediation": null
+    },
+    {
+      "id": "90A-HMAC-008",
+      "standard": "NIST SP 800-90A Rev. 1",
+      "reference": "10.1 Table 2 and 9.3.1",
+      "requirement": "A Generate request must not exceed 2^19 bits (65,536 bytes).",
+      "moseraImplementation": "Generate checks only that byteCount is positive. The qualification generator requests 1,048,576 bytes in one call; the canonical outcome sampler requests 8 bytes per call.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:388",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:410",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:793",
+        "services/game-engine/tests/GameEngine.CsprngExternalSampleGenerator/Program.cs:15",
+        "services/game-engine/tests/GameEngine.CsprngExternalSampleGenerator/Program.cs:113"
+      ],
+      "assessment": "NONCONFORMING",
+      "securityImpact": "The implementation and CSPRNG-1.2 sample-generation invocation exceed a normative per-request limit; statistical results remain empirical evidence but are not conforming Generate invocations.",
+      "remediation": "Enforce 65,536 bytes per Generate call, lower qualification chunks to the limit, establish a new source hash, and determine the required statistical requalification scope."
+    },
+    {
+      "id": "90A-HMAC-009",
+      "standard": "NIST SP 800-90A Rev. 1",
+      "reference": "10.1 Table 2 and 9.3.1",
+      "requirement": "Generate must require reseed when reseed_counter exceeds 2^48.",
+      "moseraImplementation": "ReseedCounter is incremented but never checked before generation and has no standards-specific overflow guard.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:279",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:430"
+      ],
+      "assessment": "NONCONFORMING",
+      "securityImpact": "Canonical short-lived sessions will not practically reach the limit, but the reusable runtime does not enforce the normative state-machine boundary.",
+      "remediation": "Reject Generate when the session exceeds the 2^48 request interval and require reseed."
+    },
+    {
+      "id": "90A-HMAC-010",
+      "standard": "NIST SP 800-90A Rev. 1",
+      "reference": "10.1 Table 2",
+      "requirement": "HMAC_DRBG uses an approved hash and output length appropriate to that hash.",
+      "moseraImplementation": "The runtime delegates to .NET HMACSHA256, HMACSHA384, and HMACSHA512 and uses 32, 48, and 64-byte state values.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:564",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:577"
+      ],
+      "assessment": "CONFORMS_WITH_ASSUMPTION",
+      "securityImpact": "Correctness depends on the .NET and platform cryptographic implementations.",
+      "remediation": "External validation must accept or validate the deployed .NET/platform cryptographic boundary."
+    },
+    {
+      "id": "90A-HMAC-011",
+      "standard": "NIST SP 800-90A Rev. 1",
+      "reference": "9.4 and 11.3",
+      "requirement": "DRBG state is protected and uninstantiation makes state unavailable.",
+      "moseraImplementation": "Per-session Key, V, previous block, and output-hash state are explicitly zeroed on Destroy/Dispose; production always destroys in finally.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:321",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:328",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:357"
+      ],
+      "assessment": "CONFORMS_WITH_ASSUMPTION",
+      "securityImpact": "Logical state destruction is implemented; managed runtime copies and process dumps remain outside strict zeroization guarantees.",
+      "remediation": "Document managed-memory limits and tighten exceptional temporary-buffer cleanup."
+    },
+    {
+      "id": "90A-HMAC-012",
+      "standard": "NIST SP 800-90A Rev. 1",
+      "reference": "8.5 and 9.3",
+      "requirement": "Prediction resistance is claimed only when fresh entropy is obtained for each request under the defined semantics.",
+      "moseraImplementation": "Mosera performs fresh per-draw instantiate and immediate reseed but exposes no prediction-resistance request flag and does not reseed before every bounded sample.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:294",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:304"
+      ],
+      "assessment": "NOT_APPLICABLE",
+      "securityImpact": "The operational design is conservative but must not be described as SP 800-90A prediction resistance.",
+      "remediation": "Keep the claim explicitly prohibited unless a separate design implements and validates prediction-resistance semantics."
+    },
+    {
+      "id": "90A-HMAC-013",
+      "standard": "NIST SP 800-90A Rev. 1",
+      "reference": "11.3 Health testing",
+      "requirement": "Known-answer and health tests detect implementation or catastrophic failures according to the applicable validation boundary.",
+      "moseraImplementation": "Startup readiness executes three deterministic fixtures and output blocks undergo a repetition test.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:476",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:503",
+        "services/game-engine/src/GameEngine.Application/Services/OutcomeAuthorityHardeningService.cs:357"
+      ],
+      "assessment": "PARTIAL",
+      "securityImpact": "The fixtures exercise transitions but are not traceably identified CAVP vectors, and the continuous test is an internal defense rather than entropy-source validation.",
+      "remediation": "Import authoritative NIST/CAVP vector material with source identifiers and expected values generated outside Mosera."
+    },
+    {
+      "id": "90B-BOUNDARY-001",
+      "standard": "NIST SP 800-90B",
+      "reference": "Entropy-source design and validation boundary",
+      "requirement": "Entropy claims require characterization, health testing, and validation of the entropy source within its defined boundary.",
+      "moseraImplementation": "Mosera requests bytes from getrandom, BCryptGenRandom, or SecRandomCopyBytes and verifies success, but does not characterize or validate those OS entropy sources.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:42",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:85",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:139",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:186"
+      ],
+      "assessment": "INSUFFICIENT_EVIDENCE",
+      "securityImpact": "Mosera may claim use of OS cryptographic entropy APIs, not SP 800-90B validation or 256 bits of validated entropy assurance.",
+      "remediation": "Obtain platform/module evidence or use an accepted validated entropy boundary for formal certification."
+    },
+    {
+      "id": "90B-BOUNDARY-002",
+      "standard": "NIST SP 800-90B",
+      "reference": "Entropy-source failure handling",
+      "requirement": "An entropy acquisition failure must not silently produce deterministic fallback input.",
+      "moseraImplementation": "Each supported OS API throws on failure; unsupported platforms throw; Linux loops over partial reads; no fallback or cache exists.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:63",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:99",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:155",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:200"
+      ],
+      "assessment": "CONFORMS_WITH_ASSUMPTION",
+      "securityImpact": "Application behavior is fail-closed; entropy quality remains an OS/platform assumption.",
+      "remediation": null
+    },
+    {
+      "id": "90C-RBG2-001",
+      "standard": "NIST SP 800-90C final",
+      "reference": "RBG2 construction",
+      "requirement": "An RBG2 construction combines a DRBG with a validated entropy source inside the defined RBG security boundary/module.",
+      "moseraImplementation": "The architecture resembles RBG2 because it instantiates/reseeds HMAC_DRBG from an OS source, but no evidence places a validated 90B entropy source in the same validated RBG boundary.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:286",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:298",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:304"
+      ],
+      "assessment": "INSUFFICIENT_EVIDENCE",
+      "securityImpact": "No defensible formal SP 800-90C conformity claim is currently available.",
+      "remediation": "Resolve the validated entropy/module boundary and the SP 800-90A findings before selecting a formal 90C construction claim."
+    },
+    {
+      "id": "INTEGRATION-001",
+      "standard": "Mosera cryptographic authority requirement",
+      "reference": "Per-draw state isolation",
+      "requirement": "Each authoritative draw uses isolated mutable DRBG state.",
+      "moseraImplementation": "The registered HmacDrbgRuntime is stateless; Instantiate creates a new local session and production destroys it in finally.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Api/Program.cs:43",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:263",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:291",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:357"
+      ],
+      "assessment": "CONFORMS",
+      "securityImpact": "Concurrent draws do not share DRBG Key/V state.",
+      "remediation": null
+    },
+    {
+      "id": "INTEGRATION-002",
+      "standard": "Mosera cryptographic authority requirement",
+      "reference": "Concurrency and idempotency",
+      "requirement": "Concurrent execution cannot accept two outcomes for one immutable execution manifest.",
+      "moseraImplementation": "A manifest-scoped PostgreSQL advisory lock wraps provider resolution, claim, generation, and completion; duplicate requests restore persisted evidence.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:33",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:76",
+        "services/game-engine/src/GameEngine.Infrastructure/Persistence/PostgresCanonicalOutcomeProviderRepository.cs:11",
+        "services/game-engine/src/GameEngine.Infrastructure/Persistence/PostgresCanonicalOutcomeProviderRepository.cs:306"
+      ],
+      "assessment": "CONFORMS",
+      "securityImpact": "Database idempotency and cryptographic state isolation reinforce one authoritative result.",
+      "remediation": null
+    },
+    {
+      "id": "INTEGRATION-003",
+      "standard": "Mosera cryptographic authority requirement",
+      "reference": "Provider isolation",
+      "requirement": "The manifest-bound provider is exact and there is no silent fallback across provider categories.",
+      "moseraImplementation": "Resolution binds exact provider/configuration versions; the canonical orchestrator invokes only the selected category and rejects missing ingestion evidence.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/CanonicalOutcomeProviderAuthority.cs:68",
+        "services/game-engine/src/GameEngine.Application/Services/CanonicalOutcomeProviderAuthority.cs:76",
+        "services/game-engine/src/GameEngine.Application/Services/CanonicalDrawExecutionAuthority.cs:50",
+        "services/game-engine/src/GameEngine.Application/Services/CanonicalDrawExecutionAuthority.cs:71"
+      ],
+      "assessment": "CONFORMS",
+      "securityImpact": "A caller cannot substitute CSPRNG for official/manual evidence or vice versa.",
+      "remediation": null
+    },
+    {
+      "id": "INTEGRATION-004",
+      "standard": "Mosera cryptographic authority requirement",
+      "reference": "Outcome and certificate binding",
+      "requirement": "Generated values are hash-bound to the draw, manifest, provider evidence, certificate, and canonical published outcome.",
+      "moseraImplementation": "Canonical result bytes include draw/manifest/definition/evaluator/numbers/source hash; binding verifies the generated result hash and exact certificate/signing configuration before append-only publication.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/CanonicalProviderOutcomeFactory.cs:17",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:142",
+        "services/game-engine/src/GameEngine.Application/Services/CanonicalDrawExecutionAuthority.cs:93",
+        "scripts/migrations/local/116_bind_canonical_outcome_payload.sql:15",
+        "scripts/migrations/local/117_bind_canonical_provider_result_payload.sql:10"
+      ],
+      "assessment": "CONFORMS",
+      "securityImpact": "Replacement, cross-draw substitution, and payload mutation are detected or rejected in the canonical production path.",
+      "remediation": null
+    },
+    {
+      "id": "SAMPLING-001",
+      "standard": "Unbiased sampling requirement",
+      "reference": "Bounded integer mapping",
+      "requirement": "Mapping random words to a bounded range introduces no modulo bias.",
+      "moseraImplementation": "A 64-bit rejection threshold discards the incomplete residue before modulo reduction.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:780",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:787",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:795"
+      ],
+      "assessment": "CONFORMS",
+      "securityImpact": "Every accepted 64-bit value maps uniformly to the target range.",
+      "remediation": "Optionally define byte order explicitly for cross-architecture deterministic test portability."
+    },
+    {
+      "id": "SAMPLING-002",
+      "standard": "Uniform without-replacement sampling requirement",
+      "reference": "Partial Fisher-Yates",
+      "requirement": "Every ordered sample and therefore every unordered combination has the intended probability.",
+      "moseraImplementation": "For position i, the sampler selects uniformly from i through n-1 and swaps; optional ascending sort occurs only after selection.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:724",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:739"
+      ],
+      "assessment": "CONFORMS",
+      "securityImpact": "Keno/Matrix combinations are uniform under uniform bounded draws; sorting changes presentation, not selection probability.",
+      "remediation": null
+    },
+    {
+      "id": "EVIDENCE-001",
+      "standard": "Secret minimization requirement",
+      "reference": "Persistent provider evidence",
+      "requirement": "Raw entropy, nonce, reseed material, and DRBG state are not persisted or logged.",
+      "moseraImplementation": "The production provider persists generated numbers, hashes, health data, and identifiers only; SQL rejects fields named as raw secret material.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:326",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:357",
+        "scripts/migrations/local/095_add_internal_csprng_provider.sql:141"
+      ],
+      "assessment": "CONFORMS",
+      "securityImpact": "No raw RNG secret was found in production persistence or logging.",
+      "remediation": null
+    },
+    {
+      "id": "EVIDENCE-002",
+      "standard": "Secret minimization requirement",
+      "reference": "Secret-derived identifiers",
+      "requirement": "Hashes of secret initialization material exist only when necessary and justified.",
+      "moseraImplementation": "Production SeedIdentifier is SHA-256(entropy || nonce || personalization) and is persisted; the older DRBG evidence contract also requires nonce and seed commitment hashes, though no production writer uses that table.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:297",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:331",
+        "services/game-engine/src/GameEngine.Domain/Model/CertifiedCsprngProviderModels.cs:108",
+        "scripts/migrations/local/034_add_certified_csprng_contracts.sql:72"
+      ],
+      "assessment": "PARTIAL",
+      "securityImpact": "High-entropy preimage resistance prevents practical recovery, but the persisted verifier is unnecessary and expands evidence exposure without proving entropy quality.",
+      "remediation": "Remove secret-derived identifiers in a versioned evidence contract and retain non-secret execution IDs, source identity, timestamps, output/result hashes, and configuration provenance."
+    },
+    {
+      "id": "QUALIFICATION-001",
+      "standard": "NIST CAVP evidence practice",
+      "reference": "DRBG validation vectors",
+      "requirement": "A claim of official vectors is traceable to authoritative vector material and configuration identifiers.",
+      "moseraImplementation": "Expected values are hardcoded for Mosera-defined sequential inputs and a source label mentions NIST, but no CAVP vector set/COUNT identifiers or external source artifact are recorded.",
+      "evidence": [
+        "services/game-engine/src/GameEngine.Application/Services/OutcomeAuthorityHardeningService.cs:357",
+        "services/game-engine/src/GameEngine.Application/Services/OutcomeAuthorityHardeningService.cs:359",
+        "services/game-engine/src/GameEngine.Application/Services/OutcomeAuthorityHardeningService.cs:468"
+      ],
+      "assessment": "INSUFFICIENT_EVIDENCE",
+      "securityImpact": "The tests are valuable regression fixtures but do not establish CAVP validation or independently sourced expected outputs.",
+      "remediation": "Add traceable authoritative CAVP vectors as qualification-only evidence without replacing preserved regression fixtures."
+    }
+  ]
+}

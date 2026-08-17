@@ -1,0 +1,103 @@
+{
+  "schemaVersion": "mosera.csprng.cryptographic-claims.v1",
+  "reviewId": "CSPRNG-1.3A",
+  "reviewedAtUtc": "2026-08-16T22:35:36Z",
+  "claims": [
+    {
+      "claim": "Mosera uses an HMAC_DRBG construction with SHA-256 in the canonical Internal CSPRNG provider.",
+      "classification": "internally demonstrated",
+      "allowed": true,
+      "qualification": "The core state-transition implementation was structurally reviewed; unresolved normative input/output limit enforcement prevents an unqualified SP 800-90A conformity claim."
+    },
+    {
+      "claim": "Mosera implements SP 800-90A Rev. 1 HMAC_DRBG.",
+      "classification": "prohibited/unsupported",
+      "allowed": false,
+      "qualification": "Do not make this unqualified claim until CSPRNG-1.3A-F001 and F002 are remediated and the new source baseline is reviewed."
+    },
+    {
+      "claim": "The qualified mechanism has a 256-bit maximum supported security strength when HMAC-SHA-256 is used with conforming inputs and limits.",
+      "classification": "supported by NIST-defined construction",
+      "allowed": true,
+      "qualification": "This is a mechanism maximum, not proof that the deployed OS entropy source supplies 256 bits of validated entropy and not a CMVP claim."
+    },
+    {
+      "claim": "Mosera has 256 bits of validated entropy assurance.",
+      "classification": "prohibited/unsupported",
+      "allowed": false,
+      "qualification": "The application requests 48 OS bytes but possesses no SP 800-90B entropy validation evidence."
+    },
+    {
+      "claim": "Mosera uses operating-system cryptographic entropy APIs and fails closed when those APIs are unsupported or report failure.",
+      "classification": "internally demonstrated",
+      "allowed": true,
+      "qualification": "Linux uses getrandom(2), Windows uses BCryptGenRandom, and macOS uses SecRandomCopyBytes; entropy quality remains dependent on the platform."
+    },
+    {
+      "claim": "Mosera's entropy source is SP 800-90B compliant or validated.",
+      "classification": "requires accredited validation",
+      "allowed": false,
+      "qualification": "No platform/module certificate, entropy characterization, or laboratory assessment establishes this."
+    },
+    {
+      "claim": "Mosera is SP 800-90C conformant.",
+      "classification": "requires accredited validation",
+      "allowed": false,
+      "qualification": "SP800_90C_CLASSIFICATION_INSUFFICIENT_EVIDENCE; RBG2 is the closest construction, but the validated entropy/module boundary is unresolved."
+    },
+    {
+      "claim": "Mosera implements formal SP 800-90A prediction resistance.",
+      "classification": "prohibited/unsupported",
+      "allowed": false,
+      "qualification": "Per-draw fresh instantiation and immediate reseed do not implement the standard's prediction-resistance request semantics."
+    },
+    {
+      "claim": "Each canonical Internal CSPRNG draw uses isolated DRBG Key/V state.",
+      "classification": "internally demonstrated",
+      "allowed": true,
+      "qualification": "The runtime singleton is stateless; mutable HmacDrbgSession state is created locally and destroyed in finally."
+    },
+    {
+      "claim": "Mosera's bounded integer and without-replacement number sampling avoid modulo bias and duplicate selection.",
+      "classification": "internally demonstrated",
+      "allowed": true,
+      "qualification": "The conclusion applies to the reviewed rejection-sampling and partial Fisher-Yates implementation."
+    },
+    {
+      "claim": "Production outcomes can be reproduced by regenerating historical random bytes.",
+      "classification": "prohibited/unsupported",
+      "allowed": false,
+      "qualification": "Recovery and replay verify immutable persisted outcomes and hashes; secret DRBG state is intentionally not retained."
+    },
+    {
+      "claim": "Canonical Internal CSPRNG outcomes are bound to exact draw, execution manifest, provider/configuration, game definition, certificate, and persisted canonical payload evidence.",
+      "classification": "internally demonstrated",
+      "allowed": true,
+      "qualification": "This claim is limited to the traced canonical production path and its PostgreSQL constraints."
+    },
+    {
+      "claim": "Mosera's Internal CSPRNG is cryptographically secure.",
+      "classification": "requires external review",
+      "allowed": false,
+      "qualification": "Do not use this broad claim while HIGH conformance findings remain and before independent specialist review of the remediated baseline."
+    },
+    {
+      "claim": "Mosera is NIST certified, CAVP validated, or CMVP validated.",
+      "classification": "prohibited/unsupported",
+      "allowed": false,
+      "qualification": "No such certificate or validation exists in the reviewed evidence."
+    },
+    {
+      "claim": "Mosera's CSPRNG has been independently cryptographically audited or laboratory certified.",
+      "classification": "prohibited/unsupported",
+      "allowed": false,
+      "qualification": "CSPRNG-1.3A is an internal Codex-assisted implementation review, not an independent audit or certification."
+    },
+    {
+      "claim": "CSPRNG-1.2B provides preserved external statistical evidence with no unresolved recurrent battery anomaly.",
+      "classification": "internally demonstrated",
+      "allowed": true,
+      "qualification": "The campaign remains statistical evidence only. Its generator made 1 MiB Generate calls, so it cannot substitute for SP 800-90A implementation conformance."
+    }
+  ]
+}

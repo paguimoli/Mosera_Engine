@@ -1,0 +1,152 @@
+{
+  "schemaVersion": "mosera.csprng.cryptographic-findings.v1",
+  "reviewId": "CSPRNG-1.3A",
+  "reviewedAtUtc": "2026-08-16T22:35:36Z",
+  "status": "CSPRNG_1_3A_BLOCKED",
+  "findings": [
+    {
+      "findingId": "CSPRNG-1.3A-F001",
+      "severity": "HIGH",
+      "title": "HMAC_DRBG Generate does not enforce the SP 800-90A request or reseed interval limits",
+      "affectedCode": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:380",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:430",
+        "services/game-engine/tests/GameEngine.CsprngExternalSampleGenerator/Program.cs:113"
+      ],
+      "standardsReference": "NIST SP 800-90A Rev. 1, Table 2 and Generate requirements",
+      "evidence": "Generate accepts any positive Int32 byte count, never rejects reseed_counter above 2^48, and the CSPRNG-1.2 sample generator requested 1,048,576 bytes per call rather than the 65,536-byte maximum.",
+      "consequence": "The reusable production runtime and qualification invocation are not fully SP 800-90A-conforming. Canonical game sampling currently requests only eight bytes per call, so no observed production outcome is shown biased or predictable, but the standards claim and qualification baseline are materially affected.",
+      "remediation": "Create a new qualified source version that rejects Generate requests above 65,536 bytes and requires reseed after 2^48 requests. Change the qualification generator to conforming chunks and define the statistical requalification scope without deleting prior evidence.",
+      "qualificationBlocked": true
+    },
+    {
+      "findingId": "CSPRNG-1.3A-F002",
+      "severity": "HIGH",
+      "title": "Instantiation and reseed parameter enforcement permits unsupported security claims and undersized inputs",
+      "affectedCode": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:347",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:354",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:441"
+      ],
+      "standardsReference": "NIST SP 800-90A Rev. 1, Sections 8.6.7, 10.1 and Table 2",
+      "evidence": "Instantiate accepts every security strength at least 128, including SHA-256 requests above 256 or non-table values; it does not enforce a nonce requirement. Reseed does not verify entropy length against the session security strength.",
+      "consequence": "The canonical production caller supplies defensible fixed parameters, but the registered reusable runtime can report success for nonconforming instantiation or reseed inputs. That is a material misuse and conformance defect in the qualified implementation boundary.",
+      "remediation": "In a new qualified baseline, enforce permitted strengths, hash-specific maximums, nonce requirements, and minimum reseed entropy before changing state.",
+      "qualificationBlocked": true
+    },
+    {
+      "findingId": "CSPRNG-1.3A-F003",
+      "severity": "MEDIUM",
+      "title": "Existing 'official' HMAC_DRBG vectors are not traceable to authoritative CAVP vector identities",
+      "affectedCode": [
+        "services/game-engine/src/GameEngine.Application/Services/OutcomeAuthorityHardeningService.cs:357",
+        "scripts/qa/drbg-official-vectors.mjs:13"
+      ],
+      "standardsReference": "NIST CAVP DRBG validation evidence practice",
+      "evidence": "The fixtures cover SHA-256/384/512, instantiate, Generate, reseed, additional input, consecutive Generate operations, and final Key/V, but use Mosera-created sequential inputs and no CAVP vector set or COUNT provenance.",
+      "consequence": "They are useful deterministic regression fixtures, not proof of CAVP validation or independently sourced algorithm conformance.",
+      "remediation": "Add traceable NIST/CAVP vectors with source artifact hashes and identifiers as qualification-only tests; preserve the existing fixtures under an accurate name.",
+      "qualificationBlocked": false
+    },
+    {
+      "findingId": "CSPRNG-1.3A-F004",
+      "severity": "MEDIUM",
+      "title": "Production evidence persists an unnecessary hash of secret initialization material",
+      "affectedCode": [
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:297",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:331",
+        "services/game-engine/src/GameEngine.Domain/Model/CertifiedCsprngProviderModels.cs:108",
+        "scripts/migrations/local/034_add_certified_csprng_contracts.sql:72"
+      ],
+      "standardsReference": "Secret minimization and evidence-boundary review requirement",
+      "evidence": "SeedIdentifier is SHA-256(entropy || nonce || personalization) and is persisted. The older, currently unwired production evidence contract also defines persisted nonce_hash and seed_commitment_hash fields.",
+      "consequence": "No practical preimage attack is identified against 80 bytes of OS-sourced material, but the verifier provides no entropy-quality proof and unnecessarily fingerprints secret initialization inputs.",
+      "remediation": "Version the evidence schema to remove secret-derived identifiers. Retain non-secret draw/execution IDs, source/provider/configuration versions, timestamps, health results, output/result hashes, and certificate links.",
+      "qualificationBlocked": false
+    },
+    {
+      "findingId": "CSPRNG-1.3A-F005",
+      "severity": "LOW",
+      "title": "Exceptional entropy-provider paths do not always zero temporary managed buffers",
+      "affectedCode": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:102",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:104",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:124",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:171",
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:216"
+      ],
+      "standardsReference": "NIST SP 800-90A state/secret protection and defense in depth",
+      "evidence": "Linux chunk zeroization and all readiness probe zeroization occur after successful Fill rather than in finally blocks.",
+      "consequence": "A failed call may leave temporary bytes in managed memory until garbage collection. No persistence or log leakage was found.",
+      "remediation": "Zero temporary chunks and readiness probes in finally blocks in the next qualified source version.",
+      "qualificationBlocked": false
+    },
+    {
+      "findingId": "CSPRNG-1.3A-F006",
+      "severity": "LOW",
+      "title": "Bounded integer byte order is platform-dependent",
+      "affectedCode": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:794"
+      ],
+      "standardsReference": "Deterministic replay and portability hardening",
+      "evidence": "BitConverter.ToUInt64 uses host endianness.",
+      "consequence": "Uniformity is unaffected, and deployed/qualified targets are little-endian. Fixed-input deterministic results would differ on a future big-endian target.",
+      "remediation": "Use an explicit endian conversion in a future qualified baseline and pin supported production architectures.",
+      "qualificationBlocked": false
+    },
+    {
+      "findingId": "CSPRNG-1.3A-F007",
+      "severity": "LOW",
+      "title": "Cancellation can prevent append of non-authoritative failure-attempt evidence",
+      "affectedCode": [
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:130",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:133"
+      ],
+      "standardsReference": "Recovery and audit completeness",
+      "evidence": "OperationCanceledException is excluded from failure recording, and a canceled token is reused for append after other failures.",
+      "consequence": "Locks and secrets are still released and no result is authoritative before atomic completion, but canceled/failed pre-commit attempts may have incomplete audit evidence.",
+      "remediation": "Use a bounded cleanup token for non-secret failure evidence and define cancellation attempt semantics without persisting partial random output.",
+      "qualificationBlocked": false
+    },
+    {
+      "findingId": "CSPRNG-1.3A-F008",
+      "severity": "INFO",
+      "title": "SP 800-90B entropy assurance is an external platform dependency",
+      "affectedCode": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:42"
+      ],
+      "standardsReference": "NIST SP 800-90B",
+      "evidence": "Mosera verifies API support and successful reads but has no platform entropy characterization, min-entropy estimate, or validation certificate.",
+      "consequence": "Claims must be limited to requesting OS cryptographic entropy; SP 800-90B compliance and 256 bits of validated entropy assurance are unsupported.",
+      "remediation": "For external certification, select a validated platform/module boundary or obtain accepted vendor/laboratory evidence.",
+      "qualificationBlocked": false
+    },
+    {
+      "findingId": "CSPRNG-1.3A-F009",
+      "severity": "INFO",
+      "title": "SP 800-90C RBG2 is the closest architecture, but formal classification lacks evidence",
+      "affectedCode": [
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:294"
+      ],
+      "standardsReference": "NIST SP 800-90C final, RBG2 construction",
+      "evidence": "Mosera combines an OS source with HMAC_DRBG instantiate/reseed, but has not established a validated entropy source and DRBG in the required RBG security boundary.",
+      "consequence": "SP800_90C_CLASSIFICATION_INSUFFICIENT_EVIDENCE.",
+      "remediation": "Resolve the 90A blockers and validated entropy/module boundary before making a 90C claim.",
+      "qualificationBlocked": false
+    },
+    {
+      "findingId": "CSPRNG-1.3A-F010",
+      "severity": "INFO",
+      "title": "Managed-runtime zeroization cannot guarantee physical erasure of all copies",
+      "affectedCode": [
+        "services/game-engine/src/GameEngine.Application/Services/CertifiedCsprngRuntimeServices.cs:564",
+        "services/game-engine/src/GameEngine.Application/Services/InternalCsprngOutcomeProvider.cs:357"
+      ],
+      "standardsReference": "NIST SP 800-90A state protection boundary",
+      "evidence": "Explicit arrays are zeroed, but HMAC constructors/runtime internals, garbage collector movement, crash dumps, and debugger snapshots can retain copies outside application control.",
+      "consequence": "The implementation demonstrates best-effort logical zeroization, not guaranteed physical memory erasure.",
+      "remediation": "Carry this limitation into external review and harden host dump/debug access."
+      ,"qualificationBlocked": false
+    }
+  ]
+}
