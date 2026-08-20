@@ -294,10 +294,10 @@ insert into game_engine.outcome_provider_definitions (
   capability_markers,
   content_hash,
   canonical_provider_category)
-values (
+select
   @outcome_provider_definition_id,
-  @draw_authority_code,
-  'scheduler',
+  authority.code,
+  authority_version.provider_version,
   'EXTERNAL_OFFICIAL_RESULT',
   'Draft',
   false,
@@ -311,7 +311,13 @@ values (
   'FailClosed',
   '{"generatesOutcomes":false,"ingestsExternalOutcomes":true,"supportsPlayerVerificationReceipt":false,"supportsDeterministicReplay":true,"supportsProviderHealthEvidence":true,"supportsDisputeHandling":true,"supportsExternalSourceEvidence":true,"supportsPhysicalDrawEvidence":false}'::jsonb,
   @outcome_provider_content_hash,
-  'MANUAL_CERTIFIED')
+  'MANUAL_CERTIFIED'
+from game_engine.draw_authority_assignments assignment
+join game_engine.draw_authorities authority
+  on authority.id = assignment.draw_authority_id
+join game_engine.draw_authority_versions authority_version
+  on authority_version.id = assignment.draw_authority_version_id
+where assignment.id = @draw_authority_assignment_id
 on conflict (provider_id, provider_version) do nothing;
 
 insert into game_engine.outcome_provider_configuration_versions (
@@ -325,9 +331,9 @@ insert into game_engine.outcome_provider_configuration_versions (
   readiness_capabilities,
   production_ready,
   failure_mode)
-values (
-  @draw_authority_code,
-  'scheduler',
+select
+  authority.code,
+  authority_version.provider_version,
   '1',
   'MANUAL_CERTIFIED',
   @outcome_provider_configuration_hash,
@@ -335,7 +341,13 @@ values (
   '{"providerResultHash":true,"operatorCertificationEvidence":true}'::jsonb,
   '["immutable-configuration","durable-evidence"]'::jsonb,
   false,
-  'FAIL_CLOSED')
+  'FAIL_CLOSED'
+from game_engine.draw_authority_assignments assignment
+join game_engine.draw_authorities authority
+  on authority.id = assignment.draw_authority_id
+join game_engine.draw_authority_versions authority_version
+  on authority_version.id = assignment.draw_authority_version_id
+where assignment.id = @draw_authority_assignment_id
 on conflict (provider_id, provider_version, configuration_version) do nothing;
 """;
         command.Parameters.AddWithValue("module_id", moduleId);

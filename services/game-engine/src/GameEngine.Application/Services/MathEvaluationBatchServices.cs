@@ -621,7 +621,9 @@ public sealed class InMemoryMathEvaluationBatchRepository : IMathEvaluationBatch
     {
         cancellationToken.ThrowIfCancellationRequested();
         foreach (var item in items.Where(item => item.BatchId == batchId &&
-            item.EvaluationStatus is MathEvaluationBatchItemStatus.Pending or MathEvaluationBatchItemStatus.Running))
+            item.EvaluationStatus is MathEvaluationBatchItemStatus.Pending or
+                MathEvaluationBatchItemStatus.Running or
+                MathEvaluationBatchItemStatus.Failed).ToArray())
         {
             ReplaceItem(item with
             {

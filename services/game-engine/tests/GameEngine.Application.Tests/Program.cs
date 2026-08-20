@@ -3916,11 +3916,20 @@ static async Task RunDurableMathEvaluationTests()
         first.Certificate.OutcomeCertificateHash,
         CancellationToken.None);
     var certificateMatch = await repository.FindByCertificateHashAsync(first.CanonicalPrizeFactsHash, CancellationToken.None);
-    if (ticketMatches.Count != 1 ||
+    var completedTicketMatch = ticketMatches.SingleOrDefault(match =>
+        match.EvaluationRequestId == request.RequestId &&
+        match.Status == DurableMathEvaluationStatus.Completed);
+    var failedTicketMatch = ticketMatches.SingleOrDefault(match =>
+        match.EvaluationRequestId != request.RequestId &&
+        match.Status == DurableMathEvaluationStatus.Failed &&
+        match.FailureCode == "MATH_EVALUATION_FAILED");
+    if (ticketMatches.Count != 2 ||
+        completedTicketMatch?.CertificateId != first.Certificate.CertificateId ||
+        failedTicketMatch is null ||
         outcomeMatches.Count != 1 ||
         certificateMatch?.CertificateId != first.Certificate.CertificateId)
     {
-        throw new InvalidOperationException("Durable Math Evaluation lookup indexes must support ticket, outcome certificate, and certificate hash lookups.");
+        throw new InvalidOperationException("Durable Math Evaluation lookups must preserve completed and failed ticket evidence and support outcome certificate and certificate hash queries.");
     }
 
     if (first.CanonicalPrizeFactsJson.Contains("ledger", StringComparison.OrdinalIgnoreCase) ||
@@ -4038,7 +4047,19 @@ static async Task RunMathEvaluationBatchTests()
     }
 
     var failedAttemptsBeforeRecovery = partialRepository.Attempts.Count;
-    var recoveryRequest = partialRequest with
+    var retried = await partialService.RecoverAsync(
+        partialRequest.BatchIdempotencyKey,
+        partialRequest,
+        retryFailedItems: true,
+        CancellationToken.None);
+    if (retried.Batch.Status != MathEvaluationBatchStatus.PartiallyCompleted ||
+        retried.Items.Count(item => item.EvaluationStatus == MathEvaluationBatchItemStatus.Failed) != 1 ||
+        partialRepository.Attempts.Count <= failedAttemptsBeforeRecovery)
+    {
+        throw new InvalidOperationException("Math Evaluation batch recovery must retry the immutable failed payload as a new governed attempt.");
+    }
+
+    var conflictingRecoveryRequest = partialRequest with
     {
         Items =
         [
@@ -4046,12 +4067,13 @@ static async Task RunMathEvaluationBatchTests()
             partialRequest.Items.Last() with { WagerPayload = new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3 } } }
         ]
     };
-    var recovered = await partialService.RecoverAsync(partialRequest.BatchIdempotencyKey, recoveryRequest, retryFailedItems: true, CancellationToken.None);
-    if (recovered.Batch.Status != MathEvaluationBatchStatus.Completed ||
-        partialRepository.Attempts.Count <= failedAttemptsBeforeRecovery)
-    {
-        throw new InvalidOperationException("Math Evaluation batch recovery must retry failed/incomplete items as new governed attempts.");
-    }
+    AssertThrows(
+        () => partialService.RecoverAsync(
+            partialRequest.BatchIdempotencyKey,
+            conflictingRecoveryRequest,
+            retryFailedItems: true,
+            CancellationToken.None).GetAwaiter().GetResult(),
+        "Math Evaluation batch recovery must reject a changed payload for an existing item idempotency key.");
 
     var cancelRepository = new InMemoryMathEvaluationBatchRepository();
     var cancelService = new MathEvaluationBatchService(
@@ -4079,12 +4101,13 @@ static async Task RunMathEvaluationBatchTests()
             ("ticket:batch:ordered:2", "math-evaluation-batch:ordered:item:2", new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3 } })
         ],
         maxDegreeOfParallelism: 2);
-    var reversed = ordered with
-    {
-        BatchId = Guid.NewGuid(),
-        BatchIdempotencyKey = "math-evaluation-batch:reversed",
-        Items = ordered.Items.Reverse().ToArray()
-    };
+    var reversed = DurableMathEvalBatchRequest(
+        "math-evaluation-batch:reversed",
+        [
+            ("ticket:batch:ordered:2", "math-evaluation-batch:reversed:item:2", new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3 } }),
+            ("ticket:batch:ordered:1", "math-evaluation-batch:reversed:item:1", new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4, 5 } })
+        ],
+        maxDegreeOfParallelism: 2);
     var orderedRepository = new InMemoryMathEvaluationBatchRepository();
     var orderedDurable = new InMemoryMathEvaluationDurableRepository();
     var orderedService = new MathEvaluationBatchService(

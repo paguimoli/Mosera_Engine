@@ -7,6 +7,7 @@ x-prod-ledger-image: &prod-ledger-image ${PRODUCTION_LEDGER_SERVICE_IMAGE:-ghcr.
 x-prod-credit-image: &prod-credit-image ${PRODUCTION_CREDIT_WALLET_SERVICE_IMAGE:-ghcr.io/lottery-app/credit-wallet-service:${RELEASE_VERSION:-production-required}}
 x-prod-settlement-image: &prod-settlement-image ${PRODUCTION_SETTLEMENT_SERVICE_IMAGE:-ghcr.io/lottery-app/settlement-service:${RELEASE_VERSION:-production-required}}
 x-prod-otel-collector-image: &prod-otel-collector-image ${PRODUCTION_OTEL_COLLECTOR_IMAGE:-otel/opentelemetry-collector-contrib:0.115.1}
+x-prod-caddy-image: &prod-caddy-image ${PRODUCTION_CADDY_IMAGE:-caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d}
 x-prod-validator-volume: &prod-validator-volume ./deploy/production/validate-production-config.sh:/opt/lottery/validate-production-config.sh:ro
 
 x-prod-hardened-base: &prod-hardened-base
@@ -275,7 +276,7 @@ services:
       - production-internal
 
   caddy:
-    image: caddy:2-alpine
+    image: *prod-caddy-image
     restart: unless-stopped
     read_only: true
     privileged: false

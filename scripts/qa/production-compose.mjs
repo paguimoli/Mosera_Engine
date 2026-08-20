@@ -260,6 +260,14 @@ assert(
   { environment: otelCollector.environment }
 );
 
+const caddy = services.caddy ?? {};
+assert(
+  String(caddy.image ?? "") ===
+    "caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d",
+  "Production Caddy must use the approved exact version and immutable multi-platform digest.",
+  { image: caddy.image }
+);
+
 for (const [name, service] of Object.entries(services)) {
   if (name === "caddy" || name === "otel-collector") continue;
   const commandText = JSON.stringify(service.command ?? service.entrypoint ?? "");
