@@ -24,7 +24,8 @@ public enum GameEvaluationReason
     KenoBullseyeMatch,
     KenoBullseyeMiss,
     KenoDerivedMatch,
-    KenoDerivedMiss
+    KenoDerivedMiss,
+    KenoDerivedPush
 }
 
 public sealed record GameEvaluationAmount(

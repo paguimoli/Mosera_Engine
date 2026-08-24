@@ -1,0 +1,7 @@
+Source ZIP: mosera-hot-spot-official-paytable-source.zip
+SHA-256: 3843d61146af35100872178b5100a6b527e4f88add112398d81bd0b0edf8fe62
+Paytable JSON: mosera-hot-spot-paytable-v1-source.json
+SHA-256: 8dc01631d3dc22ef7941fa7cb95253d06f9aee038853a62458341b46acdeeeaa
+Source effective date: not stated in supplied screenshots
+Screenshot capture date: 2026-08-21
+Promotional: false (approved business instruction)

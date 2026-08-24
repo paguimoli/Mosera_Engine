@@ -114,6 +114,7 @@ public enum WagerType
     KenoOddEven,
     KenoUpDown,
     KenoDragonTiger,
+    KenoParlay,
     KenoSumOverUnder,
     KenoElement
 }

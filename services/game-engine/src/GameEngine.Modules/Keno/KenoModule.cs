@@ -21,6 +21,7 @@ public sealed class KenoModule :
         WagerType.KenoOddEven,
         WagerType.KenoUpDown,
         WagerType.KenoDragonTiger,
+        WagerType.KenoParlay,
         WagerType.KenoSumOverUnder,
         WagerType.KenoElement
     ];
@@ -38,7 +39,7 @@ public sealed class KenoModule :
 
     public string ModuleId => "KENO_GENERIC";
 
-    public string GetVersion() => "0.1.0-reference";
+    public string GetVersion() => "1.0.0-pilot";
 
     public GameModuleManifest GetManifest()
     {
@@ -48,16 +49,16 @@ public sealed class KenoModule :
             GetVersion(),
             [GameType.Keno],
             SupportedWagers,
-            [DrawProviderType.ManualCertifiedEntry, DrawProviderType.OfficialFeed, DrawProviderType.InternalTestPrng],
+            [DrawProviderType.ManualCertifiedEntry, DrawProviderType.OfficialFeed, DrawProviderType.InternalTestPrng, DrawProviderType.InternalProductionPrng],
             SupportsInternalDrawGeneration: false,
             SupportsExternalResultEvaluation: true,
             SupportsManualResultEvaluation: true,
             ConfigurationSchemaVersion: "keno-config-schema-1",
-            EvaluatorVersion: "keno-evaluator-1",
+            EvaluatorVersion: "keno-math-evaluator-2",
             DrawGeneratorVersion: "disabled",
             MinimumGameEngineVersion: "0.1.0",
             GameModuleLifecycleStatus.QaCertified,
-            "checksum-reference-keno-v1",
+            "sha256:keno-generic-pilot-v1",
             DateTimeOffset.UnixEpoch,
             "reference-module");
     }
@@ -66,12 +67,12 @@ public sealed class KenoModule :
     {
         return new GameModuleVersionMetadata(
             GetVersion(),
-            "keno-evaluator-1",
+            "keno-math-evaluator-2",
             "disabled",
             "keno-config-schema-1",
             "0.1.0",
             "0.1.0",
-            "checksum-reference-keno-v1");
+            "sha256:keno-generic-pilot-v1");
     }
 
     public IReadOnlyCollection<GameType> GetSupportedGameTypes() => [GameType.Keno];
@@ -196,7 +197,10 @@ public sealed class KenoModule :
         var matches = selected.Intersect(drawn).Order().ToArray();
         var metrics = BuildDerivedMetrics(drawn, configuration);
         var result = EvaluateWager(input.WagerType, input.TicketPayload, input.DrawResultPayload, selected, matches, metrics);
-        var payout = LookupPayout(input.TicketPayload, configuration, input.WagerType, selected.Length, matches.Length, result.Won, result.Selection);
+        var outcome = result.Push ? GameEvaluationOutcome.Push : result.Won ? GameEvaluationOutcome.Win : GameEvaluationOutcome.Loss;
+        var payout = result.Push
+            ? input.Stake.StakeAmount
+            : LookupPayout(input.TicketPayload, configuration, input.WagerType, selected.Length, matches.Length, result.Won, result.Selection);
         var amount = input.Stake with
         {
             PayoutAmount = payout,
@@ -205,7 +209,7 @@ public sealed class KenoModule :
 
         var facts = new Dictionary<string, object?>
         {
-            ["outcome"] = result.Won ? GameEvaluationOutcome.Win.ToString() : GameEvaluationOutcome.Loss.ToString(),
+            ["outcome"] = outcome.ToString(),
             ["reasonCode"] = result.Reason.ToString(),
             ["hitCount"] = matches.Length,
             ["matchedNumbers"] = matches,
@@ -219,7 +223,7 @@ public sealed class KenoModule :
 
         return new GameEvaluationOutput(
             input.TicketId,
-            result.Won ? GameEvaluationOutcome.Win : GameEvaluationOutcome.Loss,
+            outcome,
             result.Reason,
             amount,
             input.Metadata with
@@ -246,12 +250,12 @@ public sealed class KenoModule :
             Fixture("keno-spot-loss", WagerType.KenoSpot, [1, 2, 3, 4, 5], [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35], GameEvaluationOutcome.Loss, GameEvaluationReason.KenoSpotMiss, 0m),
             Fixture("keno-bullseye-win", WagerType.KenoBullseye, [1, 2, 3], [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35], GameEvaluationOutcome.Win, GameEvaluationReason.KenoBullseyeMatch, 25m, new Dictionary<string, object?> { ["bullseye"] = 1 }, new Dictionary<string, object?> { ["bullseye"] = 1 }),
             Fixture("keno-bullseye-miss", WagerType.KenoBullseye, [1, 2, 3], [2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35], GameEvaluationOutcome.Loss, GameEvaluationReason.KenoBullseyeMiss, 0m, new Dictionary<string, object?> { ["bullseye"] = 1 }, new Dictionary<string, object?> { ["bullseye"] = 2 }),
-            Fixture("keno-odd-even", WagerType.KenoOddEven, [1], [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40], GameEvaluationOutcome.Win, GameEvaluationReason.KenoDerivedMatch, 18m, new Dictionary<string, object?> { ["selection"] = "ODD" }),
-            Fixture("keno-big-small", WagerType.KenoBigSmall, [1], [41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], GameEvaluationOutcome.Win, GameEvaluationReason.KenoDerivedMatch, 18m, new Dictionary<string, object?> { ["selection"] = "BIG" }),
-            Fixture("keno-up-down", WagerType.KenoUpDown, [1], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50], GameEvaluationOutcome.Win, GameEvaluationReason.KenoDerivedMatch, 18m, new Dictionary<string, object?> { ["selection"] = "DOWN" }),
+            Fixture("keno-odd-even", WagerType.KenoOddEven, [1], [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40], GameEvaluationOutcome.Win, GameEvaluationReason.KenoDerivedMatch, 18m, new Dictionary<string, object?> { ["selection"] = "EVEN" }),
+            Fixture("keno-big-small", WagerType.KenoBigSmall, [1], [41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], GameEvaluationOutcome.Win, GameEvaluationReason.KenoDerivedMatch, 18m, new Dictionary<string, object?> { ["selection"] = "SMALL" }),
+            Fixture("keno-up-down", WagerType.KenoUpDown, [1], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 41, 42, 43, 44, 45, 46, 47, 48, 49], GameEvaluationOutcome.Win, GameEvaluationReason.KenoDerivedMatch, 18m, new Dictionary<string, object?> { ["selection"] = "UP" }),
             Fixture("keno-dragon-tiger", WagerType.KenoDragonTiger, [1], [80, 79, 78, 77, 76, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], GameEvaluationOutcome.Win, GameEvaluationReason.KenoDerivedMatch, 18m, new Dictionary<string, object?> { ["selection"] = "DRAGON" }),
             Fixture("keno-sum-over-under", WagerType.KenoSumOverUnder, [1], [80, 79, 78, 77, 76, 75, 74, 73, 72, 71, 70, 69, 68, 67, 66, 65, 64, 63, 62, 61], GameEvaluationOutcome.Win, GameEvaluationReason.KenoDerivedMatch, 18m, new Dictionary<string, object?> { ["selection"] = "OVER", ["threshold"] = 810 }),
-            Fixture("keno-element", WagerType.KenoElement, [1], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 22], GameEvaluationOutcome.Win, GameEvaluationReason.KenoDerivedMatch, 18m, new Dictionary<string, object?> { ["selection"] = "FIRE" }),
+            Fixture("keno-element", WagerType.KenoElement, [1], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 22], GameEvaluationOutcome.Win, GameEvaluationReason.KenoDerivedMatch, 18m, new Dictionary<string, object?> { ["selection"] = "GOLD" }),
             InvalidFixture("keno-invalid-duplicate-ticket", new Dictionary<string, object?> { ["numbers"] = new[] { 1, 1, 2 } }),
             InvalidFixture("keno-invalid-out-of-range-ticket", new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 81 } }),
             Fixture("keno-invalid-draw-result", WagerType.KenoSpot, [1, 2, 3], [1, 2, 3], GameEvaluationOutcome.Rejected, GameEvaluationReason.InvalidDrawResult, 0m)
@@ -345,6 +349,7 @@ public sealed class KenoModule :
             ["KenoOddEven:WIN"] = 18m,
             ["KenoUpDown:WIN"] = 18m,
             ["KenoDragonTiger:WIN"] = 18m,
+            ["KenoParlay:WIN"] = 18m,
             ["KenoSumOverUnder:WIN"] = 18m,
             ["KenoElement:WIN"] = 18m
         };
@@ -391,8 +396,9 @@ public sealed class KenoModule :
             WagerType.KenoOddEven => ["ODD", "EVEN"],
             WagerType.KenoUpDown => ["UP", "DOWN"],
             WagerType.KenoDragonTiger => ["DRAGON", "TIGER"],
+            WagerType.KenoParlay => ["BIG_ODD", "BIG_EVEN", "SMALL_ODD", "SMALL_EVEN"],
             WagerType.KenoSumOverUnder => ["OVER", "UNDER"],
-            WagerType.KenoElement => ["FIRE", "WATER", "EARTH", "AIR"],
+            WagerType.KenoElement => ["GOLD", "WOOD", "WATER", "FIRE", "EARTH"],
             _ => []
         };
 
@@ -423,6 +429,7 @@ public sealed class KenoModule :
             WagerType.KenoOddEven => EvaluateDerived(ticket, metrics, "oddEven"),
             WagerType.KenoUpDown => EvaluateDerived(ticket, metrics, "upDown"),
             WagerType.KenoDragonTiger => EvaluateDerived(ticket, metrics, "dragonTiger"),
+            WagerType.KenoParlay => EvaluateDerived(ticket, metrics, "parlay"),
             WagerType.KenoSumOverUnder => EvaluateDerived(ticket, metrics, "sumOverUnder"),
             WagerType.KenoElement => EvaluateDerived(ticket, metrics, "element"),
             _ => new KenoWagerResult(false, GameEvaluationReason.UnsupportedWagerType, null, null)
@@ -441,8 +448,14 @@ public sealed class KenoModule :
     {
         var selection = ReadString(ticket, "selection")?.ToUpperInvariant();
         var actual = ReadString(metrics, metricKey)?.ToUpperInvariant();
+        var push = metricKey == "dragonTiger" && actual == "DT_TIE" && selection is "DRAGON" or "TIGER";
         var won = !string.IsNullOrWhiteSpace(selection) && string.Equals(selection, actual, StringComparison.OrdinalIgnoreCase);
-        return new KenoWagerResult(won, won ? GameEvaluationReason.KenoDerivedMatch : GameEvaluationReason.KenoDerivedMiss, null, selection);
+        return new KenoWagerResult(
+            won,
+            push ? GameEvaluationReason.KenoDerivedPush : won ? GameEvaluationReason.KenoDerivedMatch : GameEvaluationReason.KenoDerivedMiss,
+            null,
+            selection,
+            push);
     }
 
     private static IReadOnlyDictionary<string, object?> BuildDerivedMetrics(int[] drawn, KenoConfiguration configuration)
@@ -450,32 +463,38 @@ public sealed class KenoModule :
         var midpoint = configuration.NumberRangeMin + ((configuration.NumberRangeMax - configuration.NumberRangeMin + 1) / 2);
         var odd = drawn.Count(number => number % 2 != 0);
         var even = drawn.Length - odd;
-        var big = drawn.Count(number => number >= midpoint);
-        var small = drawn.Length - big;
-        var firstHalf = drawn.Take(drawn.Length / 2).Sum();
-        var secondHalf = drawn.Skip(drawn.Length / 2).Sum();
+        var lowerHalf = drawn.Count(number => number < midpoint);
+        var upperHalf = drawn.Length - lowerHalf;
         var sum = drawn.Sum();
         var threshold = configuration.NumbersDrawn * (configuration.NumberRangeMin + configuration.NumberRangeMax) / 2;
-        var element = (sum % 4) switch
+        var tensDigit = (sum / 10) % 10;
+        var unitsDigit = sum % 10;
+        var bigSmall = sum >= 811 ? "BIG" : "SMALL";
+        var oddEven = sum % 2 == 0 ? "EVEN" : "ODD";
+        var dragonTiger = tensDigit > unitsDigit ? "DRAGON" : unitsDigit > tensDigit ? "TIGER" : "DT_TIE";
+        var upDown = lowerHalf > 10 ? "UP" : upperHalf > 10 ? "DOWN" : "UD_TIE";
+        var element = sum switch
         {
-            0 => "FIRE",
-            1 => "WATER",
-            2 => "EARTH",
-            _ => "AIR"
+            <= 695 => "GOLD",
+            <= 763 => "WOOD",
+            <= 855 => "WATER",
+            <= 923 => "FIRE",
+            _ => "EARTH"
         };
 
         return new Dictionary<string, object?>
         {
             ["oddCount"] = odd,
             ["evenCount"] = even,
-            ["oddEven"] = odd >= even ? "ODD" : "EVEN",
-            ["bigCount"] = big,
-            ["smallCount"] = small,
-            ["bigSmall"] = big >= small ? "BIG" : "SMALL",
-            ["upDown"] = small >= big ? "DOWN" : "UP",
-            ["dragonSum"] = firstHalf,
-            ["tigerSum"] = secondHalf,
-            ["dragonTiger"] = firstHalf >= secondHalf ? "DRAGON" : "TIGER",
+            ["oddEven"] = oddEven,
+            ["lowerHalfCount"] = lowerHalf,
+            ["upperHalfCount"] = upperHalf,
+            ["bigSmall"] = bigSmall,
+            ["upDown"] = upDown,
+            ["secondToLastDigit"] = tensDigit,
+            ["lastDigit"] = unitsDigit,
+            ["dragonTiger"] = dragonTiger,
+            ["parlay"] = $"{bigSmall}_{oddEven}",
             ["sum"] = sum,
             ["sumThreshold"] = threshold,
             ["sumOverUnder"] = sum >= threshold ? "OVER" : "UNDER",
@@ -523,7 +542,7 @@ public sealed class KenoModule :
             input.Stake with { PayoutAmount = 0m, NetAmount = -input.Stake.StakeAmount },
             input.Metadata,
             validation,
-            new Dictionary<string, object?> { ["reasonCode"] = reason.ToString(), ["moduleVersion"] = "0.1.0-reference" });
+            new Dictionary<string, object?> { ["reasonCode"] = reason.ToString(), ["moduleVersion"] = "1.0.0-pilot" });
     }
 
     private static void ValidateNumbers(IReadOnlyCollection<int> numbers, KenoConfiguration configuration, string field, List<ValidationError> errors)
@@ -604,4 +623,9 @@ public sealed record KenoConfiguration(
 
 internal sealed record ParsedConfiguration(KenoConfiguration Configuration, ValidationResult Validation);
 
-internal sealed record KenoWagerResult(bool Won, GameEvaluationReason Reason, bool? BullseyeMatch, string? Selection);
+internal sealed record KenoWagerResult(
+    bool Won,
+    GameEvaluationReason Reason,
+    bool? BullseyeMatch,
+    string? Selection,
+    bool Push = false);

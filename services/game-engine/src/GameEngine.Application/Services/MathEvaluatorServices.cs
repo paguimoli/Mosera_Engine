@@ -205,6 +205,7 @@ public sealed class KenoMathEvaluator : IMathEvaluator
         nameof(WagerType.KenoOddEven),
         nameof(WagerType.KenoUpDown),
         nameof(WagerType.KenoDragonTiger),
+        nameof(WagerType.KenoParlay),
         nameof(WagerType.KenoSumOverUnder),
         nameof(WagerType.KenoElement)
     ];
@@ -213,7 +214,7 @@ public sealed class KenoMathEvaluator : IMathEvaluator
 
     public IReadOnlyCollection<string> SupportedWagerSchemas => WagerSchemas;
 
-    public string EvaluatorVersion => "keno-math-evaluator-1";
+    public string EvaluatorVersion => "keno-math-evaluator-2";
 
     public ValidationResult ValidateCompatibility(MathEvaluatorCompatibility compatibility)
     {
@@ -277,17 +278,36 @@ public sealed class KenoMathEvaluator : IMathEvaluator
         var matches = selected.Intersect(drawn).Order().ToArray();
         var metrics = BuildDerivedMetrics(drawn);
         var wagerResult = EvaluateWager(request.WagerSchema, request.WagerPayload, request.OutcomePayload, selected, matches, metrics);
-        var row = wagerResult.Won
-            ? ResolvePaytableRow(request.Paytable, request.WagerSchema, selected.Length, matches.Length, wagerResult)
-            : null;
+        var row = ResolvePaytableRow(request.Paytable, request.WagerSchema, selected.Length, matches.Length, wagerResult);
+        var outcome = wagerResult.Outcome;
+        if (outcome == PrizeOutcome.Win && row is null)
+        {
+            outcome = PrizeOutcome.Loss;
+        }
+
+        var multiplier = row?.Multiplier ?? 0m;
+        var stakeMinor = ReadInt(request.WagerPayload, "stakeMinor");
+        if (outcome == PrizeOutcome.Win && row?.MaxPayout is decimal maxPayout && stakeMinor is > 0)
+        {
+            var maxPayoutMinor = decimal.Round(maxPayout * 100m, 0, MidpointRounding.AwayFromZero);
+            multiplier = Math.Min(multiplier, maxPayoutMinor / stakeMinor.Value);
+        }
+
+        var basePayout = ConditionDecimal(row, "basePayoutPerUnit") ?? 0m;
+        var combinedPayout = ConditionDecimal(row, "combinedPayoutPerUnit") ?? basePayout;
         var prizeFacts = new PrizeFacts(
-            wagerResult.Won ? PrizeOutcome.Win : PrizeOutcome.Loss,
+            outcome,
             row?.PrizeCode ?? "NO_PRIZE",
-            row?.Multiplier ?? 0m,
+            multiplier,
             row?.PayoutValue ?? 0m,
             new SortedDictionary<string, object?>(StringComparer.Ordinal)
             {
+                ["basePrizeComponentPerUnit"] = basePayout,
                 ["bullseyeMatch"] = wagerResult.BullseyeMatch,
+                ["bullseyePurchased"] = wagerResult.BullseyePurchased,
+                ["bullseyeSupplementalPerUnit"] = Math.Max(0m, combinedPayout - basePayout),
+                ["capApplied"] = row?.MaxPayout is not null && multiplier != row.Multiplier,
+                ["combinedPayoutPerUnit"] = combinedPayout,
                 ["derivedMetrics"] = metrics,
                 ["drawnNumbers"] = drawn,
                 ["matchedNumbers"] = matches,
@@ -325,9 +345,10 @@ public sealed class KenoMathEvaluator : IMathEvaluator
         return wagerSchema switch
         {
             nameof(WagerType.KenoSpot) => new KenoMathWagerResult(
-                matches.Length == selected.Length,
-                matches.Length == selected.Length ? "KenoSpotMatch" : "KenoSpotMiss",
-                null,
+                PrizeOutcome.Win,
+                matches.Length > 0 ? "KenoSpotHitCount" : "KenoSpotMiss",
+                EvaluateAttachedBullseye(ticket, outcome, selected),
+                ReadBool(ticket, "bullseyePurchased") ?? false,
                 null,
                 []),
             nameof(WagerType.KenoBullseye) => EvaluateBullseye(ticket, outcome),
@@ -335,6 +356,7 @@ public sealed class KenoMathEvaluator : IMathEvaluator
             nameof(WagerType.KenoOddEven) => EvaluateDerived(ticket, metrics, "oddEven"),
             nameof(WagerType.KenoUpDown) => EvaluateDerived(ticket, metrics, "upDown"),
             nameof(WagerType.KenoDragonTiger) => EvaluateDerived(ticket, metrics, "dragonTiger"),
+            nameof(WagerType.KenoParlay) => EvaluateDerived(ticket, metrics, "parlay"),
             nameof(WagerType.KenoSumOverUnder) => EvaluateDerived(ticket, metrics, "sumOverUnder"),
             nameof(WagerType.KenoElement) => EvaluateDerived(ticket, metrics, "element"),
             _ => throw new InvalidOperationException($"Unsupported Keno wager schema '{wagerSchema}'.")
@@ -345,15 +367,30 @@ public sealed class KenoMathEvaluator : IMathEvaluator
         IReadOnlyDictionary<string, object?> ticket,
         IReadOnlyDictionary<string, object?> outcome)
     {
-        var ticketBullseye = ReadInt(ticket, "bullseye");
+        var selected = ReadIntCollection(ticket, "numbers").ToArray();
         var outcomeBullseye = ReadInt(outcome, "bullseye");
-        var won = ticketBullseye is not null && ticketBullseye == outcomeBullseye;
+        var won = outcomeBullseye is not null && selected.Contains(outcomeBullseye.Value);
         return new KenoMathWagerResult(
-            won,
+            won ? PrizeOutcome.Win : PrizeOutcome.Loss,
             won ? "KenoBullseyeMatch" : "KenoBullseyeMiss",
             won,
+            true,
             null,
             []);
+    }
+
+    private static bool EvaluateAttachedBullseye(
+        IReadOnlyDictionary<string, object?> ticket,
+        IReadOnlyDictionary<string, object?> outcome,
+        IReadOnlyCollection<int> selected)
+    {
+        if (ReadBool(ticket, "bullseyePurchased") != true)
+        {
+            return false;
+        }
+
+        var bullseye = ReadInt(outcome, "bullseye");
+        return bullseye is not null && selected.Contains(bullseye.Value);
     }
 
     private static KenoMathWagerResult EvaluateDerived(
@@ -363,11 +400,15 @@ public sealed class KenoMathEvaluator : IMathEvaluator
     {
         var selection = ReadString(ticket, "selection")?.ToUpperInvariant();
         var actual = ReadString(metrics, metricKey)?.ToUpperInvariant();
+        var push = string.Equals(metricKey, "dragonTiger", StringComparison.Ordinal)
+            && string.Equals(actual, "DT_TIE", StringComparison.Ordinal)
+            && selection is "DRAGON" or "TIGER";
         var won = !string.IsNullOrWhiteSpace(selection) && string.Equals(selection, actual, StringComparison.Ordinal);
         return new KenoMathWagerResult(
-            won,
-            won ? "KenoDerivedMatch" : "KenoDerivedMiss",
+            push ? PrizeOutcome.Push : won ? PrizeOutcome.Win : PrizeOutcome.Loss,
+            push ? "KenoDerivedPush" : won ? "KenoDerivedMatch" : "KenoDerivedMiss",
             null,
+            false,
             selection,
             [$"{metricKey}:{actual}"]);
     }
@@ -388,7 +429,8 @@ public sealed class KenoMathEvaluator : IMathEvaluator
                 MatchesCondition(row, "matchCount", hitCount) &&
                 MatchesCondition(row, "selection", result.Selection) &&
                 MatchesCondition(row, "bullseyeMatch", result.BullseyeMatch) &&
-                MatchesCondition(row, "result", result.Won ? "WIN" : "LOSS"));
+                MatchesCondition(row, "bullseyePurchased", result.BullseyePurchased) &&
+                MatchesCondition(row, "result", result.Outcome.ToString().ToUpperInvariant()));
     }
 
     private static bool MatchesCondition(PrizeMatrixRow row, string key, object? actual)
@@ -413,6 +455,13 @@ public sealed class KenoMathEvaluator : IMathEvaluator
             : null;
     }
 
+    private static decimal? ConditionDecimal(PrizeMatrixRow? row, string key)
+    {
+        return row is not null && row.Conditions.TryGetValue(key, out var value) && value is not null
+            ? Convert.ToDecimal(value)
+            : null;
+    }
+
     private static IReadOnlyDictionary<string, object?> BuildDerivedMetrics(int[] drawn)
     {
         const int numberRangeMin = 1;
@@ -420,36 +469,42 @@ public sealed class KenoMathEvaluator : IMathEvaluator
         var midpoint = numberRangeMin + ((numberRangeMax - numberRangeMin + 1) / 2);
         var odd = drawn.Count(number => number % 2 != 0);
         var even = drawn.Length - odd;
-        var big = drawn.Count(number => number >= midpoint);
-        var small = drawn.Length - big;
-        var firstHalf = drawn.Take(drawn.Length / 2).Sum();
-        var secondHalf = drawn.Skip(drawn.Length / 2).Sum();
+        var lowerHalf = drawn.Count(number => number < midpoint);
+        var upperHalf = drawn.Length - lowerHalf;
         var sum = drawn.Sum();
         var threshold = drawn.Length * (numberRangeMin + numberRangeMax) / 2;
-        var element = (sum % 4) switch
+        var tensDigit = (sum / 10) % 10;
+        var unitsDigit = sum % 10;
+        var bigSmall = sum >= 811 ? "BIG" : "SMALL";
+        var oddEven = sum % 2 == 0 ? "EVEN" : "ODD";
+        var dragonTiger = tensDigit > unitsDigit ? "DRAGON" : unitsDigit > tensDigit ? "TIGER" : "DT_TIE";
+        var upDown = lowerHalf > 10 ? "UP" : upperHalf > 10 ? "DOWN" : "UD_TIE";
+        var element = sum switch
         {
-            0 => "FIRE",
-            1 => "WATER",
-            2 => "EARTH",
-            _ => "AIR"
+            <= 695 => "GOLD",
+            <= 763 => "WOOD",
+            <= 855 => "WATER",
+            <= 923 => "FIRE",
+            _ => "EARTH"
         };
 
         return new SortedDictionary<string, object?>(StringComparer.Ordinal)
         {
-            ["bigCount"] = big,
-            ["bigSmall"] = big >= small ? "BIG" : "SMALL",
-            ["dragonSum"] = firstHalf,
-            ["dragonTiger"] = firstHalf >= secondHalf ? "DRAGON" : "TIGER",
+            ["bigSmall"] = bigSmall,
+            ["dragonTiger"] = dragonTiger,
             ["element"] = element,
             ["evenCount"] = even,
+            ["lastDigit"] = unitsDigit,
+            ["lowerHalfCount"] = lowerHalf,
             ["oddCount"] = odd,
-            ["oddEven"] = odd >= even ? "ODD" : "EVEN",
-            ["smallCount"] = small,
+            ["oddEven"] = oddEven,
+            ["parlay"] = $"{bigSmall}_{oddEven}",
+            ["secondToLastDigit"] = tensDigit,
             ["sum"] = sum,
-            ["sumOverUnder"] = sum >= threshold ? "OVER" : "UNDER",
+            ["sumOverUnder"] = sum >= 811 ? "OVER" : "UNDER",
             ["sumThreshold"] = threshold,
-            ["tigerSum"] = secondHalf,
-            ["upDown"] = small >= big ? "DOWN" : "UP"
+            ["upDown"] = upDown,
+            ["upperHalfCount"] = upperHalf
         };
     }
 
@@ -522,6 +577,17 @@ public sealed class KenoMathEvaluator : IMathEvaluator
         return Convert.ToInt32(value);
     }
 
+    private static bool? ReadBool(IReadOnlyDictionary<string, object?> payload, string key)
+    {
+        if (!payload.TryGetValue(key, out var value) || value is null) return null;
+        if (value is JsonElement element)
+        {
+            return element.ValueKind is JsonValueKind.True or JsonValueKind.False ? element.GetBoolean() : null;
+        }
+
+        return Convert.ToBoolean(value);
+    }
+
     private static string? ReadString(IReadOnlyDictionary<string, object?> payload, string key)
     {
         if (!payload.TryGetValue(key, out var value) || value is null) return null;
@@ -584,8 +650,9 @@ public static class MathEvaluationCanonicalizer
 }
 
 internal sealed record KenoMathWagerResult(
-    bool Won,
+    PrizeOutcome Outcome,
     string ReasonCode,
     bool? BullseyeMatch,
+    bool BullseyePurchased,
     string? Selection,
     IReadOnlyCollection<string> Notes);

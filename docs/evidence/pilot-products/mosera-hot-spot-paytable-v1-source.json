@@ -1,0 +1,211 @@
+{
+  "sourceArtifact": "mosera-hot-spot-official-paytable-source.zip",
+  "sourceSha256": "sha256:3843d61146af35100872178b5100a6b527e4f88add112398d81bd0b0edf8fe62",
+  "sourceEffectiveDate": "",
+  "sourceEffectiveDateNote": "Not stated in the supplied screenshots; screenshots were captured 2026-08-21.",
+  "currency": "USD",
+  "unitStakeMinor": 100,
+  "promotional": false,
+  "rows": [
+    {
+      "spotCount": 1,
+      "hotSpotOnlyByHits": [
+        0,
+        200
+      ],
+      "combinedBullseyeByHits": [
+        0,
+        5400
+      ]
+    },
+    {
+      "spotCount": 2,
+      "hotSpotOnlyByHits": [
+        0,
+        0,
+        1000
+      ],
+      "combinedBullseyeByHits": [
+        0,
+        1500,
+        7000
+      ]
+    },
+    {
+      "spotCount": 3,
+      "hotSpotOnlyByHits": [
+        0,
+        0,
+        200,
+        2500
+      ],
+      "combinedBullseyeByHits": [
+        0,
+        600,
+        2000,
+        15500
+      ]
+    },
+    {
+      "spotCount": 4,
+      "hotSpotOnlyByHits": [
+        0,
+        0,
+        100,
+        400,
+        7800
+      ],
+      "combinedBullseyeByHits": [
+        0,
+        400,
+        1100,
+        3700,
+        30000
+      ]
+    },
+    {
+      "spotCount": 5,
+      "hotSpotOnlyByHits": [
+        0,
+        0,
+        0,
+        200,
+        1500,
+        43500
+      ],
+      "combinedBullseyeByHits": [
+        0,
+        300,
+        600,
+        1600,
+        8000,
+        100000
+      ]
+    },
+    {
+      "spotCount": 6,
+      "hotSpotOnlyByHits": [
+        0,
+        0,
+        0,
+        100,
+        600,
+        6700,
+        90000
+      ],
+      "combinedBullseyeByHits": [
+        0,
+        500,
+        200,
+        700,
+        4000,
+        25000,
+        200000
+      ]
+    },
+    {
+      "spotCount": 7,
+      "hotSpotOnlyByHits": [
+        0,
+        0,
+        0,
+        100,
+        300,
+        1200,
+        19000,
+        200000
+      ],
+      "combinedBullseyeByHits": [
+        0,
+        500,
+        200,
+        300,
+        2000,
+        6800,
+        57500,
+        1000000
+      ]
+    },
+    {
+      "spotCount": 8,
+      "hotSpotOnlyByHits": [
+        100,
+        0,
+        0,
+        0,
+        0,
+        1200,
+        8000,
+        55000,
+        1000000
+      ],
+      "combinedBullseyeByHits": [
+        100,
+        500,
+        200,
+        200,
+        700,
+        5000,
+        20000,
+        130000,
+        3000000
+      ]
+    },
+    {
+      "spotCount": 9,
+      "hotSpotOnlyByHits": [
+        100,
+        0,
+        0,
+        0,
+        0,
+        600,
+        3000,
+        13500,
+        275000,
+        3000000
+      ],
+      "combinedBullseyeByHits": [
+        100,
+        500,
+        200,
+        200,
+        500,
+        2000,
+        9000,
+        47500,
+        600000,
+        6500000
+      ]
+    },
+    {
+      "spotCount": 10,
+      "hotSpotOnlyByHits": [
+        200,
+        0,
+        0,
+        0,
+        0,
+        300,
+        1700,
+        4200,
+        57500,
+        500000,
+        10000000
+      ],
+      "combinedBullseyeByHits": [
+        200,
+        500,
+        200,
+        200,
+        200,
+        900,
+        6000,
+        21500,
+        140000,
+        1500000,
+        30000000
+      ]
+    }
+  ]
+}

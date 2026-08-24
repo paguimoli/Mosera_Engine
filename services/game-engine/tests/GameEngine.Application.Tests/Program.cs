@@ -3654,7 +3654,7 @@ static void RunKenoMathEvaluatorTests()
         outcome,
         outcomePayload,
         nameof(WagerType.KenoOddEven),
-        new Dictionary<string, object?> { ["numbers"] = new[] { 1 }, ["selection"] = "ODD" },
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1 }, ["selection"] = "EVEN" },
         "KENO_ODD_EVEN",
         1);
 
@@ -3666,7 +3666,7 @@ static void RunKenoMathEvaluatorTests()
         outcome,
         outcomePayload,
         nameof(WagerType.KenoUpDown),
-        new Dictionary<string, object?> { ["numbers"] = new[] { 1 }, ["selection"] = "DOWN" },
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1 }, ["selection"] = "UP" },
         "KENO_UP_DOWN",
         1);
 
@@ -3678,7 +3678,7 @@ static void RunKenoMathEvaluatorTests()
         outcome,
         outcomePayload,
         nameof(WagerType.KenoDragonTiger),
-        new Dictionary<string, object?> { ["numbers"] = new[] { 1 }, ["selection"] = "TIGER" },
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1 }, ["selection"] = "DRAGON" },
         "KENO_DRAGON_TIGER",
         1);
 
@@ -3702,9 +3702,91 @@ static void RunKenoMathEvaluatorTests()
         outcome,
         outcomePayload,
         nameof(WagerType.KenoElement),
-        new Dictionary<string, object?> { ["numbers"] = new[] { 1 }, ["selection"] = "EARTH" },
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1 }, ["selection"] = "GOLD" },
         "KENO_ELEMENT",
         1);
+
+    AssertKenoPrize(
+        evaluator,
+        manifest,
+        mathModel,
+        paytable,
+        outcome,
+        outcomePayload,
+        nameof(WagerType.KenoParlay),
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1 }, ["selection"] = "SMALL_EVEN" },
+        "KENO_PARLAY",
+        1);
+
+    var tiePayload = MathEvalOutcomePayload([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 32], bullseye: 1);
+    var tieResult = evaluator.Evaluate(new MathEvaluatorRequest(
+        manifest,
+        MathEvalOutcomeCertificate(tiePayload),
+        mathModel,
+        paytable,
+        "ticket:dragon-tiger-push",
+        nameof(WagerType.KenoDragonTiger),
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1 }, ["selection"] = "DRAGON" },
+        tiePayload));
+    if (tieResult.PrizeFacts.Outcome != PrizeOutcome.Push)
+    {
+        throw new InvalidOperationException("Dragon/Tiger must push when the second-to-last and last total digits tie.");
+    }
+
+    var halfTiePayload = MathEvalOutcomePayload([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50], bullseye: 1);
+    var halfTieResult = evaluator.Evaluate(new MathEvaluatorRequest(
+        manifest,
+        MathEvalOutcomeCertificate(halfTiePayload),
+        mathModel,
+        paytable,
+        "ticket:up-down-tie-loss",
+        nameof(WagerType.KenoUpDown),
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1 }, ["selection"] = "UP" },
+        halfTiePayload));
+    if (halfTieResult.PrizeFacts.Outcome != PrizeOutcome.Loss)
+    {
+        throw new InvalidOperationException("Up/Down must lose on an exact 10/10 half split.");
+    }
+
+    var hotSpotPaytable = paytable with
+    {
+        PrizeMatrixRows = paytable.PrizeMatrixRows.Concat([
+            new PrizeMatrixRow(
+                "hot-spot-cap",
+                nameof(WagerType.KenoSpot),
+                "HOT_SPOT_BULLSEYE_CAP",
+                1500m,
+                0m,
+                50000m,
+                new Dictionary<string, object?>
+                {
+                    ["spotCount"] = 1,
+                    ["hitCount"] = 1,
+                    ["bullseyePurchased"] = true,
+                    ["bullseyeMatch"] = true,
+                    ["basePayoutPerUnit"] = 2m,
+                    ["combinedPayoutPerUnit"] = 3000m
+                })
+        ]).ToArray()
+    };
+    var hotSpot = evaluator.Evaluate(new MathEvaluatorRequest(
+        manifest,
+        outcome,
+        mathModel,
+        hotSpotPaytable,
+        "ticket:hot-spot-cap",
+        nameof(WagerType.KenoSpot),
+        new Dictionary<string, object?>
+        {
+            ["numbers"] = new[] { 1 },
+            ["bullseyePurchased"] = true,
+            ["stakeMinor"] = 4000
+        },
+        outcomePayload));
+    if (hotSpot.PrizeFacts.Outcome != PrizeOutcome.Win || hotSpot.PrizeFacts.Multiplier != 1250m)
+    {
+        throw new InvalidOperationException("Hot Spot combined Bullseye payout must apply its per-play cap after scaling.");
+    }
 
     var first = evaluator.Evaluate(new MathEvaluatorRequest(
         manifest,
@@ -3762,7 +3844,7 @@ static void RunMathCertificateEvaluationTests()
     var first = service.Evaluate(request);
     var second = service.Evaluate(request);
     if (first.CanonicalPrizeFactsHash != second.CanonicalPrizeFactsHash ||
-        first.Certificate.EvaluatorVersion != "keno-math-evaluator-1" ||
+        first.Certificate.EvaluatorVersion != "keno-math-evaluator-2" ||
         first.Certificate.GameManifestHash != manifest.ContentHash ||
         first.PrizeFacts.Outcome != PrizeOutcome.Win ||
         first.PrizeFacts.OutcomeDerivedFacts.ContainsKey("ledgerEntryId") ||
@@ -4398,6 +4480,7 @@ static GameManifestV1 MathEvalManifest()
             nameof(WagerType.KenoOddEven),
             nameof(WagerType.KenoUpDown),
             nameof(WagerType.KenoDragonTiger),
+            nameof(WagerType.KenoParlay),
             nameof(WagerType.KenoSumOverUnder),
             nameof(WagerType.KenoElement)
         ],
@@ -4433,6 +4516,7 @@ static MathModelDefinitionV1 MathEvalModel()
             nameof(WagerType.KenoOddEven),
             nameof(WagerType.KenoUpDown),
             nameof(WagerType.KenoDragonTiger),
+            nameof(WagerType.KenoParlay),
             nameof(WagerType.KenoSumOverUnder),
             nameof(WagerType.KenoElement)
         ],
@@ -4467,6 +4551,7 @@ static PaytableDefinitionV1 MathEvalPaytable(MathModelDefinitionV1 mathModel)
             Row("keno-odd-even", nameof(WagerType.KenoOddEven), "KENO_ODD_EVEN", 18m, new Dictionary<string, object?> { ["result"] = "WIN" }),
             Row("keno-up-down", nameof(WagerType.KenoUpDown), "KENO_UP_DOWN", 18m, new Dictionary<string, object?> { ["result"] = "WIN" }),
             Row("keno-dragon-tiger", nameof(WagerType.KenoDragonTiger), "KENO_DRAGON_TIGER", 18m, new Dictionary<string, object?> { ["result"] = "WIN" }),
+            Row("keno-parlay", nameof(WagerType.KenoParlay), "KENO_PARLAY", 18m, new Dictionary<string, object?> { ["result"] = "WIN" }),
             Row("keno-sum-over-under", nameof(WagerType.KenoSumOverUnder), "KENO_SUM_OVER_UNDER", 18m, new Dictionary<string, object?> { ["result"] = "WIN" }),
             Row("keno-element", nameof(WagerType.KenoElement), "KENO_ELEMENT", 18m, new Dictionary<string, object?> { ["result"] = "WIN" })
         ],
