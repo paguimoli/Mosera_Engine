@@ -7,6 +7,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
+await DurableSchedulerTests.RunAsync();
+
 var registry = new GameModuleRegistry();
 var drawAuthorityRegistry = new DrawAuthorityRegistry();
 var statusService = new GameEngineStatusService(registry, drawAuthorityRegistry);

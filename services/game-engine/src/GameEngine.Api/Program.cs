@@ -18,10 +18,13 @@ builder.Logging.AddJsonConsole(options =>
 });
 
 var serviceConfiguration = ServiceConfiguration.FromEnvironment(builder.Environment);
+var durableSchedulerConfiguration = DurableSchedulerConfiguration.FromEnvironment();
 var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
 var persistenceMode = string.IsNullOrWhiteSpace(databaseUrl) ? "in-memory" : "postgres";
 
 builder.Services.AddSingleton(serviceConfiguration);
+builder.Services.AddSingleton(durableSchedulerConfiguration);
+builder.Services.AddSingleton(durableSchedulerConfiguration.ToOptions());
 builder.Services.AddSingleton<IOperationalSecurityAuthority>(
     new OperationalSecurityAuthority(databaseUrl));
 builder.Services.AddSingleton<IOperationalChangeAuthority>(
@@ -47,6 +50,13 @@ builder.Services.AddSingleton<ValidationSuite>();
 builder.Services.AddSingleton<CertificationSuite>();
 builder.Services.AddSingleton<DrawGenerationFramework>();
 builder.Services.AddSingleton<DrawSchedulerService>();
+builder.Services.AddSingleton<IClock, SystemClock>();
+builder.Services.AddSingleton<AuthoritativeScheduleCalculator>();
+builder.Services.AddSingleton<PurposeSeparatedRandomnessService>();
+builder.Services.AddSingleton<HotSpotQuickPickAuthority>();
+builder.Services.AddSingleton<HotSpotBullseyeAuthority>();
+builder.Services.AddSingleton<HotSpotMultiDrawAuthority>();
+builder.Services.AddSingleton<DurableSchedulerRuntime>();
 builder.Services.AddSingleton<EvaluationOrchestrator>();
 builder.Services.AddSingleton<EvaluationRabbitMqDiagnostics>();
 builder.Services.AddSingleton<ProvablyFairRuntimeService>();
@@ -72,6 +82,12 @@ builder.Services.AddSingleton<GameEngineProductionReadinessAuthority>();
 builder.Services.AddSingleton<GameEngineProductionActivationAuthority>();
 if (string.IsNullOrWhiteSpace(databaseUrl))
 {
+    builder.Services.AddSingleton<InMemoryDurableSchedulerRepository>();
+    builder.Services.AddSingleton<IDurableSchedulerRepository>(
+        services => services.GetRequiredService<InMemoryDurableSchedulerRepository>());
+    builder.Services.AddSingleton<IHotSpotRuntimeEvidenceRepository>(
+        services => services.GetRequiredService<InMemoryDurableSchedulerRepository>());
+    builder.Services.AddSingleton<IScheduledDrawExecutionInvoker, DisabledScheduledDrawExecutionInvoker>();
     builder.Services.AddSingleton<IDrawScheduleRepository, InMemoryDrawScheduleRepository>();
     builder.Services.AddSingleton<IGameModuleRepository, InMemoryGameModuleRepository>();
     builder.Services.AddSingleton<IGameModuleVersionRepository, InMemoryGameModuleVersionRepository>();
@@ -99,6 +115,12 @@ if (string.IsNullOrWhiteSpace(databaseUrl))
 }
 else
 {
+    builder.Services.AddSingleton(_ => new PostgresDurableSchedulerRepository(databaseUrl));
+    builder.Services.AddSingleton<IDurableSchedulerRepository>(
+        services => services.GetRequiredService<PostgresDurableSchedulerRepository>());
+    builder.Services.AddSingleton<IHotSpotRuntimeEvidenceRepository>(
+        services => services.GetRequiredService<PostgresDurableSchedulerRepository>());
+    builder.Services.AddSingleton<IScheduledDrawExecutionInvoker, CanonicalScheduledDrawExecutionInvoker>();
     builder.Services.AddSingleton<IDrawScheduleRepository>(_ => new PostgresDrawScheduleRepository(databaseUrl));
     builder.Services.AddSingleton<IGameModuleRepository>(_ => new PostgresGameModuleRepository(databaseUrl));
     builder.Services.AddSingleton<IGameModuleVersionRepository>(_ => new PostgresGameModuleVersionRepository(databaseUrl));
@@ -137,6 +159,7 @@ builder.Services.AddSingleton<SettlementConsumerActivationGate>();
 builder.Services.AddSingleton<GameModuleExecutionService>();
 builder.Services.AddSingleton<GameEngineStatusService>();
 builder.Services.AddHostedService<CanonicalOutcomeRecoveryHostedService>();
+builder.Services.AddHostedService<DurableDrawSchedulerHostedService>();
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());

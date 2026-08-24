@@ -69,6 +69,10 @@ try {
     from game_engine.game_definitions definition
     join game_engine.game_definition_versions version
       on version.id = definition.active_version_id
+    join game_engine.game_modules module
+      on module.id = definition.game_module_id
+    join game_engine.game_module_versions module_version
+      on module_version.id = module.active_version_id
     cross join lateral (
       select id from game_engine.draw_authority_assignments order by id limit 1
     ) assignment

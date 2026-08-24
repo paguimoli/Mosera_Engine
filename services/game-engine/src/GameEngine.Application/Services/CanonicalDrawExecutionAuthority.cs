@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using GameEngine.Application.Interfaces;
 using GameEngine.Domain.Model;
 
 namespace GameEngine.Application.Services;
@@ -7,8 +8,11 @@ namespace GameEngine.Application.Services;
 public sealed class CanonicalDrawExecutionAuthority(
     ICanonicalOutcomePipelineRepository repository,
     IGameEngineProductionActivationRepository activationRepository,
+    IGameDefinitionRepository gameDefinitions,
+    IGameDefinitionVersionRepository gameDefinitionVersions,
     CanonicalOutcomeProviderAuthority providerAuthority,
     InternalCsprngOutcomeProvider internalCsprngProvider,
+    HotSpotBullseyeAuthority hotSpotBullseyeAuthority,
     CanonicalOutcomeAuthority outcomeAuthority,
     GameEngineProductionActivationOptions options)
 {
@@ -61,6 +65,24 @@ public sealed class CanonicalDrawExecutionAuthority(
                     manifest.ExecutionManifestId,
                     cancellationToken) ?? throw new InvalidOperationException(
                     "Internal CSPRNG completed without durable generated evidence.");
+                var definitionVersion = await gameDefinitionVersions.GetAsync(
+                    manifest.GameDefinitionVersionId,
+                    cancellationToken) ?? throw new InvalidOperationException(
+                    "Execution Manifest references an unknown Game Definition version.");
+                var definition = await gameDefinitions.GetAsync(
+                    definitionVersion.GameDefinitionId,
+                    cancellationToken) ?? throw new InvalidOperationException(
+                    "Execution Manifest references an unknown Game Definition.");
+                if (string.Equals(definition.Code, "HOT_SPOT_V1", StringComparison.Ordinal))
+                {
+                    await hotSpotBullseyeAuthority.DesignateAsync(
+                        manifest.DrawId,
+                        manifest.ExecutionManifestId,
+                        result.Evidence.GeneratedNumbers,
+                        result.CanonicalOutcomeHash,
+                        registration.ConfigurationHash,
+                        cancellationToken);
+                }
                 duplicate = result.Duplicate;
                 break;
             case CanonicalOutcomeProviderCategory.OfficialResults:

@@ -22,6 +22,7 @@ public sealed class InfrastructureReadinessChecks
     private readonly OfficialResultsProvider officialResultsProvider;
     private readonly ManualCertifiedProvider manualCertifiedProvider;
     private readonly PhysicalDrawResultRuntimeService physicalDrawRuntime;
+    private readonly IDurableSchedulerRepository durableSchedulerRepository;
     private readonly ILogger<InfrastructureReadinessChecks> logger;
 
     public InfrastructureReadinessChecks(
@@ -39,6 +40,7 @@ public sealed class InfrastructureReadinessChecks
         OfficialResultsProvider officialResultsProvider,
         ManualCertifiedProvider manualCertifiedProvider,
         PhysicalDrawResultRuntimeService physicalDrawRuntime,
+        IDurableSchedulerRepository durableSchedulerRepository,
         ILogger<InfrastructureReadinessChecks> logger)
     {
         this.configuration = configuration;
@@ -55,6 +57,7 @@ public sealed class InfrastructureReadinessChecks
         this.officialResultsProvider = officialResultsProvider;
         this.manualCertifiedProvider = manualCertifiedProvider;
         this.physicalDrawRuntime = physicalDrawRuntime;
+        this.durableSchedulerRepository = durableSchedulerRepository;
         this.logger = logger;
     }
 
@@ -344,6 +347,18 @@ public sealed class InfrastructureReadinessChecks
                 "physical-draw-runtime",
                 false,
                 string.Join("; ", readiness.Blockers));
+    }
+
+    public async Task<DependencyHealthResult> CheckDurableSchedulerAsync(CancellationToken cancellationToken)
+    {
+        var ready = await durableSchedulerRepository.CheckReadinessAsync(cancellationToken);
+
+        return ready
+            ? new DependencyHealthResult("durable-scheduler", true)
+            : new DependencyHealthResult(
+                "durable-scheduler",
+                false,
+                "Durable scheduler persistence, idempotency, or advisory locking is unavailable.");
     }
 
     private async Task<DependencyHealthResult> CheckTcpEndpointAsync(

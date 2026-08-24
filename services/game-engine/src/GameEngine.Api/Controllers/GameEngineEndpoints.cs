@@ -413,6 +413,29 @@ public static class GameEngineEndpoints
             });
         });
 
+        group.MapGet("/durable-scheduler/status", async (
+            HttpContext context,
+            IDurableSchedulerRepository repository,
+            DurableSchedulerConfiguration schedulerConfiguration,
+            IClock clock) =>
+        {
+            var status = await repository.GetOperationalStatusAsync(
+                schedulerConfiguration.HostedRuntimeEnabled,
+                schedulerConfiguration.ProductionExecutionEnabled,
+                clock.UtcNow,
+                context.RequestAborted);
+            return Results.Ok(new
+            {
+                success = true,
+                authority = "DurableSchedulerRuntime",
+                status,
+                hostClockSynchronizationRequired = true,
+                timeZoneRules = "IANA",
+                publicMutationAvailable = false,
+                correlationId = context.GetCorrelationId()
+            });
+        });
+
         group.MapGet("/evaluation-runs", (HttpContext context, EvaluationOrchestrator orchestrator) =>
         {
             return Results.Ok(new
@@ -1142,6 +1165,7 @@ public static class GameEngineEndpoints
         var officialResultsProviderReady = await readinessChecks.CheckOfficialResultsProviderAsync(context.RequestAborted);
         var manualCertifiedProviderReady = await readinessChecks.CheckManualCertifiedProviderAsync(context.RequestAborted);
         var physicalDrawRuntimeReady = await readinessChecks.CheckPhysicalDrawRuntimeAsync(context.RequestAborted);
+        var durableSchedulerReady = await readinessChecks.CheckDurableSchedulerAsync(context.RequestAborted);
         var dependencies = new[]
         {
             rabbitMqReady,
@@ -1159,7 +1183,8 @@ public static class GameEngineEndpoints
             provablyFairRuntimeReady,
             officialResultsProviderReady,
             manualCertifiedProviderReady,
-            physicalDrawRuntimeReady
+            physicalDrawRuntimeReady,
+            durableSchedulerReady
         };
         var ready = dependencies.All(dependency => dependency.Ready);
 

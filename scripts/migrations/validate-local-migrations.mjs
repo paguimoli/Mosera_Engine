@@ -1704,6 +1704,75 @@ order by effective_at desc, created_at desc
 limit 1;
 `) === "DISABLED"
 );
+for (const table of [
+  "durable_scheduler_product_sequences",
+  "durable_scheduler_draws",
+  "durable_scheduler_events",
+  "durable_scheduler_execution_leases",
+  "durable_scheduler_execution_attempts",
+  "hot_spot_quick_pick_selections",
+  "hot_spot_bullseye_evidence",
+  "hot_spot_multi_draw_purchases",
+  "hot_spot_multi_draw_bindings",
+  "scheduler_settlement_kpi_events",
+]) {
+  addCheck(`durable_scheduler_table:${table}`, existsRegclass(`game_engine.${table}`));
+}
+for (const operation of [
+  "durable_scheduler_advance_time",
+  "claim_durable_scheduler_execution",
+  "record_durable_scheduler_state",
+]) {
+  addCheck(`durable_scheduler_function:${operation}`, functionExists("game_engine", operation));
+}
+addCheck(
+  "durable_scheduler_slot_uniqueness",
+  constraintExists("game_engine", "durable_scheduler_draws", "ux_durable_scheduler_slot")
+);
+addCheck(
+  "durable_scheduler_public_number_uniqueness",
+  constraintExists("game_engine", "durable_scheduler_draws", "ux_durable_scheduler_product_draw_number")
+);
+addCheck(
+  "durable_scheduler_draw_immutable_identity",
+  triggerExists("game_engine", "durable_scheduler_draws", "trg_validate_durable_scheduler_draw_update")
+);
+addCheck(
+  "hot_spot_quick_pick_validation",
+  triggerExists("game_engine", "hot_spot_quick_pick_selections", "trg_validate_hot_spot_quick_pick")
+);
+addCheck(
+  "hot_spot_bullseye_validation",
+  triggerExists("game_engine", "hot_spot_bullseye_evidence", "trg_validate_hot_spot_bullseye_evidence")
+);
+addCheck(
+  "hot_spot_multi_draw_purchase_validation",
+  triggerExists("game_engine", "hot_spot_multi_draw_purchases", "trg_validate_hot_spot_multi_draw_purchase")
+);
+addCheck(
+  "hot_spot_multi_draw_binding_validation",
+  triggerExists("game_engine", "hot_spot_multi_draw_bindings", "trg_validate_hot_spot_multi_draw_binding")
+);
+addCheck(
+  "scheduler_operational_status_view",
+  existsRegclass("game_engine.durable_scheduler_operational_status")
+);
+addCheck(
+  "scheduler_settlement_latency_view",
+  existsRegclass("game_engine.scheduler_settlement_latency_evidence")
+);
+addCheck(
+  "pilot_products_remain_inactive_unassigned_after_scheduler_migration",
+  queryScalar(`
+select count(*)
+from game_engine.game_definition_versions version
+join game_engine.game_definitions definition on definition.id = version.game_definition_id
+where definition.code in ('FAST_KENO_V1', 'HOT_SPOT_V1')
+  and version.publication_state = 'PUBLISHED'
+  and version.activation_state = 'INACTIVE'
+  and version.assignment_state = 'UNASSIGNED';
+`) === "2"
+);
 addCheck("game_engine_duplicate_create_conflict_resolved_or_blocked", true, {
   resolution: manifest.knownConflicts?.find((conflict) => conflict.id === "game_engine_evaluation_table_duplicate_create")?.resolution,
 });

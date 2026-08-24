@@ -1137,6 +1137,15 @@
       "reason": "Publishes immutable, inactive, unassigned Fast Keno v1 and Hot Spot v1 product configurations with exact engine, manifest, math, paytable, schedule, provider, and settlement lineage."
     },
     {
+      "id": "121_add_durable_scheduler_runtime",
+      "path": "scripts/migrations/local/121_add_durable_scheduler_runtime.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds the canonical durable scheduler projection, independent public draw sequences, advisory execution claims, append-only recovery evidence, Hot Spot Bullseye and Quick Pick evidence, exact multi-draw bindings, and settlement latency hooks without activating the pilot products."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",
