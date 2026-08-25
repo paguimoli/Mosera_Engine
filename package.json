@@ -478,6 +478,7 @@
     "qa:keno-module": "node scripts/qa/keno-module.mjs",
     "qa:pilot-product-bundle": "node scripts/qa/pilot-product-bundle.mjs",
     "qa:durable-scheduler-runtime": "node scripts/qa/durable-scheduler-runtime.mjs",
+    "qa:pr04-runtime-scale-qualification": "node scripts/qa/pr04-runtime-scale-qualification.mjs",
     "qa:module-execution": "node scripts/qa/module-execution.mjs",
     "qa:evaluation-storage": "node scripts/qa/evaluation-storage.mjs",
     "qa:evaluation-settlement-prep": "node scripts/qa/evaluation-settlement-prep.mjs",
