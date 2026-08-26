@@ -79,6 +79,11 @@ public sealed class SettlementExecutionService(SettlementExecutionRepository rep
         {
             "WIN" => ComputeWinPayout(request.AcceptedStakeAmountMinor, request.StoredSettlementInput.PayoutUnits, request.StoredSettlementInput.Multiplier),
             "LOSS" => 0,
+            "PUSH" when request.StoredSettlementInput.PrizeTier == "PAYOUT_CAP_EXHAUSTED" => 0,
+            "PUSH" when request.StoredSettlementInput.Multiplier > 0m => ComputeWinPayout(
+                request.AcceptedStakeAmountMinor,
+                request.StoredSettlementInput.PayoutUnits,
+                request.StoredSettlementInput.Multiplier),
             "PUSH" => request.AcceptedStakeAmountMinor,
             "VOID" => request.AcceptedStakeAmountMinor,
             "REJECTED" => 0,

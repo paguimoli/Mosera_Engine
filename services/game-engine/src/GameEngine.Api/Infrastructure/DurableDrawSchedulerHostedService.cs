@@ -35,6 +35,10 @@ public sealed class DurableDrawSchedulerHostedService(
                     result.DueDrawCount,
                     result.ClaimedDrawCount,
                     result.RecoveryRequiredCount);
+                foreach (var blocker in result.Blockers)
+                {
+                    logger.LogWarning("Durable scheduler draw failed closed: {Blocker}", blocker);
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

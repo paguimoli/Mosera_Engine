@@ -61,26 +61,30 @@ try {
     throw new Error("Two active canonical Platform scopes are required.");
   }
 
-  const productResult = await client.query(`
-    select definition.id product_id, definition.code game_code,
-      definition.active_version_id product_version_id,
-      version.paytable_version,
-      assignment.id assignment_id
-    from game_engine.game_definitions definition
-    join game_engine.game_definition_versions version
-      on version.id = definition.active_version_id
-    join game_engine.game_modules module
-      on module.id = definition.game_module_id
+  const productFixtureResult = await client.query(`
+    select module.id game_module_id, assignment.id assignment_id
+    from game_engine.game_modules module
     join game_engine.game_module_versions module_version
       on module_version.id = module.active_version_id
     cross join lateral (
       select id from game_engine.draw_authority_assignments order by id limit 1
     ) assignment
-    order by definition.id
+    order by module.id
     limit 1
   `);
-  const product = productResult.rows[0];
-  if (!product) throw new Error("Canonical Game Engine product fixture is required.");
+  const productFixture = productFixtureResult.rows[0];
+  if (!productFixture) throw new Error("Canonical Game Engine product fixture is required.");
+  const product = {
+    product_id: randomUUID(),
+    product_version_id: randomUUID(),
+    game_code: `ticket_qa_${suffix}`,
+    paytable_definition_id: randomUUID(),
+    paytable_id: `ticket-paytable-${suffix}`,
+    paytable_version: "1.0.0",
+    paytable_hash: `sha256:ticket-paytable:${runId}`,
+    assignment_id: productFixture.assignment_id,
+    game_module_id: productFixture.game_module_id,
+  };
 
   const ids = {
     super: randomUUID(),
@@ -92,7 +96,7 @@ try {
     wallet: randomUUID(),
     freePlayWallet: randomUUID(),
     manifest: randomUUID(),
-    paytable: randomUUID(),
+    paytable: product.paytable_definition_id,
     availability: randomUUID(),
     otherAvailability: randomUUID(),
     draw: randomUUID(),
@@ -160,8 +164,9 @@ try {
     ]
   );
 
-  const paytableHash = `sha256:ticket-paytable:${runId}`;
+  const paytableHash = product.paytable_hash;
   const manifestHash = `sha256:ticket-manifest:${runId}`;
+  const definitionHash = `sha256:ticket-definition:${runId}`;
   const manifestVersion = `1.0.${Date.now()}`;
   const availabilityVersion = `1.0.${Date.now()}`;
   await client.query(
@@ -170,16 +175,17 @@ try {
       prize_matrix_rows, bonus_side_bet_rows, caps, lifecycle_state,
       content_hash, signature_metadata, certification_binding_state
     ) values (
-      $1,$2,$4,'ticket-math','1.0.0',
-      '[{"tier":"WIN","multiplier":2}]','[]','{}',
-      'ProductionActive',$3,'{}','None'
+      $1,$2,$3,'ticket-math','1.0.0',
+      '[{"tier":"WIN","wagerSchema":"STRAIGHT","multiplier":2,"maxPayout":1000000}]','[]','{}',
+      'ProductionActive',$4,'{}','None'
     )`,
-    [
-      ids.paytable,
-      `ticket-paytable-${suffix}`,
-      paytableHash,
-      product.paytable_version,
-    ]
+    [ids.paytable, product.paytable_id, product.paytable_version, paytableHash]
+  );
+  await client.query(
+    `insert into game_engine.game_definitions (
+      id, code, display_name, game_module_id
+    ) values ($1,$2,$3,$4)`,
+    [product.product_id, product.game_code, `Ticket QA ${suffix}`, product.game_module_id]
   );
   await client.query(
     `insert into game_engine.game_manifests (
@@ -204,13 +210,36 @@ try {
       JSON.stringify([{ wagerType: "STRAIGHT", version: "1.0.0" }]),
       JSON.stringify([
         {
-          paytableId: `ticket-paytable-${suffix}`,
+          paytableId: product.paytable_id,
           version: product.paytable_version,
         },
       ]),
       manifestVersion,
       manifestHash,
     ]
+  );
+  await client.query(
+    `insert into game_engine.game_definition_versions (
+      id, game_definition_id, version_number, definition_hash,
+      paytable_version, evaluator_version, draw_generator_version,
+      effective_from, game_manifest_id, game_manifest_hash,
+      paytable_definition_id, paytable_hash
+    ) values ($1,$2,1,$3,$4,'ticket-evaluator-1','ticket-draw-generator-1',
+      now() - interval '1 minute',$5,$6,$7,$8)`,
+    [
+      product.product_version_id,
+      product.product_id,
+      definitionHash,
+      product.paytable_version,
+      ids.manifest,
+      manifestHash,
+      ids.paytable,
+      paytableHash,
+    ]
+  );
+  await client.query(
+    "update game_engine.game_definitions set active_version_id=$1 where id=$2",
+    [product.product_version_id, product.product_id]
   );
   await client.query(
     `insert into platform.game_availability (

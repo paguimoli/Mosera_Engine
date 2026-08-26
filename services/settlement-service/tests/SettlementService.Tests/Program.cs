@@ -54,6 +54,59 @@ var conflictingScopeHash = SettlementInputIngestionService.BuildCanonicalRequest
     scope with { BrandId = Guid.NewGuid(), ScopeHash = Hash("different-scope") });
 Assert(originalHash != conflictingScopeHash, "Canonical request hash must bind tenant/brand scope.");
 
+var cappedPush = SettlementExecutionService.ComputeSettlement(BuildExecutionContext(
+    input with
+    {
+        EvaluationOutcome = "Push",
+        PrizeTier = "KENO_DERIVED_PUSH",
+        PayoutUnits = 0m,
+        Multiplier = 0.5m
+    },
+    scope,
+    1_000));
+Assert(cappedPush.GrossPayoutAmountMinor == 500 && cappedPush.NetResultAmountMinor == -500,
+    "A push refund constrained by a combined ticket cap must use its allocated multiplier.");
+
+var exhaustedPush = SettlementExecutionService.ComputeSettlement(BuildExecutionContext(
+    input with
+    {
+        EvaluationOutcome = "Push",
+        PrizeTier = "PAYOUT_CAP_EXHAUSTED",
+        PayoutUnits = 0m,
+        Multiplier = 0m
+    },
+    scope,
+    1_000));
+Assert(exhaustedPush.GrossPayoutAmountMinor == 0 && exhaustedPush.NetResultAmountMinor == -1_000,
+    "An exhausted combined ticket cap must not be circumvented by push settlement semantics.");
+
+var legacyPush = SettlementExecutionService.ComputeSettlement(BuildExecutionContext(
+    input with
+    {
+        EvaluationOutcome = "Push",
+        PrizeTier = "KENO_DERIVED_PUSH",
+        PayoutUnits = 0m,
+        Multiplier = 0m
+    },
+    scope,
+    1_000));
+Assert(legacyPush.GrossPayoutAmountMinor == 1_000 && legacyPush.NetResultAmountMinor == 0,
+    "Existing uncapped push inputs without an explicit multiplier must retain full refund behavior.");
+
+var winningInstructions = FinancialInstructionService.BuildInstructions(BuildSettlementRecord(scope));
+var winningCredit = winningInstructions.Single(instruction =>
+    instruction.InstructionType == FinancialInstructionType.CREDIT_APPLY);
+Assert(Convert.ToInt64(winningCredit.Provenance["balanceImpactMinor"]) == -1_000,
+    "Canonical Credit Wallet settlement must capture stake without duplicating the Ledger payout.");
+
+var reversalInstructions = FinancialInstructionService.BuildInstructions(BuildSettlementRecord(
+    scope,
+    new Dictionary<string, object?> { ["resettlementRole"] = "reversal" }));
+var reversalCredit = reversalInstructions.Single(instruction =>
+    instruction.InstructionType == FinancialInstructionType.CREDIT_APPLY);
+Assert(Convert.ToInt64(reversalCredit.Provenance["balanceImpactMinor"]) == 1_000,
+    "Canonical resettlement reversal must reverse the stake-side Wallet effect.");
+
 var previousEnvironment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
 var previousLegacy = Environment.GetEnvironmentVariable("SETTLEMENT_LEGACY_MUTATIONS_ENABLED");
 try
@@ -157,6 +210,70 @@ static SettlementInputIngestionRequest BuildRequest(
         SettlementIngestionMode.DryRun,
         context,
         new SettlementPolicyReferenceDto("settlement-policy:v1"));
+}
+
+static SettlementRequestExecutionContext BuildExecutionContext(
+    StoredSettlementInputDto input,
+    CanonicalSettlementScopeDto scope,
+    long stakeAmountMinor)
+{
+    return new SettlementRequestExecutionContext(
+        Guid.NewGuid(),
+        "settlement:cap-test",
+        Hash("settlement-request"),
+        input.SettlementInputId,
+        input.SettlementInputHash,
+        input.MathEvaluationCertificateId,
+        input.MathEvaluationCertificateHash,
+        input.OutcomeCertificateId,
+        input.OutcomeCertificateHash,
+        scope.TenantId,
+        scope.BrandId,
+        scope.GameReference,
+        scope.DrawOutcomeReference,
+        scope.ScopeHash,
+        scope.TicketId,
+        input.TicketReference,
+        scope.PlayerAccountId.ToString(),
+        stakeAmountMinor,
+        "USD",
+        2,
+        "settlement-policy:v1",
+        input);
+}
+
+static SettlementRecordResponse BuildSettlementRecord(
+    CanonicalSettlementScopeDto scope,
+    IReadOnlyDictionary<string, object?>? provenance = null)
+{
+    return new SettlementRecordResponse(
+        Guid.NewGuid(),
+        Guid.NewGuid(),
+        Guid.NewGuid(),
+        Hash("settlement-input"),
+        Guid.NewGuid(),
+        Hash("math-certificate"),
+        Guid.NewGuid(),
+        Hash("outcome-certificate"),
+        scope.TenantId,
+        scope.BrandId,
+        scope.GameReference,
+        scope.DrawOutcomeReference,
+        scope.ScopeHash,
+        scope.TicketId,
+        "ticket-line-1",
+        scope.PlayerAccountId.ToString(),
+        "USD",
+        2,
+        1_000,
+        1_500,
+        500,
+        "WIN",
+        "settlement-policy:v1",
+        Hash("canonical-settlement"),
+        "settlement:instruction-test",
+        DateTimeOffset.UnixEpoch,
+        provenance ?? new Dictionary<string, object?>());
 }
 
 static ServiceConfiguration BuildConfiguration(string environment)

@@ -558,15 +558,22 @@ async function main() {
     pass("Ledger refund instruction posts once");
     pass("Credit release/refund posts once");
 
-    const loss = await createSettlement(pool, "Loss", { withCredit: false });
+    const loss = await createSettlement(pool, "Loss");
     const beforeLedgerEntries = await tableCount(pool, "public.financial_ledger_entries");
     const beforeCreditApplications = await tableCount(pool, "public.credit_settlement_applications");
     const lossExecution = await executeSettlement(loss.settlement.settlementId);
-    assert(lossExecution.response.ok, "LOSS NOOP execution should succeed.", { status: lossExecution.response.status, body: lossExecution.body });
-    assert(lossExecution.body.results.every((result: { status: string }) => result.status === "Skipped"), "NOOP instructions should skip.", { body: lossExecution.body });
-    assert((await tableCount(pool, "public.financial_ledger_entries")) === beforeLedgerEntries, "NOOP should not call Ledger.");
-    assert((await tableCount(pool, "public.credit_settlement_applications")) === beforeCreditApplications, "NOOP should not call Credit Wallet.");
-    pass("NOOP instructions skip without target call");
+    assert(lossExecution.response.ok, "LOSS reservation settlement should succeed.", { status: lossExecution.response.status, body: lossExecution.body });
+    assert(lossExecution.body.results.some((result: { instruction: { instructionType: string }; status: string }) =>
+      result.instruction.instructionType === "LEDGER_NOOP" && result.status === "Skipped"),
+    "LOSS should preserve the explicit Ledger no-op.", { body: lossExecution.body });
+    assert(lossExecution.body.results.some((result: { instruction: { instructionType: string }; status: string }) =>
+      result.instruction.instructionType === "CREDIT_APPLY" && result.status === "Posted"),
+    "LOSS should settle its reserved Credit exposure.", { body: lossExecution.body });
+    assert((await tableCount(pool, "public.financial_ledger_entries")) === beforeLedgerEntries,
+      "LOSS Ledger no-op should not create a Ledger entry.");
+    assert((await tableCount(pool, "public.credit_settlement_applications")) === beforeCreditApplications + 1,
+      "LOSS should create one authoritative Credit Wallet application.");
+    pass("LOSS closes reserved Credit exposure through the canonical Wallet instruction");
 
     const creditFailure = await createSettlement(pool, "Win", { withCredit: false });
     const creditFailureLedger = findInstruction(creditFailure, "LEDGER_PAYOUT");

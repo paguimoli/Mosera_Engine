@@ -257,7 +257,7 @@ order by code, id;
                 reader.GetGuid(0),
                 reader.GetString(1),
                 reader.GetString(2),
-                reader.GetGuid(3),
+                reader.IsDBNull(3) ? Guid.Empty : reader.GetGuid(3),
                 reader.GetGuid(4),
                 reader.GetFieldValue<DateTimeOffset>(5)));
         }

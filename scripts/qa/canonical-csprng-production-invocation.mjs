@@ -137,7 +137,15 @@ async function execute(fixture, overrides = {}) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(command),
   });
-  const body = await response.json();
+  const responseText = await response.text();
+  let body = null;
+  if (responseText.length > 0) {
+    try {
+      body = JSON.parse(responseText);
+    } catch {
+      body = { raw: responseText };
+    }
+  }
   return { status: response.status, body, command };
 }
 
@@ -237,8 +245,22 @@ values ($1,$2,$3,$4,$4,$5,$6,$7,'Active','1.0.0',$8,$9::jsonb);
 async function loadTicketTemplate() {
   let result = await pool.query(`
 select ticket.player_account_id, ticket.player_profile_id, ticket.product_id,
-  ticket.manifest_id, ticket.paytable_definition_id, ticket.currency
+  ticket.manifest_id, ticket.paytable_definition_id, ticket.currency,
+  version.id qualification_version_id,item.wager_type,item.wager_version,
+  item.normalized_selections,item.stake_minor
 from ticket_authority.tickets ticket
+join game_engine.game_definitions definition
+  on definition.id=ticket.product_id and definition.code='FAST_KENO_V1'
+join game_engine.game_definition_versions version
+  on version.game_definition_id=ticket.product_id
+ and version.game_manifest_id=ticket.manifest_id
+ and version.paytable_definition_id=ticket.paytable_definition_id
+ and version.outcome_generation_definition is not null
+join lateral (
+  select wager_type,wager_version,normalized_selections,stake_minor
+  from ticket_authority.ticket_items item where item.ticket_id=ticket.ticket_id
+  order by item.item_index limit 1
+) item on true
 where exists (
   select 1 from public.financial_wallets wallet
   where wallet.account_id=ticket.player_account_id and wallet.status='ACTIVE'
@@ -249,8 +271,22 @@ order by ticket.accepted_at desc limit 1;
     run("npm", ["run", "qa:canonical-ticket-lifecycle"], { DATABASE_URL: databaseUrl });
     result = await pool.query(`
 select ticket.player_account_id, ticket.player_profile_id, ticket.product_id,
-  ticket.manifest_id, ticket.paytable_definition_id, ticket.currency
+  ticket.manifest_id, ticket.paytable_definition_id, ticket.currency,
+  version.id qualification_version_id,item.wager_type,item.wager_version,
+  item.normalized_selections,item.stake_minor
 from ticket_authority.tickets ticket
+join game_engine.game_definitions definition
+  on definition.id=ticket.product_id and definition.code='FAST_KENO_V1'
+join game_engine.game_definition_versions version
+  on version.game_definition_id=ticket.product_id
+ and version.game_manifest_id=ticket.manifest_id
+ and version.paytable_definition_id=ticket.paytable_definition_id
+ and version.outcome_generation_definition is not null
+join lateral (
+  select wager_type,wager_version,normalized_selections,stake_minor
+  from ticket_authority.ticket_items item where item.ticket_id=ticket.ticket_id
+  order by item.item_index limit 1
+) item on true
 where exists (
   select 1 from public.financial_wallets wallet
   where wallet.account_id=ticket.player_account_id and wallet.status='ACTIVE'
@@ -259,14 +295,7 @@ order by ticket.accepted_at desc limit 1;
 `);
   }
   if (!result.rows[0]) throw new Error("Canonical CREDIT ticket template was not found.");
-  const template = result.rows[0];
-  const version = (await pool.query(`
-select id from game_engine.game_definition_versions
-where game_definition_id=$1 and outcome_generation_definition is not null
-order by version_number desc limit 1;
-`, [template.product_id])).rows[0];
-  if (!version) throw new Error("Ticket product has no outcome-capable immutable version.");
-  return { ...template, qualification_version_id: version.id };
+  return result.rows[0];
 }
 
 async function acceptTicket(template, fixture) {
@@ -297,7 +326,12 @@ select ticket_authority.accept_ticket(
     template.player_account_id, template.player_profile_id, wallet.id,
     template.product_id, template.manifest_id, template.paytable_definition_id,
     fixture.drawId, `csprng-1.1a-${runId}`, template.currency,
-    JSON.stringify([{ wagerType: "STRAIGHT", wagerVersion: "1.0.0", selections: [1, 2, 3], stakeMinor: 1 }]),
+    JSON.stringify([{
+      wagerType: template.wager_type,
+      wagerVersion: template.wager_version,
+      selections: template.normalized_selections,
+      stakeMinor: Number(template.stake_minor),
+    }]),
     `csprng-1.1a-ticket:${runId}`, `csprng-1.1a:${runId}`,
     `draw:${fixture.drawId}`, "qa:csprng-1.1a", "CSPRNG_FULL_CHAIN_QUALIFICATION",
   ])).rows[0].result;
@@ -363,12 +397,13 @@ insert into game_engine.math_model_definitions (
   prize_liability_profile,jackpot_contribution_model,rounding_policy,
   currency_minor_unit_policy,jurisdiction_profile_references,lifecycle_state,
   content_hash,certification_binding_state,signature_metadata)
-values ($1,$2,$3,'["NumberDraw"]'::jsonb,'["STRAIGHT"]'::jsonb,
+values ($1,$2,$3,'["NumberDraw"]'::jsonb,$4::jsonb,
   0.5,0.5,'Qualification',0.5,'{}'::jsonb,'{}'::jsonb,
   '{"mode":"HalfUp"}'::jsonb,'{"minorUnits":2}'::jsonb,'[]'::jsonb,
-  'GovernanceApproved',$4,'InternalVerified',$5::jsonb);
+  'GovernanceApproved',$5,'InternalVerified',$6::jsonb);
 `, [
     randomUUID(), paytable.math_model_id, paytable.math_model_version,
+    JSON.stringify([template.wager_type]),
     hash(`csprng-1.1a-math-model:${paytable.math_model_id}:${paytable.math_model_version}`),
     JSON.stringify({ authority: "MathAuthority", qualification: "CSPRNG-1.1A" }),
   ]);
@@ -561,12 +596,14 @@ values ($1,'OutcomeCertificate',$2,'mosera-software-signing','1.0.0',
 }
 
 let previousActiveVersionId = null;
+let templateProductId = null;
 try {
   console.error("[csprng-1.1a] stage fixture prerequisites");
   await ensureGameDefinitionFixture();
   run("npm", ["run", "qa:internal-csprng-provider"], { DATABASE_URL: databaseUrl });
   await ensureDisposablePlatformScopes();
   const template = await loadTicketTemplate();
+  templateProductId = template.product_id;
   await reactivateDisposableTicketAvailability(template);
   await ensureTicketMathModel(template);
   previousActiveVersionId = (await pool.query(
@@ -795,16 +832,11 @@ select
   console.log(JSON.stringify(report, null, 2));
 } finally {
   await stopService();
-  if (previousActiveVersionId) {
-    const templateProduct = await pool.query(`
-select game_definition_id from game_engine.game_definition_versions where id=$1;
-`, [previousActiveVersionId]);
-    if (templateProduct.rows[0]) {
-      await pool.query("update game_engine.game_definitions set active_version_id=$1 where id=$2", [
-        previousActiveVersionId,
-        templateProduct.rows[0].game_definition_id,
-      ]);
-    }
+  if (templateProductId) {
+    await pool.query("update game_engine.game_definitions set active_version_id=$1 where id=$2", [
+      previousActiveVersionId,
+      templateProductId,
+    ]);
   }
   await pool.end();
 }

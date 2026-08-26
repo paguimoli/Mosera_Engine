@@ -84,38 +84,57 @@ public sealed record ScheduledDrawInvocationResult(
     bool SettlementTriggered);
 
 public sealed class CanonicalScheduledDrawExecutionInvoker(
-    CanonicalDrawExecutionAuthority authority) : IScheduledDrawExecutionInvoker
+    CanonicalDrawExecutionAuthority authority,
+    CanonicalOutcomeCertificateAuthority certificateAuthority,
+    SchedulerOutcomeCompletionFanout fanout,
+    SchedulerOutcomeFanoutOptions options) : IScheduledDrawExecutionInvoker
 {
     public async Task<ScheduledDrawInvocationResult> InvokeAsync(
         DurableScheduledDraw draw,
         CancellationToken cancellationToken)
     {
         var correlationId = $"durable-scheduler:{draw.Slot.DrawId:N}";
-        var result = await authority.ExecuteAsync(
-            new CanonicalDrawExecutionCommand(
-                draw.Slot.DrawId,
-                $"{draw.Slot.ProductCode}:{draw.Slot.ProductVersionId:N}",
-                $"durable-scheduler-execution:{draw.Slot.DrawId:N}",
-                OutcomeCertificateId: null,
-                SettlementInputId: null,
-                correlationId,
-                $"schedule:{draw.Slot.ScheduleVersionId:N}",
-                $"scheduler-audit:{draw.Slot.DrawIdentityHash}",
-                "SYSTEM:DURABLE_SCHEDULER",
-                "AUTHORITATIVE_SCHEDULE_DUE"),
-            cancellationToken);
-        var state = result.Status switch
+        var command = new CanonicalDrawExecutionCommand(
+            draw.Slot.DrawId,
+            $"{draw.Slot.ProductCode}:{draw.Slot.ProductVersionId:N}",
+            $"durable-scheduler-execution:{draw.Slot.DrawId:N}",
+            OutcomeCertificateId: null,
+            SettlementInputId: null,
+            correlationId,
+            $"schedule:{draw.Slot.ScheduleVersionId:N}",
+            $"scheduler-audit:{draw.Slot.DrawIdentityHash}",
+            "SYSTEM:DURABLE_SCHEDULER",
+            "AUTHORITATIVE_SCHEDULE_DUE");
+        var result = await authority.ExecuteAsync(command, cancellationToken);
+        var duplicate = result.ExistingGeneration;
+        if (result.Status == CanonicalDrawExecutionStatus.AwaitingCertification)
         {
-            CanonicalDrawExecutionStatus.AwaitingCertification => DurableSchedulerDrawState.AwaitingCertification,
-            CanonicalDrawExecutionStatus.Published => DurableSchedulerDrawState.AuthoritativeResult,
-            CanonicalDrawExecutionStatus.SettlementRequested => DurableSchedulerDrawState.SettlementTriggered,
-            _ => throw new InvalidOperationException("Canonical execution returned an unsupported scheduler state.")
-        };
+            var issued = await certificateAuthority.IssueAsync(result, cancellationToken);
+            duplicate |= issued.Duplicate;
+            result = await authority.ExecuteAsync(
+                command with { OutcomeCertificateId = issued.Certificate.CertificateId },
+                cancellationToken);
+            if (options.ShouldInjectFailure("AfterCertificateBeforeFanout"))
+            {
+                throw new InvalidOperationException(
+                    "PR-04A qualification failure injected after certification and before fanout.");
+            }
+        }
+        if (result.Outcome is null || result.Status != CanonicalDrawExecutionStatus.Published)
+        {
+            throw new InvalidOperationException(
+                "Canonical scheduler execution did not reach an authoritative published outcome.");
+        }
+
+        var fanoutResult = await fanout.ExecuteAsync(result.Outcome, cancellationToken);
+        var state = fanoutResult.SettlementRequestCount > 0
+            ? DurableSchedulerDrawState.SettlementTriggered
+            : DurableSchedulerDrawState.AuthoritativeResult;
         return new ScheduledDrawInvocationResult(
             state,
-            result.ProviderEvidenceHash,
-            result.ExistingGeneration,
-            result.Status == CanonicalDrawExecutionStatus.SettlementRequested);
+            fanoutResult.EvidenceHash,
+            duplicate,
+            fanoutResult.SettlementRequestCount > 0);
     }
 }
 
@@ -191,6 +210,7 @@ public sealed class DurableSchedulerRuntime(
             .Where(definition => definition.EffectiveTo is null || definition.EffectiveTo > startedAt)
             .ToArray();
         var materializedCount = 0;
+        var blockers = new List<string>();
         foreach (var definition in eligible)
         {
             var horizon = definition.ProductKind == DurableSchedulerProductKind.FastKeno
@@ -214,7 +234,8 @@ public sealed class DurableSchedulerRuntime(
         var recovery = 0;
         foreach (var draw in due)
         {
-            if (startedAt > draw.RecoveryDeadlineAt)
+            if (startedAt > draw.RecoveryDeadlineAt &&
+                draw.State != DurableSchedulerDrawState.RecoveryRequired)
             {
                 var funded = await repository.HasFundedAcceptedWagersAsync(draw.Slot.DrawId, cancellationToken);
                 var state = funded
@@ -262,6 +283,7 @@ public sealed class DurableSchedulerRuntime(
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
+                blockers.Add($"Draw {draw.Slot.DrawId}: {error.GetType().Name}: {error.Message}");
                 await repository.RecordExecutionStateAsync(
                     draw.Slot.DrawId,
                     DurableSchedulerDrawState.RecoveryRequired,
@@ -283,7 +305,7 @@ public sealed class DurableSchedulerRuntime(
             options.ProductionExecutionEnabled,
             startedAt,
             clock.UtcNow,
-            []);
+            blockers);
     }
 
     private static string Hash(string value) => AuthoritativeScheduleCalculator.Hash(value);

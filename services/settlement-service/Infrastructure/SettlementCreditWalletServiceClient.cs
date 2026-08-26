@@ -202,11 +202,9 @@ public sealed class SettlementCreditWalletServiceClient
         var captureAmount = role == "reversal"
             ? reservation.CapturedAmount
             : record.StakeAmountMinor;
-        var balanceImpact = record.NetResultAmountMinor == 0 ? record.GrossPayoutAmountMinor : record.NetResultAmountMinor;
-        if (balanceImpact == 0)
-        {
-            balanceImpact = record.GrossPayoutAmountMinor;
-        }
+        var balanceImpact = GetRequiredProvenanceInt64(
+            context.Instruction.Provenance,
+            "balanceImpactMinor");
         var ledgerInstructionId = context.LedgerInstructionId
             ?? throw new SettlementIntegrationException("Credit instruction is missing its preceding Ledger instruction reference.");
         var ledgerPostingRequired = context.LedgerInstructionType != FinancialInstructionType.LEDGER_NOOP;
@@ -266,6 +264,12 @@ public sealed class SettlementCreditWalletServiceClient
         }
 
         using var document = JsonDocument.Parse(body);
+        var status = document.RootElement.GetProperty("status").GetString();
+        if (!string.Equals(status, "COMMITTED", StringComparison.Ordinal))
+        {
+            throw new SettlementIntegrationException(
+                $"Credit Wallet Service returned non-committed financial instruction status {status ?? "missing"}.");
+        }
         var operationId = document.RootElement.GetProperty("operationId").GetString()
             ?? throw new SettlementIntegrationException("Credit Wallet Service response did not include operationId.");
 
@@ -335,6 +339,12 @@ public sealed class SettlementCreditWalletServiceClient
         }
 
         using var document = JsonDocument.Parse(body);
+        var status = document.RootElement.GetProperty("status").GetString();
+        if (!string.Equals(status, "COMMITTED", StringComparison.Ordinal))
+        {
+            throw new SettlementIntegrationException(
+                $"Credit Wallet Service returned non-committed release status {status ?? "missing"}.");
+        }
         var reservationReference = document.RootElement.GetProperty("effectReferenceId").GetString()
             ?? reservationId.ToString();
 
@@ -521,6 +531,27 @@ public sealed class SettlementCreditWalletServiceClient
     {
         if (!provenance.TryGetValue(key, out var value) || value is null) return null;
         return value is JsonElement element ? element.ToString() : value.ToString();
+    }
+
+    private static long GetRequiredProvenanceInt64(
+        IReadOnlyDictionary<string, object?> provenance,
+        string key)
+    {
+        if (!provenance.TryGetValue(key, out var value) || value is null)
+        {
+            throw new SettlementIntegrationException(
+                $"Financial instruction is missing canonical {key} provenance.");
+        }
+        if (value is JsonElement element && element.TryGetInt64(out var jsonValue))
+        {
+            return jsonValue;
+        }
+        if (long.TryParse(value.ToString(), out var parsed))
+        {
+            return parsed;
+        }
+        throw new SettlementIntegrationException(
+            $"Financial instruction canonical {key} provenance is invalid.");
     }
 
     private static Guid? ParseOptionalGuid(string? value) =>

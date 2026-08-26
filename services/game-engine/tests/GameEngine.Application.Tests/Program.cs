@@ -7,6 +7,12 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
+if (args.Contains("pr04a-hot-spot-evidence", StringComparer.Ordinal))
+{
+    await Pr04AHotSpotEvidenceHarness.RunAsync(args);
+    return;
+}
+
 await DurableSchedulerTests.RunAsync();
 
 var registry = new GameModuleRegistry();
@@ -3789,6 +3795,138 @@ static void RunKenoMathEvaluatorTests()
     {
         throw new InvalidOperationException("Hot Spot combined Bullseye payout must apply its per-play cap after scaling.");
     }
+    var secondHotSpotPlay = evaluator.Evaluate(new MathEvaluatorRequest(
+        manifest,
+        outcome,
+        mathModel,
+        hotSpotPaytable,
+        "ticket:hot-spot-cap:second-play",
+        nameof(WagerType.KenoSpot),
+        new Dictionary<string, object?>
+        {
+            ["numbers"] = new[] { 1 },
+            ["bullseyePurchased"] = true,
+            ["stakeMinor"] = 4000
+        },
+        outcomePayload));
+    var hotSpotTicketAggregate =
+        4_000m * hotSpot.PrizeFacts.Multiplier +
+        4_000m * secondHotSpotPlay.PrizeFacts.Multiplier;
+    if (secondHotSpotPlay.PrizeFacts.Multiplier != 1250m ||
+        hotSpotTicketAggregate != 10_000_000m)
+    {
+        throw new InvalidOperationException(
+            "Each Hot Spot play must receive its own 50,000 dollar combined base-plus-Bullseye cap.");
+    }
+
+    var ticketCapPaytable = paytable with
+    {
+        PrizeMatrixRows = paytable.PrizeMatrixRows.Select(row =>
+            row.WagerSchema == nameof(WagerType.KenoBigSmall)
+                ? row with { Multiplier = 2m, PayoutValue = 0m }
+                : row).ToArray()
+    };
+    MathEvaluatorResult EvaluateTicketCap(
+        string reference,
+        int stakeMinor,
+        decimal priorPayoutMinor,
+        string selection = "SMALL",
+        IReadOnlyDictionary<string, object?>? payload = null,
+        string wagerSchema = nameof(WagerType.KenoBigSmall)) =>
+        evaluator.Evaluate(new MathEvaluatorRequest(
+            manifest,
+            MathEvalOutcomeCertificate(payload ?? outcomePayload),
+            mathModel,
+            ticketCapPaytable,
+            reference,
+            wagerSchema,
+            new Dictionary<string, object?>
+            {
+                ["numbers"] = new[] { 1 },
+                ["selection"] = selection,
+                ["stakeMinor"] = stakeMinor,
+                ["ticketPayoutCapMinor"] = 10_000m,
+                ["ticketPriorPayoutMinor"] = priorPayoutMinor
+            },
+            payload ?? outcomePayload));
+
+    var belowFirst = EvaluateTicketCap("ticket:cap-below:1", 2_000, 0m);
+    var belowSecond = EvaluateTicketCap("ticket:cap-below:2", 2_500, 4_000m);
+    var belowAggregate = 2_000m * belowFirst.PrizeFacts.Multiplier +
+        2_500m * belowSecond.PrizeFacts.Multiplier;
+    if (belowAggregate != 9_000m ||
+        belowFirst.PrizeFacts.OutcomeDerivedFacts["capApplied"] is not false ||
+        belowSecond.PrizeFacts.OutcomeDerivedFacts["capApplied"] is not false)
+    {
+        throw new InvalidOperationException(
+            "Fast Keno payouts below the combined ticket cap must pay their exact aggregate.");
+    }
+
+    var exactFirst = EvaluateTicketCap("ticket:cap-exact:1", 4_000, 0m);
+    var exactSecond = EvaluateTicketCap("ticket:cap-exact:2", 1_000, 8_000m);
+    if (4_000m * exactFirst.PrizeFacts.Multiplier +
+        1_000m * exactSecond.PrizeFacts.Multiplier != 10_000m)
+    {
+        throw new InvalidOperationException(
+            "Fast Keno payouts exactly at the combined ticket cap must pay 10,000 minor units.");
+    }
+
+    var aboveFirst = EvaluateTicketCap("ticket:cap-above:1", 4_000, 0m);
+    var aboveSecond = EvaluateTicketCap("ticket:cap-above:2", 4_000, 8_000m);
+    var aboveAggregate = 4_000m * aboveFirst.PrizeFacts.Multiplier +
+        4_000m * aboveSecond.PrizeFacts.Multiplier;
+    if (aboveAggregate != 10_000m || aboveSecond.PrizeFacts.Multiplier != 0.5m ||
+        aboveSecond.PrizeFacts.OutcomeDerivedFacts["uncappedMultiplier"] is not 2m ||
+        aboveSecond.PrizeFacts.OutcomeDerivedFacts["capApplied"] is not true)
+    {
+        throw new InvalidOperationException(
+            "Fast Keno must evaluate each wager normally and apply one remaining ticket-level allowance.");
+    }
+
+    var losingWager = EvaluateTicketCap("ticket:cap-loss", 4_000, 0m, "BIG");
+    if (losingWager.PrizeFacts.Outcome != PrizeOutcome.Loss ||
+        losingWager.PrizeFacts.Multiplier != 0m ||
+        losingWager.PrizeFacts.OutcomeDerivedFacts["capApplied"] is not false)
+    {
+        throw new InvalidOperationException(
+            "A losing Fast Keno wager must never consume ticket payout capacity.");
+    }
+
+    var cappedRetry = EvaluateTicketCap("ticket:cap-above:2", 4_000, 8_000m);
+    if (cappedRetry.CanonicalPrizeFactsHash != aboveSecond.CanonicalPrizeFactsHash)
+    {
+        throw new InvalidOperationException(
+            "Fast Keno capped payout allocation must remain deterministic across retry/replay.");
+    }
+
+    var cappedPush = EvaluateTicketCap(
+        "ticket:cap-push",
+        1_000,
+        9_500m,
+        "DRAGON",
+        tiePayload,
+        nameof(WagerType.KenoDragonTiger));
+    if (cappedPush.PrizeFacts.Outcome != PrizeOutcome.Push ||
+        cappedPush.PrizeFacts.Multiplier != 0.5m ||
+        cappedPush.PrizeFacts.OutcomeDerivedFacts["capApplied"] is not true)
+    {
+        throw new InvalidOperationException(
+            "Fast Keno push refunds must participate in the combined ticket payout cap.");
+    }
+
+    var exhaustedTicketCap = EvaluateTicketCap(
+        "ticket:combined-cap-exhausted",
+        1_000,
+        10_000m);
+    if (exhaustedTicketCap.PrizeFacts.Outcome != PrizeOutcome.Loss ||
+        exhaustedTicketCap.PrizeFacts.PrizeTier != "PAYOUT_CAP_EXHAUSTED" ||
+        exhaustedTicketCap.PrizeFacts.Multiplier != 0m ||
+        exhaustedTicketCap.PrizeFacts.PayoutUnits != 0m ||
+        exhaustedTicketCap.PrizeFacts.OutcomeDerivedFacts["capExhausted"] is not true)
+    {
+        throw new InvalidOperationException(
+            "A fully exhausted ticket cap must produce an explicit nonpaying Math result.");
+    }
 
     var first = evaluator.Evaluate(new MathEvaluatorRequest(
         manifest,
@@ -4257,9 +4395,27 @@ static async Task RunSettlementInputAdapterTests()
     var repeat = SettlementInputAdapter.BuildSettlementInput(mathResult);
     if (repeat.CanonicalPayloadHash != first.CanonicalPayloadHash ||
         repeat.CanonicalPayloadJson != first.CanonicalPayloadJson ||
-        repeat.ReplayHash != first.ReplayHash)
+        repeat.ReplayHash != first.ReplayHash ||
+        mathResult.Certificate.IssuedAt.Ticks % 10 != 0)
     {
         throw new InvalidOperationException("SettlementInput canonical payload and replay hash must be deterministic.");
+    }
+
+    var reorderedFacts = mathResult.PrizeFacts with
+    {
+        OutcomeDerivedFacts = mathResult.PrizeFacts.OutcomeDerivedFacts
+            .OrderByDescending(entry => entry.Key, StringComparer.Ordinal)
+            .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal)
+    };
+    var durableReload = SettlementInputAdapter.BuildSettlementInput(mathResult with
+    {
+        PrizeFacts = reorderedFacts
+    });
+    if (durableReload.CanonicalPayloadHash != first.CanonicalPayloadHash ||
+        durableReload.CanonicalPayloadJson != first.CanonicalPayloadJson)
+    {
+        throw new InvalidOperationException(
+            "SettlementInput canonical payload must survive durable JSON key reordering.");
     }
 
     var replay = await adapter.ReplayAsync(mathResult, CancellationToken.None);

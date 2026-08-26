@@ -1146,6 +1146,134 @@
       "reason": "Adds the canonical durable scheduler projection, independent public draw sequences, advisory execution claims, append-only recovery evidence, Hot Spot Bullseye and Quick Pick evidence, exact multi-draw bindings, and settlement latency hooks without activating the pilot products."
     },
     {
+      "id": "122_add_scheduler_outcome_completion_fanout",
+      "path": "scripts/migrations/local/122_add_scheduler_outcome_completion_fanout.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Binds scheduler-certified outcomes to exact provider evidence and permits one append-only Settlement request/completion per immutable ticket-play SettlementInput."
+    },
+    {
+      "id": "123_fix_durable_scheduler_claim_conflict",
+      "path": "scripts/migrations/local/123_fix_durable_scheduler_claim_conflict.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Qualifies the durable scheduler lease conflict target so PL/pgSQL output-column names cannot make execution claims ambiguous."
+    },
+    {
+      "id": "124_fix_durable_scheduler_state_recording",
+      "path": "scripts/migrations/local/124_fix_durable_scheduler_state_recording.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Removes PL/pgSQL identifier ambiguity from append-only durable scheduler state and attempt evidence recording."
+    },
+    {
+      "id": "125_align_pilot_product_ticket_lineage",
+      "path": "scripts/migrations/local/125_align_pilot_product_ticket_lineage.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ticket_authority"
+      ],
+      "reason": "Allows canonical ticket acceptance to validate the established compact Game Manifest v1 references used by immutable PR-02 pilot products while preserving exact product, manifest, paytable, and execution lineage."
+    },
+    {
+      "id": "126_enable_durable_scheduler_recovery_retry",
+      "path": "scripts/migrations/local/126_enable_durable_scheduler_recovery_retry.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Allows append-only durable scheduler retries from RecoveryRequired while preserving one lease, increasing attempt evidence, and idempotent completed authority states."
+    },
+    {
+      "id": "127_align_pilot_product_liability_lifecycle",
+      "path": "scripts/migrations/local/127_align_pilot_product_liability_lifecycle.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ticket_authority"
+      ],
+      "reason": "Allows canonical liability calculation for exact published and approved pilot product/paytable lineage without activating or assigning the immutable PR-02 product versions."
+    },
+    {
+      "id": "128_align_pilot_product_liability_paytable_reference",
+      "path": "scripts/migrations/local/128_align_pilot_product_liability_paytable_reference.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ticket_authority"
+      ],
+      "reason": "Allows canonical liability calculation to resolve the established exact compact paytable-id:version reference carried by immutable PR-02 product versions."
+    },
+    {
+      "id": "129_normalize_game_liability_scope_lookup",
+      "path": "scripts/migrations/local/129_normalize_game_liability_scope_lookup.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ticket_authority"
+      ],
+      "reason": "Makes required lowercase GAME liability scope references resolve case-preserving canonical Product codes without relaxing scope identity."
+    },
+    {
+      "id": "130_normalize_ticket_product_availability_lookup",
+      "path": "scripts/migrations/local/130_normalize_ticket_product_availability_lookup.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ticket_authority"
+      ],
+      "reason": "Resolves normalized availability game codes against the exact Product UUID and case-preserving canonical Product code during immutable ticket persistence."
+    },
+    {
+      "id": "131_normalize_ticket_availability_lineage_code",
+      "path": "scripts/migrations/local/131_normalize_ticket_availability_lineage_code.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ticket_authority"
+      ],
+      "reason": "Compares normalized availability and Product game codes while preserving exact immutable ticket scope, version, and hash lineage."
+    },
+    {
+      "id": "132_repair_ticket_product_paytable_lineage",
+      "path": "scripts/migrations/local/132_repair_ticket_product_paytable_lineage.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine",
+        "ticket_authority"
+      ],
+      "reason": "Separates strict Product identity/hash and Paytable identity/version/hash foreign keys while adding explicit exact Product-to-Paytable lineage validation for compact PR-02 references."
+    },
+    {
+      "id": "133_repair_ticket_execution_paytable_lineage",
+      "path": "scripts/migrations/local/133_repair_ticket_execution_paytable_lineage.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine",
+        "ticket_authority"
+      ],
+      "reason": "Separates strict Draw Execution Manifest identity/hash lineage from compact Paytable reference validation while preserving exact ticket Product and Paytable binding."
+    },
+    {
+      "id": "134_fix_unclaimed_scheduler_recovery_evidence",
+      "path": "scripts/migrations/local/134_fix_unclaimed_scheduler_recovery_evidence.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Allows missed unclaimed draws to record append-only recovery state without fabricating a claim-linked attempt or violating non-null lease evidence."
+    },
+    {
+      "id": "135_fix_scheduler_retry_idempotency_and_claim_race",
+      "path": "scripts/migrations/local/135_fix_scheduler_retry_idempotency_and_claim_race.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Makes deterministic retry evidence idempotent across existing uniqueness rules and returns concurrent active-lease duplicate/unavailable results before expired-lease validation."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

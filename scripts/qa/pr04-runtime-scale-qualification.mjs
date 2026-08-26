@@ -6,7 +6,7 @@ import process from "node:process";
 import pg from "pg";
 
 const { Pool } = pg;
-const expectedCommit = "a5b922bac074039b34370ff90bb9db13f9cf112b";
+const expectedCommit = "29d09920d077fd7b45d66891a74f0d72f2c2c644";
 const expectedCsprngHash = "2f766c198298a8c1038cde1c50e49e34bf89c3645af8fc0ef16221789be9cb6c";
 const expectedMigrationHash = "f5c29b8e0280f83b3a901f8d0ac3a2aa5183438f5f5187ad79997c069efc61c5";
 const databaseUrl = process.env.DATABASE_URL ??
@@ -115,19 +115,103 @@ from pg_stat_activity where datname=current_database();
   const fullChainControlCompatibleTicketCount = Number((await pool.query(`
 select count(*)::int count
 from ticket_authority.tickets ticket
-join game_engine.paytable_definitions paytable on paytable.id=ticket.paytable_definition_id
-where exists (
-  select 1 from game_engine.game_definition_versions version
-  where version.game_definition_id=ticket.product_id
-    and version.outcome_generation_definition is not null
-    and version.paytable_version=paytable.version);
+join game_engine.game_definition_versions version
+  on version.game_definition_id=ticket.product_id
+ and version.game_manifest_id=ticket.manifest_id
+ and version.paytable_definition_id=ticket.paytable_definition_id
+ and version.outcome_generation_definition is not null;
 `)).rows[0].count);
+  const schedulerCertificateClosures = Number((await pool.query(`
+select count(distinct outcome.execution_manifest_id)::int count
+from game_engine.outcome_events outcome
+join game_engine.draw_execution_manifests manifest
+  on manifest.execution_manifest_id=outcome.execution_manifest_id
+join game_engine.durable_scheduler_draws runtime on runtime.draw_id=manifest.draw_id
+where outcome.outcome_mode='CertifiedProvider';
+`)).rows[0].count);
+  const pilotFullChain = (await pool.query(`
+select runtime.draw_id,runtime.product_code,runtime.materialized_at,
+  (select count(*)::int from ticket_authority.tickets ticket
+    where ticket.draw_id=runtime.draw_id) accepted_tickets,
+  (select count(*)::int from ticket_authority.ticket_items item
+    join ticket_authority.tickets ticket using(ticket_id)
+    where ticket.draw_id=runtime.draw_id) ticket_items,
+  (select count(*)::int from game_engine.math_evaluation_certificates certificate
+    join ticket_authority.ticket_items item on item.ticket_item_id::text=certificate.ticket_reference
+    join ticket_authority.tickets ticket using(ticket_id)
+    where ticket.draw_id=runtime.draw_id) math_certificates,
+  (select count(*)::int from game_engine.settlement_input_records input
+    join ticket_authority.ticket_items item on item.ticket_item_id::text=input.ticket_reference
+    join ticket_authority.tickets ticket using(ticket_id)
+    where ticket.draw_id=runtime.draw_id) settlement_inputs,
+  (select count(*)::int from game_engine.outcome_settlement_requests request
+    where request.draw_id=runtime.draw_id) settlement_requests,
+  (select count(*)::int from settlement_service.authoritative_settlement_records settlement
+    join game_engine.outcome_settlement_requests request using(settlement_request_id)
+    where request.draw_id=runtime.draw_id) settlements,
+  (select count(*)::int from ticket_completion_authority.completion_sources source
+    join ticket_authority.ticket_items item using(ticket_item_id)
+    join ticket_authority.tickets ticket using(ticket_id)
+    where ticket.draw_id=runtime.draw_id) completion_sources,
+  (select count(*)::int from ticket_completion_authority.completion_evidence completion
+    join ticket_authority.tickets ticket using(ticket_id)
+    where ticket.draw_id=runtime.draw_id) completed_tickets,
+  (select count(*)::int from ticket_authority.tickets ticket
+    join public.credit_reservations reservation on reservation.id=ticket.reservation_id
+    where ticket.draw_id=runtime.draw_id and ticket.status='SETTLED'
+      and ticket.lifecycle_state='REBATE_ELIGIBLE'
+      and reservation.remaining_exposure=0 and reservation.status='CAPTURED') closed_reservations,
+  (select count(*)::int from game_engine.outcome_events event
+    join game_engine.draw_execution_manifests manifest using(execution_manifest_id)
+    where manifest.draw_id=runtime.draw_id) outcome_events,
+  (select count(*)::int from game_engine.canonical_outcome_versions version
+    where version.draw_id=runtime.draw_id) outcome_versions,
+  (select count(*)::int from game_engine.durable_scheduler_execution_attempts attempt
+    where attempt.draw_id=runtime.draw_id and attempt.attempt_status='RECOVERY_REQUIRED') recovery_attempts,
+  (select count(*)::int from (
+    select request.settlement_request_id
+    from game_engine.outcome_settlement_requests request
+    join settlement_service.authoritative_settlement_records settlement using(settlement_request_id)
+    where request.draw_id=runtime.draw_id
+    group by request.settlement_request_id having count(*)>1) duplicate) duplicate_settlements,
+  (select count(*)::int from (
+    select source.ticket_item_id
+    from ticket_completion_authority.completion_sources source
+    join ticket_authority.ticket_items item using(ticket_item_id)
+    join ticket_authority.tickets ticket using(ticket_id)
+    where ticket.draw_id=runtime.draw_id
+    group by source.ticket_item_id having count(*)>1) duplicate) duplicate_sources,
+  (select count(*)::int from game_engine.math_evaluation_events evaluation
+    join ticket_authority.ticket_items item on item.ticket_item_id::text=evaluation.ticket_reference
+    join ticket_authority.tickets ticket using(ticket_id)
+    where ticket.draw_id=runtime.draw_id and (evaluation.prize_facts->>'Outcome')::int=0) wins,
+  (select count(*)::int from game_engine.math_evaluation_events evaluation
+    join ticket_authority.ticket_items item on item.ticket_item_id::text=evaluation.ticket_reference
+    join ticket_authority.tickets ticket using(ticket_id)
+    where ticket.draw_id=runtime.draw_id and (evaluation.prize_facts->>'Outcome')::int=1) losses,
+  (select count(*)::int from game_engine.math_evaluation_events evaluation
+    join ticket_authority.ticket_items item on item.ticket_item_id::text=evaluation.ticket_reference
+    join ticket_authority.tickets ticket using(ticket_id)
+    where ticket.draw_id=runtime.draw_id
+      and (evaluation.prize_facts->'OutcomeDerivedFacts'->>'capApplied')::boolean) capped_items,
+  exists(select 1 from game_engine.hot_spot_bullseye_evidence bullseye
+    where bullseye.draw_id=runtime.draw_id) bullseye_evidence,
+  exists(select 1 from game_engine.hot_spot_multi_draw_purchases purchase
+    join ticket_authority.tickets ticket on ticket.ticket_id=purchase.ticket_id
+    where ticket.draw_id=runtime.draw_id) quick_pick_multi_draw_evidence
+from game_engine.durable_scheduler_draws runtime
+where runtime.product_code in ('FAST_KENO_V1','HOT_SPOT_V1')
+  and exists(select 1 from ticket_authority.tickets ticket where ticket.draw_id=runtime.draw_id)
+order by runtime.materialized_at desc;
+`)).rows;
   return {
     products,
     authorityStages,
     scheduler,
     connections,
     fullChainControlCompatibleTicketCount,
+    schedulerCertificateClosures,
+    pilotFullChain,
   };
 }
 
@@ -172,45 +256,78 @@ async function main() {
       headers: { authorization: `Basic ${Buffer.from(`${rabbitUser}:${rabbitPassword}`).toString("base64")}` },
     }),
   ]);
-  record("Game Engine readiness", gameEngineReadiness.ok, gameEngineReadiness);
+  const gameEngineDependencies = gameEngineReadiness.body?.dependencies ?? {};
+  const gameEngineQualificationReady = gameEngineReadiness.ok || (
+    gameEngineReadiness.status === 503 &&
+    gameEngineDependencies.database === "ready" &&
+    gameEngineDependencies["durable-scheduler"] === "ready" &&
+    gameEngineDependencies["canonical-outcome-pipeline"] === "ready" &&
+    gameEngineDependencies["canonical-outcome-provider-authority"] === "not_ready" &&
+    gameEngineDependencies["internal-csprng-provider"] === "not_ready"
+  );
+  record("Game Engine qualification prerequisites and fail-closed production readiness",
+    gameEngineQualificationReady, gameEngineReadiness);
   record("durable scheduler status endpoint", schedulerStatus.ok, schedulerStatus);
   record("Settlement readiness", settlementReadiness.ok, settlementReadiness);
   record("RabbitMQ diagnostics", queues.ok, { status: queues.status });
 
-  const schedulerNullHandoff = schedulerSource.includes("OutcomeCertificateId: null") &&
-    schedulerSource.includes("SettlementInputId: null");
+  const schedulerCertificateClosure = schedulerSource.includes("certificateAuthority.IssueAsync") &&
+    schedulerSource.includes("OutcomeCertificateId = issued.Certificate.CertificateId");
+  const schedulerFanout = schedulerSource.includes("fanout.ExecuteAsync");
   const authorityStopsForCertificate = authoritySource.includes("if (command.OutcomeCertificateId is null)") &&
     authoritySource.includes("CanonicalDrawExecutionStatus.AwaitingCertification");
   const settlementRequiresCallerInput = authoritySource.includes("if (command.SettlementInputId is not null)");
-  record("scheduler handoff semantics inspected", schedulerNullHandoff && authorityStopsForCertificate && settlementRequiresCallerInput, {
-    schedulerNullHandoff,
+  record("scheduler certificate and fanout orchestration is wired", schedulerCertificateClosure && schedulerFanout && authorityStopsForCertificate && settlementRequiresCallerInput, {
+    schedulerCertificateClosure,
+    schedulerFanout,
     authorityStopsForCertificate,
     settlementRequiresCallerInput,
   });
-  if (schedulerNullHandoff && authorityStopsForCertificate) {
+  record("scheduler certificate closure has runtime evidence", database.schedulerCertificateClosures > 0, {
+    schedulerCertificateClosures: database.schedulerCertificateClosures,
+  });
+  const completePilotDraws = database.pilotFullChain.filter((row) =>
+    row.accepted_tickets >= 2 && row.ticket_items > row.accepted_tickets &&
+    row.math_certificates === row.ticket_items && row.settlement_inputs === row.ticket_items &&
+    row.settlement_requests === row.ticket_items && row.settlements === row.ticket_items &&
+    row.completion_sources === row.ticket_items && row.completed_tickets === row.accepted_tickets &&
+    row.closed_reservations === row.accepted_tickets && row.outcome_events === 1 &&
+    row.outcome_versions === 1 && row.duplicate_settlements === 0 && row.duplicate_sources === 0 &&
+    row.wins > 0 && row.losses > 0 &&
+    (row.product_code === "FAST_KENO_V1"
+      ? row.capped_items > 0
+      : row.recovery_attempts >= 4 && row.bullseye_evidence && row.quick_pick_multi_draw_evidence));
+  const pilotFullChainReady = ["FAST_KENO_V1", "HOT_SPOT_V1"].every((code) =>
+    completePilotDraws.some((row) => row.product_code === code));
+  record("Fast Keno and Hot Spot scheduler full-chain evidence", pilotFullChainReady, {
+    qualifiedDraws: completePilotDraws,
+  });
+  if (!pilotFullChainReady) {
     block(
-      "SCHEDULER_STOPS_AT_AWAITING_CERTIFICATION",
-      "The durable scheduler generates canonical CSPRNG evidence but supplies no Outcome Certificate, so execution stops at AwaitingCertification.",
-      { schedulerPath, authorityPath },
-    );
-  }
-  if (schedulerNullHandoff && settlementRequiresCallerInput) {
-    block(
-      "NO_PER_TICKET_MATH_SETTLEMENT_FANOUT",
-      "The scheduler supplies no per-ticket Math Evaluation Certificate or SettlementInput and cannot prove every accepted wager reaches settlement.",
-      { schedulerPath, authorityPath },
+      "PILOT_PRODUCT_FULL_CHAIN_NOT_QUALIFIED",
+      "Certificate closure is repaired, but Fast Keno and Hot Spot multi-ticket Math-to-Completion evidence is not yet present.",
+      { products: database.pilotFullChain },
     );
   }
 
   const settlementAuthority = settlementReadiness.body?.settlementAuthority ?? {};
-  if (settlementAuthority.authorityActivationEnabled !== true || settlementAuthority.productionPostingEnabled !== true) {
+  const productionSettlementDisabled = settlementAuthority.authorityActivationEnabled !== true &&
+    settlementAuthority.productionPostingEnabled !== true;
+  const fanoutConfiguration = readFileSync(
+    "services/game-engine/src/GameEngine.Api/Configuration/SchedulerOutcomeFanoutConfiguration.cs",
+    "utf8",
+  );
+  const qualificationGuarded = fanoutConfiguration.includes("explicit qualification-mode marker") &&
+    fanoutConfiguration.includes("cannot run in production") &&
+    fanoutConfiguration.includes("ephemeral RSA signing private key");
+  record("qualification fanout is guarded and production Settlement remains disabled",
+    productionSettlementDisabled && qualificationGuarded,
+    { productionSettlementDisabled, qualificationGuarded, settlementAuthority });
+  if (!productionSettlementDisabled || !qualificationGuarded) {
     block(
-      "SETTLEMENT_LOAD_EXECUTION_NOT_ACTIVATED",
-      "The running Settlement Authority reports activation/posting disabled; an isolated load-qualified execution mode is not configured.",
-      {
-        authorityActivationEnabled: settlementAuthority.authorityActivationEnabled ?? null,
-        productionPostingEnabled: settlementAuthority.productionPostingEnabled ?? null,
-      },
+      "QUALIFICATION_GUARDRAIL_INVALID",
+      "PR-04 qualification requires explicit non-production fanout and disabled production Settlement activation.",
+      { productionSettlementDisabled, qualificationGuarded },
     );
   }
   if (database.fullChainControlCompatibleTicketCount === 0) {
@@ -253,7 +370,7 @@ async function main() {
       }),
   };
   const statusValue = blockers.length === 0
-    ? "PR_04_PREFLIGHT_PASS"
+    ? "READY_FOR_SUSTAINED_PR_04"
     : "PR_04_RUNTIME_SCALE_QUALIFICATION_BLOCKED";
   const summary = {
     schemaVersion: "mosera.pr04.qualification-summary.v1",
@@ -265,7 +382,7 @@ async function main() {
     migration121Hash: migrationHash,
     qualificationCampaignsExecuted: false,
     reason: blockers.length === 0
-      ? "Preflight passed; sustained campaigns may begin."
+      ? "Canonical pilot-product preflight passed; sustained campaigns may begin in a separate package."
       : "Sustained campaigns were not started because doing so would test ticket acceptance without the required canonical outcome-to-completion chain.",
     claimedCapacityTier: null,
     checks,

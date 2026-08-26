@@ -152,7 +152,7 @@ public sealed class SettlementInputAdapter(ISettlementInputRepository repository
             ["paytableId"] = certificate.PaytableId,
             ["paytableVersion"] = certificate.PaytableVersion,
             ["payoutUnits"] = result.PrizeFacts.PayoutUnits,
-            ["prizeFacts"] = result.PrizeFacts,
+            ["prizeFacts"] = JsonSerializer.Deserialize<JsonElement>(prizeFactsJson),
             ["prizeFactsHash"] = result.CanonicalPrizeFactsHash,
             ["prizeTier"] = result.PrizeFacts.PrizeTier,
             ["provenance"] = provenance,

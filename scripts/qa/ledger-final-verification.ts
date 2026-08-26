@@ -261,7 +261,14 @@ async function persistVerification(
     where status = 'APPLIED' order by migration_id
   `);
   const migrationVersion = migrationRows.rows.at(-1)?.migration_id ?? "unknown";
-  assert(migrationVersion === "066_add_ledger_authority_verifications", "Final verification migration is not current.", { migrationVersion });
+  const authorityMigration = migrationRows.rows.find(
+    (row) => row.migration_id === "066_add_ledger_authority_verifications"
+  );
+  assert(
+    authorityMigration?.status === "APPLIED" && Boolean(authorityMigration.checksum),
+    "Ledger Authority verification migration is missing or invalid.",
+    { migrationVersion, authorityMigration }
+  );
 
   const capabilityHashes = {
     readinessReport: readiness.readinessReportHash,

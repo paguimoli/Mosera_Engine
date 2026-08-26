@@ -344,9 +344,9 @@ async function main() {
       LEDGER_PAYOUT: "Ready",
       CREDIT_APPLY: "Ready",
     });
-    await assertInstructionSet(pool, "Loss", ["LEDGER_NOOP", "CREDIT_NOOP"], {
+    await assertInstructionSet(pool, "Loss", ["LEDGER_NOOP", "CREDIT_APPLY"], {
       LEDGER_NOOP: "Skipped",
-      CREDIT_NOOP: "Skipped",
+      CREDIT_APPLY: "Ready",
     });
     await assertInstructionSet(pool, "Push", ["LEDGER_REFUND", "CREDIT_REFUND"], {
       LEDGER_REFUND: "Ready",

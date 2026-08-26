@@ -44,6 +44,50 @@ certificate, Math evaluation, and per-ticket settlement fanout are available in
 an isolated qualification mode. Running acceptance-only traffic would produce
 misleading capacity evidence and is prohibited.
 
+### PR-04A Closure
+
+PR-04A closes the scheduler-driven pilot-product crossover in explicit,
+non-production qualification mode. One scheduler claim now produces immutable
+Internal CSPRNG evidence, a verified RSA-3072 Outcome Certificate, bounded typed
+Math evaluation for every accepted ticket item, exact SettlementInput lineage,
+and one canonical settlement request per item. The existing Settlement,
+Ledger, Credit Wallet, and Completion authorities perform all financial work.
+
+The qualification campaign covers multiple funded players and opposing wagers
+for Fast Keno, the combined payout cap, Hot Spot manual and Quick Pick entries,
+Bullseye on/off, and immutable five-draw binding. Every ticket reaches
+`REBATE_ELIGIBLE`, every reservation reaches `CAPTURED` with zero remaining
+exposure, and duplicate Settlement and Completion effects remain zero.
+
+Fast Keno's configurable `$10,000` ceiling is applied once after aggregating all
+winning and push/refund returns for one ticket and draw. It is not applied to
+each evaluation item. The final semantic audit corrected losing derived wagers
+that had retained paytable multipliers; that defect made an earlier run report
+eight capped items. Focused and full-chain evidence now reports one capped item
+for the cap fixture, with retries reusing the same immutable result. Hot Spot is
+intentionally different: its `$50,000` ceiling applies independently to each
+play after combining the base and Bullseye supplemental return, so a multi-play
+ticket may exceed `$50,000` in total.
+
+Recovery evidence is injected after certificate issuance, after Math, after
+SettlementInput persistence, and after partial page completion. Concurrent
+scheduler instances produce one claim and one authoritative result. Completed
+item evidence is reused on every retry.
+
+Qualification fanout is disabled by default, requires an explicit qualification
+marker and ephemeral signing key, and rejects `DEPLOYMENT_ENVIRONMENT=production`.
+Production Settlement activation remains disabled. Fast Keno and Hot Spot are
+restored to `PUBLISHED / INACTIVE / UNASSIGNED` during teardown.
+
+Migrations 122-135 add the fanout and subsequent recovery/lineage corrections
+without rewriting applied migrations. The original HIGH paytable-lineage
+anomaly remains preserved historically; the repaired fixture now uses exact
+accepted-ticket lineage, and a mismatched paytable is covered by negative QA.
+
+The preflight disposition is now `READY_FOR_SUSTAINED_PR_04`. This is readiness
+to begin a separate load campaign, not a capacity result. Baseline, pilot,
+elevated, stress, and sustained load tiers remain unexecuted in PR-04A.
+
 ## Required Closure Before Campaigns
 
 1. Resume each scheduler-generated result through governed Outcome Certificate

@@ -19,12 +19,15 @@ builder.Logging.AddJsonConsole(options =>
 
 var serviceConfiguration = ServiceConfiguration.FromEnvironment(builder.Environment);
 var durableSchedulerConfiguration = DurableSchedulerConfiguration.FromEnvironment();
+var schedulerOutcomeFanoutConfiguration = SchedulerOutcomeFanoutConfiguration.FromEnvironment();
 var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
 var persistenceMode = string.IsNullOrWhiteSpace(databaseUrl) ? "in-memory" : "postgres";
 
 builder.Services.AddSingleton(serviceConfiguration);
 builder.Services.AddSingleton(durableSchedulerConfiguration);
 builder.Services.AddSingleton(durableSchedulerConfiguration.ToOptions());
+builder.Services.AddSingleton(schedulerOutcomeFanoutConfiguration);
+builder.Services.AddSingleton(schedulerOutcomeFanoutConfiguration.ToOptions());
 builder.Services.AddSingleton<IOperationalSecurityAuthority>(
     new OperationalSecurityAuthority(databaseUrl));
 builder.Services.AddSingleton<IOperationalChangeAuthority>(
@@ -120,6 +123,14 @@ else
         services => services.GetRequiredService<PostgresDurableSchedulerRepository>());
     builder.Services.AddSingleton<IHotSpotRuntimeEvidenceRepository>(
         services => services.GetRequiredService<PostgresDurableSchedulerRepository>());
+    builder.Services.AddSingleton<PostgresSchedulerOutcomeFanoutRepository>(
+        _ => new PostgresSchedulerOutcomeFanoutRepository(databaseUrl));
+    builder.Services.AddSingleton<ICanonicalOutcomeCertificateRepository>(
+        services => services.GetRequiredService<PostgresSchedulerOutcomeFanoutRepository>());
+    builder.Services.AddSingleton<ISchedulerOutcomeFanoutRepository>(
+        services => services.GetRequiredService<PostgresSchedulerOutcomeFanoutRepository>());
+    builder.Services.AddSingleton<CanonicalOutcomeCertificateAuthority>();
+    builder.Services.AddSingleton<SchedulerOutcomeCompletionFanout>();
     builder.Services.AddSingleton<IScheduledDrawExecutionInvoker, CanonicalScheduledDrawExecutionInvoker>();
     builder.Services.AddSingleton<IDrawScheduleRepository>(_ => new PostgresDrawScheduleRepository(databaseUrl));
     builder.Services.AddSingleton<IGameModuleRepository>(_ => new PostgresGameModuleRepository(databaseUrl));

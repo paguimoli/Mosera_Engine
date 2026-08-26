@@ -63,7 +63,7 @@ public sealed class FinancialInstructionService(FinancialInstructionRepository r
             "LOSS" =>
             [
                 BuildInstruction(settlementRecord, FinancialInstructionType.LEDGER_NOOP, "ledger-service", 1, 0),
-                BuildInstruction(settlementRecord, FinancialInstructionType.CREDIT_NOOP, "credit-wallet-service", 2, 0)
+                BuildInstruction(settlementRecord, FinancialInstructionType.CREDIT_APPLY, "credit-wallet-service", 2, settlementRecord.StakeAmountMinor)
             ],
             "PUSH" =>
             [
@@ -158,8 +158,12 @@ public sealed class FinancialInstructionService(FinancialInstructionRepository r
 
     private static long ComputeBalanceImpact(SettlementRecordResponse settlementRecord)
     {
-        if (settlementRecord.NetResultAmountMinor != 0) return settlementRecord.NetResultAmountMinor;
-        return settlementRecord.GrossPayoutAmountMinor;
+        var resettlementRole = settlementRecord.Provenance.TryGetValue(
+            "resettlementRole",
+            out var role) ? role?.ToString() : null;
+        return string.Equals(resettlementRole, "reversal", StringComparison.Ordinal)
+            ? settlementRecord.StakeAmountMinor
+            : -settlementRecord.StakeAmountMinor;
     }
 
     private static void CopyProvenance(

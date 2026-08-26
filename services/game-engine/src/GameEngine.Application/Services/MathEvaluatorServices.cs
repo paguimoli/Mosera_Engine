@@ -76,7 +76,8 @@ public sealed record MathCertificateEvaluationRequest(
     string TicketReference,
     string WagerSchema,
     IReadOnlyDictionary<string, object?> WagerPayload,
-    IReadOnlyDictionary<string, object?> OutcomePayload);
+    IReadOnlyDictionary<string, object?> OutcomePayload,
+    string? CanonicalOutcomeJson = null);
 
 public sealed class MathCertificateEvaluationService(MathEvaluatorRegistry registry)
 {
@@ -95,6 +96,7 @@ public sealed class MathCertificateEvaluationService(MathEvaluatorRegistry regis
             throw new InvalidOperationException($"Math evaluator compatibility failed: {string.Join("; ", compatibility.Errors.Select(error => error.Message))}");
         }
 
+        var evaluatorOutcomePayload = BuildEvaluatorOutcomePayload(request);
         var evaluation = evaluator.Evaluate(new MathEvaluatorRequest(
             request.Manifest,
             request.OutcomeCertificate,
@@ -103,9 +105,9 @@ public sealed class MathCertificateEvaluationService(MathEvaluatorRegistry regis
             request.TicketReference,
             request.WagerSchema,
             request.WagerPayload,
-            request.OutcomePayload));
+            evaluatorOutcomePayload));
 
-        var evaluatedAt = DateTimeOffset.UtcNow;
+        var evaluatedAt = NormalizeForPostgres(DateTimeOffset.UtcNow);
         var evaluationId = DeterministicGuid($"{request.IdempotencyKey}:math-evaluation:{evaluation.CanonicalPrizeFactsHash}");
         var certificateId = DeterministicGuid($"{request.IdempotencyKey}:math-evaluation-certificate:{evaluation.CanonicalPrizeFactsHash}");
         var certificate = new MathEvaluationCertificate(
@@ -146,6 +148,12 @@ public sealed class MathCertificateEvaluationService(MathEvaluatorRegistry regis
             evaluatedAt);
     }
 
+    private static DateTimeOffset NormalizeForPostgres(DateTimeOffset value)
+    {
+        var utc = value.ToUniversalTime();
+        return new DateTimeOffset(utc.Ticks - (utc.Ticks % 10), TimeSpan.Zero);
+    }
+
     private static void ValidateRequest(MathCertificateEvaluationRequest request)
     {
         RequireText(request.IdempotencyKey, nameof(request.IdempotencyKey));
@@ -173,11 +181,95 @@ public sealed class MathCertificateEvaluationService(MathEvaluatorRegistry regis
             throw new InvalidOperationException("Game Manifest does not reference the requested Paytable version.");
         }
 
-        var outcomeHash = MathEvaluationCanonicalizer.HashPayload(request.OutcomePayload);
+        var outcomeHash = request.CanonicalOutcomeJson is null
+            ? MathEvaluationCanonicalizer.HashPayload(request.OutcomePayload)
+            : MathEvaluationCanonicalizer.HashJson(request.CanonicalOutcomeJson);
         if (!string.Equals(outcomeHash, request.OutcomeCertificate.CanonicalOutcomeHash, StringComparison.Ordinal))
         {
             throw new InvalidOperationException("Outcome payload does not match the verified Outcome Certificate hash.");
         }
+    }
+
+    private static IReadOnlyDictionary<string, object?> BuildEvaluatorOutcomePayload(
+        MathCertificateEvaluationRequest request)
+    {
+        var payload = new Dictionary<string, object?>(request.OutcomePayload, StringComparer.Ordinal);
+        if (!request.WagerPayload.TryGetValue("authorityBullseye", out var bullseyeValue))
+        {
+            return payload;
+        }
+
+        var bullseye = ReadInt(bullseyeValue);
+        var evidenceHash = ReadText(request.WagerPayload, "authorityBullseyeEvidenceHash");
+        var primaryResultHash = ReadText(request.WagerPayload, "authorityBullseyePrimaryResultHash");
+        var providerConfigurationHash = ReadText(
+            request.WagerPayload,
+            "authorityBullseyeProviderConfigurationHash");
+        var executionManifestId = ReadGuid(
+            request.WagerPayload,
+            "authorityBullseyeExecutionManifestId");
+        var canonicalDrawId = ReadGuid(request.OutcomePayload, "drawId");
+        var canonicalExecutionManifestId = ReadGuid(request.OutcomePayload, "executionManifestId");
+        if (bullseye is null or < 1 or > 80 ||
+            evidenceHash is null || primaryResultHash is null || providerConfigurationHash is null ||
+            executionManifestId is null || canonicalDrawId != request.OutcomeCertificate.DrawId ||
+            canonicalExecutionManifestId != executionManifestId ||
+            !string.Equals(
+                primaryResultHash,
+                request.OutcomeCertificate.CanonicalOutcomeHash,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Authoritative Bullseye evidence does not match the certified Outcome lineage.");
+        }
+
+        var canonicalEvidence = string.Join(
+            "|",
+            "HOT_SPOT_BULLSEYE_V1",
+            request.OutcomeCertificate.DrawId.ToString("N"),
+            executionManifestId.Value.ToString("N"),
+            bullseye.Value,
+            primaryResultHash,
+            providerConfigurationHash);
+        var computedHash = "sha256:" + Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(canonicalEvidence))).ToLowerInvariant();
+        if (!string.Equals(computedHash, evidenceHash, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Authoritative Bullseye evidence hash is invalid.");
+        }
+
+        payload["bullseye"] = bullseye.Value;
+        return payload;
+    }
+
+    private static string? ReadText(IReadOnlyDictionary<string, object?> values, string key)
+    {
+        if (!values.TryGetValue(key, out var value) || value is null)
+        {
+            return null;
+        }
+        return value is JsonElement element && element.ValueKind == JsonValueKind.String
+            ? element.GetString()
+            : Convert.ToString(value);
+    }
+
+    private static Guid? ReadGuid(IReadOnlyDictionary<string, object?> values, string key)
+    {
+        var text = ReadText(values, key);
+        return Guid.TryParse(text, out var parsed) ? parsed : null;
+    }
+
+    private static int? ReadInt(object? value)
+    {
+        if (value is int number)
+        {
+            return number;
+        }
+        if (value is JsonElement element && element.TryGetInt32(out var jsonNumber))
+        {
+            return jsonNumber;
+        }
+        return int.TryParse(Convert.ToString(value), out var parsed) ? parsed : null;
     }
 
     private static Guid DeterministicGuid(string value)
@@ -285,38 +377,68 @@ public sealed class KenoMathEvaluator : IMathEvaluator
             outcome = PrizeOutcome.Loss;
         }
 
-        var multiplier = row?.Multiplier ?? 0m;
+        var multiplier = outcome switch
+        {
+            PrizeOutcome.Win => row?.Multiplier ?? 0m,
+            PrizeOutcome.Push => 1m,
+            _ => 0m
+        };
+        var uncappedMultiplier = multiplier;
         var stakeMinor = ReadInt(request.WagerPayload, "stakeMinor");
+        var capApplied = false;
         if (outcome == PrizeOutcome.Win && row?.MaxPayout is decimal maxPayout && stakeMinor is > 0)
         {
             var maxPayoutMinor = decimal.Round(maxPayout * 100m, 0, MidpointRounding.AwayFromZero);
-            multiplier = Math.Min(multiplier, maxPayoutMinor / stakeMinor.Value);
+            var capped = Math.Min(multiplier, maxPayoutMinor / stakeMinor.Value);
+            capApplied |= capped != multiplier;
+            multiplier = capped;
+        }
+        var ticketCapMinor = ReadDecimal(request.WagerPayload, "ticketPayoutCapMinor");
+        var priorPayoutMinor = ReadDecimal(request.WagerPayload, "ticketPriorPayoutMinor") ?? 0m;
+        var payableOutcome = outcome is PrizeOutcome.Win or PrizeOutcome.Push;
+        if (payableOutcome && ticketCapMinor is > 0m && stakeMinor is > 0)
+        {
+            var remaining = Math.Max(0m, ticketCapMinor.Value - priorPayoutMinor);
+            var capped = Math.Min(multiplier, remaining / stakeMinor.Value);
+            capApplied |= capped != multiplier;
+            multiplier = capped;
+        }
+
+        var capExhausted = payableOutcome && capApplied && multiplier <= 0m;
+        if (capExhausted && outcome == PrizeOutcome.Win)
+        {
+            outcome = PrizeOutcome.Loss;
         }
 
         var basePayout = ConditionDecimal(row, "basePayoutPerUnit") ?? 0m;
         var combinedPayout = ConditionDecimal(row, "combinedPayoutPerUnit") ?? basePayout;
         var prizeFacts = new PrizeFacts(
             outcome,
-            row?.PrizeCode ?? "NO_PRIZE",
+            capExhausted ? "PAYOUT_CAP_EXHAUSTED" : row?.PrizeCode ?? "NO_PRIZE",
             multiplier,
-            row?.PayoutValue ?? 0m,
+            capApplied ? 0m : row?.PayoutValue ?? 0m,
             new SortedDictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["basePrizeComponentPerUnit"] = basePayout,
                 ["bullseyeMatch"] = wagerResult.BullseyeMatch,
                 ["bullseyePurchased"] = wagerResult.BullseyePurchased,
                 ["bullseyeSupplementalPerUnit"] = Math.Max(0m, combinedPayout - basePayout),
-                ["capApplied"] = row?.MaxPayout is not null && multiplier != row.Multiplier,
+                ["capApplied"] = capApplied,
+                ["capExhausted"] = capExhausted,
                 ["combinedPayoutPerUnit"] = combinedPayout,
                 ["derivedMetrics"] = metrics,
                 ["drawnNumbers"] = drawn,
                 ["matchedNumbers"] = matches,
                 ["selectedNumbers"] = selected,
-                ["selection"] = wagerResult.Selection
+                ["selection"] = wagerResult.Selection,
+                ["ticketPayoutCapMinor"] = ticketCapMinor,
+                ["ticketPriorPayoutMinor"] = priorPayoutMinor,
+                ["uncappedMultiplier"] = uncappedMultiplier,
+                ["uncappedPayoutMinor"] = stakeMinor is > 0 ? stakeMinor.Value * uncappedMultiplier : 0m
             },
             matches.Length,
             row?.RowId,
-            wagerResult.ReasonCode,
+            capExhausted ? "PAYOUT_CAP_EXHAUSTED" : wagerResult.ReasonCode,
             wagerResult.Notes);
 
         var canonical = MathEvaluationCanonicalizer.CanonicalizePrizeFacts(prizeFacts);
@@ -450,16 +572,24 @@ public sealed class KenoMathEvaluator : IMathEvaluator
 
     private static int? ConditionInt(PrizeMatrixRow row, string key)
     {
-        return row.Conditions.TryGetValue(key, out var value) && value is not null
-            ? Convert.ToInt32(value)
-            : null;
+        if (!row.Conditions.TryGetValue(key, out var value) || value is null)
+        {
+            return null;
+        }
+        return value is JsonElement element
+            ? element.ValueKind == JsonValueKind.Number ? element.GetInt32() : null
+            : Convert.ToInt32(value);
     }
 
     private static decimal? ConditionDecimal(PrizeMatrixRow? row, string key)
     {
-        return row is not null && row.Conditions.TryGetValue(key, out var value) && value is not null
-            ? Convert.ToDecimal(value)
-            : null;
+        if (row is null || !row.Conditions.TryGetValue(key, out var value) || value is null)
+        {
+            return null;
+        }
+        return value is JsonElement element
+            ? element.ValueKind == JsonValueKind.Number ? element.GetDecimal() : null
+            : Convert.ToDecimal(value);
     }
 
     private static IReadOnlyDictionary<string, object?> BuildDerivedMetrics(int[] drawn)
@@ -577,6 +707,16 @@ public sealed class KenoMathEvaluator : IMathEvaluator
         return Convert.ToInt32(value);
     }
 
+    private static decimal? ReadDecimal(IReadOnlyDictionary<string, object?> payload, string key)
+    {
+        if (!payload.TryGetValue(key, out var value) || value is null) return null;
+        if (value is JsonElement element)
+        {
+            return element.ValueKind == JsonValueKind.Number ? element.GetDecimal() : null;
+        }
+        return Convert.ToDecimal(value);
+    }
+
     private static bool? ReadBool(IReadOnlyDictionary<string, object?> payload, string key)
     {
         if (!payload.TryGetValue(key, out var value) || value is null) return null;
@@ -611,7 +751,7 @@ public static class MathEvaluationCanonicalizer
             ["hitCount"] = prizeFacts.HitCount,
             ["multiplier"] = prizeFacts.Multiplier,
             ["outcome"] = prizeFacts.Outcome.ToString().ToUpperInvariant(),
-            ["outcomeDerivedFacts"] = prizeFacts.OutcomeDerivedFacts,
+            ["outcomeDerivedFacts"] = NormalizeCanonicalValue(prizeFacts.OutcomeDerivedFacts),
             ["paytableRowReference"] = prizeFacts.PaytableRowReference,
             ["payoutUnits"] = prizeFacts.PayoutUnits,
             ["prizeTier"] = prizeFacts.PrizeTier
@@ -647,6 +787,45 @@ public static class MathEvaluationCanonicalizer
 
         return sorted;
     }
+
+    private static object? NormalizeCanonicalValue(object? value) => value switch
+    {
+        null => null,
+        JsonElement element => NormalizeJsonElement(element),
+        IReadOnlyDictionary<string, object?> dictionary => new SortedDictionary<string, object?>(
+            dictionary.ToDictionary(
+                item => item.Key,
+                item => NormalizeCanonicalValue(item.Value),
+                StringComparer.Ordinal),
+            StringComparer.Ordinal),
+        IDictionary<string, object?> dictionary => new SortedDictionary<string, object?>(
+            dictionary.ToDictionary(
+                item => item.Key,
+                item => NormalizeCanonicalValue(item.Value),
+                StringComparer.Ordinal),
+            StringComparer.Ordinal),
+        IEnumerable<object?> items => items.Select(NormalizeCanonicalValue).ToArray(),
+        _ => value
+    };
+
+    private static object? NormalizeJsonElement(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.Object => new SortedDictionary<string, object?>(
+            element.EnumerateObject().ToDictionary(
+                property => property.Name,
+                property => NormalizeJsonElement(property.Value),
+                StringComparer.Ordinal),
+            StringComparer.Ordinal),
+        JsonValueKind.Array => element.EnumerateArray().Select(NormalizeJsonElement).ToArray(),
+        JsonValueKind.String => element.GetString(),
+        JsonValueKind.Number when element.TryGetInt32(out var integer) => integer,
+        JsonValueKind.Number when element.TryGetInt64(out var longInteger) => longInteger,
+        JsonValueKind.Number => element.GetDecimal(),
+        JsonValueKind.True => true,
+        JsonValueKind.False => false,
+        JsonValueKind.Null => null,
+        _ => throw new InvalidOperationException("PrizeFacts contain an unsupported JSON value.")
+    };
 }
 
 internal sealed record KenoMathWagerResult(

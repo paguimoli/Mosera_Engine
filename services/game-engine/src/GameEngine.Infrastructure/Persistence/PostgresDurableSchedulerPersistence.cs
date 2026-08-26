@@ -277,7 +277,7 @@ where runtime.schedule_version_id = @schedule_version_id
         await using var command = connection.CreateCommand();
         command.CommandText = $"""
 {DrawSelect}
-where (runtime.scheduler_state = 'ExecutionDue'
+where (runtime.scheduler_state in ('ExecutionDue', 'RecoveryRequired')
     or (runtime.scheduler_state = 'Executing' and exists (
       select 1
       from game_engine.durable_scheduler_execution_leases lease

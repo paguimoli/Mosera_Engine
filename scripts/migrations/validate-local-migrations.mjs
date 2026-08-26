@@ -1167,7 +1167,9 @@ addCheck("canonical_outcome_game_evaluator_index", indexExists("game_engine", "c
 addCheck("canonical_outcome_validated_hash_index", indexExists("game_engine", "canonical_outcome_versions", "idx_canonical_outcome_validated_hash"));
 addCheck("outcome_provider_canonical_result_payload", columnExists("game_engine", "outcome_provider_execution_evidence", "canonical_result_payload"));
 addCheck("outcome_provider_canonical_result_hash", columnExists("game_engine", "outcome_provider_execution_evidence", "canonical_result_hash"));
-addCheck("outcome_settlement_requests_version_unique", indexExists("game_engine", "outcome_settlement_requests", "ux_outcome_settlement_requests_version"));
+addCheck("outcome_settlement_requests_version_unique",
+  indexExists("game_engine", "outcome_settlement_requests", "ux_outcome_settlement_requests_version_input") &&
+  indexExists("game_engine", "outcome_settlement_requests", "ux_outcome_settlement_requests_cancelled_version"));
 addCheck("outcome_settlement_requests_idempotency_unique", indexExists("game_engine", "outcome_settlement_requests", "ux_outcome_settlement_requests_idempotency"));
 addCheck("outcome_settlement_requests_validate_trigger", triggerExists("game_engine", "outcome_settlement_requests", "trg_validate_outcome_settlement_request"));
 addCheck("outcome_settlement_requests_update_trigger", triggerExists("game_engine", "outcome_settlement_requests", "trg_prevent_outcome_settlement_request_update"));
@@ -1177,7 +1179,8 @@ addCheck("outcome_settlement_consumptions_outbox_unique", indexExists("game_engi
 addCheck("outcome_settlement_consumptions_validate_trigger", triggerExists("game_engine", "outcome_settlement_consumptions", "trg_validate_outcome_settlement_consumption"));
 addCheck("outcome_settlement_consumptions_update_trigger", triggerExists("game_engine", "outcome_settlement_consumptions", "trg_prevent_outcome_settlement_consumption_update"));
 addCheck("outcome_settlement_consumptions_delete_trigger", triggerExists("game_engine", "outcome_settlement_consumptions", "trg_prevent_outcome_settlement_consumption_delete"));
-addCheck("canonical_draw_completion_version_unique", indexExists("game_engine", "canonical_draw_completion_evidence", "ux_canonical_draw_completion_version"));
+addCheck("canonical_draw_completion_version_unique",
+  indexExists("game_engine", "canonical_draw_completion_evidence", "ux_canonical_draw_completion_version_request"));
 addCheck("canonical_draw_completion_validate_trigger", triggerExists("game_engine", "canonical_draw_completion_evidence", "trg_validate_canonical_draw_completion"));
 addCheck("canonical_draw_completion_update_trigger", triggerExists("game_engine", "canonical_draw_completion_evidence", "trg_prevent_canonical_draw_completion_update"));
 addCheck("canonical_draw_completion_delete_trigger", triggerExists("game_engine", "canonical_draw_completion_evidence", "trg_prevent_canonical_draw_completion_delete"));
@@ -1760,6 +1763,189 @@ addCheck(
 addCheck(
   "scheduler_settlement_latency_view",
   existsRegclass("game_engine.scheduler_settlement_latency_evidence")
+);
+addCheck(
+  "scheduler_certified_outcome_manifest_binding",
+  columnExists("game_engine", "outcome_events", "execution_manifest_id") &&
+    columnExists("game_engine", "outcome_events", "provider_evidence_id") &&
+    indexExists("game_engine", "outcome_events", "ux_outcome_events_execution_manifest_certified")
+);
+addCheck(
+  "scheduler_per_input_settlement_idempotency",
+  indexExists("game_engine", "outcome_settlement_requests", "ux_outcome_settlement_requests_version_input") &&
+    indexExists("game_engine", "outcome_settlement_requests", "ux_outcome_settlement_requests_cancelled_version")
+);
+addCheck(
+  "scheduler_per_request_completion_idempotency",
+  indexExists("game_engine", "canonical_draw_completion_evidence", "ux_canonical_draw_completion_version_request")
+);
+addCheck(
+  "pilot_product_ticket_lineage_compatibility",
+  functionExists("ticket_authority", "manifest_allows_paytable") &&
+    functionExists("ticket_authority", "manifest_allows_wager_schema") &&
+    queryScalar(`
+select position('MANIFEST_ALLOWS_PAYTABLE' in upper(pg_get_functiondef(p.oid))) > 0
+  and position('MANIFEST_ALLOWS_WAGER_SCHEMA' in upper(pg_get_functiondef(p.oid))) > 0
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'ticket_authority'
+  and p.proname = 'persist_authorized_ticket';
+`) === "t"
+);
+addCheck(
+  "durable_scheduler_claim_conflict_target_unambiguous",
+  queryScalar(`
+select position(
+  'ON CONFLICT ON CONSTRAINT DURABLE_SCHEDULER_EXECUTION_LEASES_PKEY'
+  in upper(pg_get_functiondef(p.oid))
+) > 0
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'game_engine'
+  and p.proname = 'claim_durable_scheduler_execution';
+`) === "t"
+);
+addCheck(
+  "durable_scheduler_state_recording_unambiguous",
+  queryScalar(`
+select position('V_ATTEMPT_STATUS' in upper(pg_get_functiondef(p.oid))) > 0
+  and position('ON CONFLICT DO NOTHING'
+    in upper(pg_get_functiondef(p.oid))) > 0
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'game_engine'
+  and p.proname = 'record_durable_scheduler_state';
+`) === "t"
+);
+addCheck(
+  "durable_scheduler_recovery_retry_enabled",
+  queryScalar(`
+select position('RECOVERYREQUIRED' in upper(pg_get_functiondef(p.oid))) > 0
+  and position('RECOVERY_EXECUTION_CLAIM_ACQUIRED' in upper(pg_get_functiondef(p.oid))) > 0
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'game_engine'
+  and p.proname = 'claim_durable_scheduler_execution';
+`) === "t"
+);
+addCheck(
+  "pilot_product_liability_lifecycle_is_exact_and_approved",
+  queryScalar(`
+select position('GOVERNANCEAPPROVED' in upper(pg_get_functiondef(p.oid))) > 0
+  and position('V_PRODUCT_VERSION.PUBLICATION_STATE = ''PUBLISHED'''
+    in upper(pg_get_functiondef(p.oid))) > 0
+  and position('INTERNAL_APPROVED' in upper(pg_get_functiondef(p.oid))) > 0
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'ticket_authority'
+  and p.proname = 'calculate_theoretical_liability';
+`) === "t"
+);
+addCheck(
+  "pilot_product_liability_compact_paytable_reference_is_exact",
+  queryScalar(`
+select position('V_PAYTABLE.PAYTABLE_ID || '':'' || V_PAYTABLE.VERSION'
+    in upper(pg_get_functiondef(p.oid))) > 0
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'ticket_authority'
+  and p.proname = 'calculate_theoretical_liability';
+`) === "t"
+);
+addCheck(
+  "game_liability_scope_lookup_is_canonically_normalized",
+  queryScalar(`
+select position('WHERE LOWER(GAME.CODE) = NEW.SCOPE_REFERENCE'
+    in upper(pg_get_functiondef(p.oid))) > 0
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'ticket_authority'
+  and p.proname = 'validate_liability_configuration';
+`) === "t"
+);
+addCheck(
+  "ticket_product_availability_lookup_is_canonically_normalized",
+  queryScalar(`
+select position('LOWER(CODE) = LOWER(V_AVAILABILITY.GAME_CODE)'
+    in upper(pg_get_functiondef(p.oid))) > 0
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'ticket_authority'
+  and p.proname = 'persist_authorized_ticket';
+`) === "t"
+);
+addCheck(
+  "ticket_availability_lineage_code_is_canonically_normalized",
+  queryScalar(`
+select position('LOWER(V_AVAILABILITY.GAME_CODE)'
+    in upper(pg_get_functiondef(p.oid))) > 0
+  and position('LOWER(NEW.GAME_CODE)'
+    in upper(pg_get_functiondef(p.oid))) > 0
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'ticket_authority'
+  and p.proname = 'bind_and_validate_ticket_lineage';
+`) === "t"
+);
+addCheck(
+  "ticket_product_and_paytable_lineage_are_independently_exact",
+  constraintExists("game_engine", "game_definition_versions", "ux_game_definition_version_ticket_lineage") &&
+    constraintExists("ticket_authority", "tickets", "fk_ticket_product_version_lineage") &&
+    constraintExists("ticket_authority", "tickets", "fk_ticket_paytable_lineage") &&
+    queryScalar(`
+select position('PAYTABLE DOES NOT MATCH THE EXACT IMMUTABLE PRODUCT VERSION LINEAGE'
+    in upper(pg_get_functiondef(p.oid))) > 0
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'ticket_authority'
+  and p.proname = 'persist_authorized_ticket';
+`) === "t"
+);
+addCheck(
+  "ticket_execution_and_paytable_lineage_are_independently_exact",
+  constraintExists("game_engine", "draw_execution_manifests", "ux_draw_execution_manifest_ticket_lineage") &&
+    constraintExists("ticket_authority", "tickets", "fk_ticket_execution_manifest_lineage") &&
+    queryScalar(`
+select position('CANONICAL TICKET PAYTABLE DOES NOT MATCH ITS DRAW EXECUTION MANIFEST'
+    in upper(pg_get_functiondef(p.oid))) > 0
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'ticket_authority'
+  and p.proname = 'bind_and_validate_ticket_lineage';
+`) === "t"
+);
+addCheck(
+  "unclaimed_scheduler_recovery_does_not_fabricate_attempts",
+  queryScalar(`
+select position('V_HAS_LEASE := FOUND' in upper(pg_get_functiondef(p.oid))) > 0
+  and position('IF V_HAS_LEASE THEN' in upper(pg_get_functiondef(p.oid))) > 0
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'game_engine'
+  and p.proname = 'record_durable_scheduler_state';
+`) === "t"
+);
+addCheck(
+  "scheduler_retry_evidence_and_active_lease_race_are_idempotent",
+  queryScalar(`
+select position('ON CONFLICT DO NOTHING' in upper(pg_get_functiondef(p.oid))) > 0
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'game_engine'
+  and p.proname = 'record_durable_scheduler_state';
+`) === "t" &&
+    queryScalar(`
+select position('EXISTING.LEASE_STATUS = ''ACTIVE'''
+    in upper(pg_get_functiondef(p.oid))) > 0
+  and position('EXISTING.LEASE_STATUS = ''ACTIVE'''
+    in upper(pg_get_functiondef(p.oid)))
+    < position('IF RUNTIME_DRAW.SCHEDULER_STATE NOT IN'
+      in upper(pg_get_functiondef(p.oid)))
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'game_engine'
+  and p.proname = 'claim_durable_scheduler_execution';
+`) === "t"
 );
 addCheck(
   "pilot_products_remain_inactive_unassigned_after_scheduler_migration",

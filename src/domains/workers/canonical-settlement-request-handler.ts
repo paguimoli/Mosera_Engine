@@ -838,7 +838,9 @@ values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'settlement-worker', $5, $6, $7)
     }
 
     if (payload.requestKind === "Cancelled") {
-      const completionId = deterministicUuid(`completion:${payload.outcomeVersionId}`);
+      const completionId = deterministicUuid(
+        `completion:${payload.outcomeVersionId}:${payload.settlementRequestId}`
+      );
       const completionHash = hash(
         `${payload.drawId}|${payload.outcomeVersionId}|${payload.settlementRequestId}|${consumptionId}|non-financial-cancellation`
       );
@@ -943,7 +945,9 @@ on conflict (draw_id, event_type, evidence_reference) do nothing
     const acknowledgementHash = hash(
       `${payload.settlementRequestId}|${payload.outcomeVersionId}|${consumptionId}|${authority.settlement_request_id}|${authority.settlement_id}|${authority.canonical_settlement_hash}`
     );
-    const completionId = deterministicUuid(`completion:${payload.outcomeVersionId}`);
+    const completionId = deterministicUuid(
+      `completion:${payload.outcomeVersionId}:${payload.settlementRequestId}`
+    );
     const completionHash = hash(
       `${payload.drawId}|${payload.outcomeVersionId}|${payload.settlementRequestId}|${acknowledgementId}|${authority.canonical_settlement_hash}`
     );
