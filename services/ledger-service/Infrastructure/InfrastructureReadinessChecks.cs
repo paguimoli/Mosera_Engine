@@ -123,12 +123,13 @@ public static class PostgresConnectionString
 {
     public static string Normalize(string connectionString)
     {
+        NpgsqlConnectionStringBuilder builder;
         if (connectionString.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase) ||
             connectionString.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase))
         {
             var uri = new Uri(connectionString);
             var userInfo = uri.UserInfo.Split(':', 2);
-            var builder = new NpgsqlConnectionStringBuilder
+            builder = new NpgsqlConnectionStringBuilder
             {
                 Host = uri.Host,
                 Port = uri.Port > 0 ? uri.Port : 5432,
@@ -137,9 +138,21 @@ public static class PostgresConnectionString
                 Password = Uri.UnescapeDataString(userInfo.ElementAtOrDefault(1) ?? string.Empty)
             };
 
-            return builder.ConnectionString;
         }
-
-        return connectionString;
+        else
+        {
+            builder = new NpgsqlConnectionStringBuilder(connectionString);
+        }
+        builder.Pooling = true;
+        builder.MinPoolSize = 0;
+        builder.MaxPoolSize = ReadPoolMaximum(6);
+        var applicationName = Environment.GetEnvironmentVariable("DATABASE_APPLICATION_NAME")?.Trim();
+        if (!string.IsNullOrEmpty(applicationName)) builder.ApplicationName = applicationName;
+        return builder.ConnectionString;
     }
+
+    private static int ReadPoolMaximum(int fallback) =>
+        int.TryParse(Environment.GetEnvironmentVariable("DATABASE_MAX_POOL_SIZE"), out var value)
+            ? Math.Clamp(value, 1, 32)
+            : fallback;
 }

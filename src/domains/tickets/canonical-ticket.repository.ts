@@ -1,4 +1,5 @@
-import { Pool } from "pg";
+import type { Pool } from "pg";
+import { createApplicationPostgresPool } from "@/src/lib/database/resilient-postgres-pool";
 
 import type {
   AcceptCanonicalTicketInput,
@@ -15,7 +16,7 @@ function database() {
       "Canonical Ticket persistence requires DATABASE_URL."
     );
   }
-  pool ??= new Pool({
+  pool ??= createApplicationPostgresPool("canonical-ticket-repository", {
     connectionString: databaseUrl,
     max: 10,
     connectionTimeoutMillis: 5_000,

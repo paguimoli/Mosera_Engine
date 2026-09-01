@@ -1,6 +1,9 @@
 import type { Pool, QueryResultRow } from "pg";
 
-import { createResilientPostgresPool } from "@/src/lib/database/resilient-postgres-pool";
+import {
+  closeWorkerPostgresPool,
+  createWorkerPostgresPool,
+} from "@/src/lib/database/resilient-postgres-pool";
 
 import type {
   CreateOutboxEventInput,
@@ -9,6 +12,7 @@ import type {
   MarkOutboxEventDeadLetterInput,
   MarkOutboxEventFailedInput,
   MarkOutboxEventPublishedInput,
+  MarkOutboxEventsPublishedInput,
   OutboxEvent,
 } from "./outbox.types";
 
@@ -35,7 +39,7 @@ function getPool() {
   if (!databaseUrl) {
     throw new Error("DATABASE_URL is required for durable outbox dispatch.");
   }
-  pool ??= createResilientPostgresPool("outbox-postgres-repository", {
+  pool ??= createWorkerPostgresPool("outbox-postgres-repository", {
     connectionString: databaseUrl,
     connectionTimeoutMillis: 2_000,
     idleTimeoutMillis: 10_000,
@@ -133,18 +137,53 @@ export async function listDispatchablePostgresOutboxEvents(
 ): Promise<OutboxEvent[]> {
   const limit = Math.min(Math.max(input.limit ?? 25, 1), 250);
   const now = input.now ? new Date(input.now) : new Date();
+  const claimLeaseMs = Math.min(Math.max(input.claimLeaseMs ?? 120_000, 1_000), 600_000);
+  const claimUntil = new Date(now.getTime() + claimLeaseMs);
   const result = await getPool().query<OutboxRow>(
     `
-select *
-from public.outbox_events
-where status in ('PENDING', 'FAILED')
-  and (next_attempt_at is null or next_attempt_at <= $1)
-order by created_at, id
-limit $2
+with claimed as (
+  select id
+  from public.outbox_events
+  where status in ('PENDING', 'FAILED')
+    and (next_attempt_at is null or next_attempt_at <= $1)
+  order by
+    case when lower(event_type) = 'settlement.requested' then 0 else 1 end,
+    created_at,
+    id
+  for update skip locked
+  limit $2
+)
+update public.outbox_events event
+set next_attempt_at = $3
+from claimed
+where event.id = claimed.id
+returning event.*
 `,
-    [now, limit],
+    [now, limit, claimUntil],
   );
-  return result.rows.map(mapRow);
+  return result.rows
+    .map(mapRow)
+    .sort((left, right) => {
+      const priority = Number(left.eventType.toLowerCase() !== "settlement.requested") -
+        Number(right.eventType.toLowerCase() !== "settlement.requested");
+      return priority || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
+    });
+}
+
+export async function wakeFailedSettlementOutboxEvents(
+  now: Date = new Date(),
+): Promise<number> {
+  const result = await getPool().query(
+    `
+update public.outbox_events
+set next_attempt_at = $1
+where status = 'FAILED'
+  and lower(event_type) like 'settlement.%'
+  and next_attempt_at > $1
+`,
+    [now],
+  );
+  return result.rowCount ?? 0;
 }
 
 export function markPostgresOutboxEventPublished(
@@ -159,10 +198,40 @@ set status = 'PUBLISHED',
     next_attempt_at = null,
     last_error = null
 where id = $1::uuid
+  and status in ('PENDING', 'FAILED')
+  and ($3::timestamptz is null or next_attempt_at = $3::timestamptz)
 returning *
 `,
-    [value.id, value.publishedAt ? new Date(value.publishedAt) : new Date()],
+    [
+      value.id,
+      value.publishedAt ? new Date(value.publishedAt) : new Date(),
+      value.claimUntil ? new Date(value.claimUntil) : null,
+    ],
   );
+}
+
+export async function markPostgresOutboxEventsPublished(
+  input: MarkOutboxEventsPublishedInput,
+): Promise<number> {
+  if (input.ids.length === 0) return 0;
+  const result = await getPool().query(
+    `
+update public.outbox_events
+set status = 'PUBLISHED',
+    published_at = $2,
+    next_attempt_at = null,
+    last_error = null
+where id = any($1::uuid[])
+  and status in ('PENDING', 'FAILED')
+  and ($3::timestamptz is null or next_attempt_at = $3::timestamptz)
+`,
+    [
+      input.ids,
+      input.publishedAt ? new Date(input.publishedAt) : new Date(),
+      input.claimUntil ? new Date(input.claimUntil) : null,
+    ],
+  );
+  return result.rowCount ?? 0;
 }
 
 export function markPostgresOutboxEventFailed(
@@ -176,6 +245,8 @@ set status = 'FAILED',
     next_attempt_at = $3,
     last_error = $4
 where id = $1::uuid
+  and status in ('PENDING', 'FAILED')
+  and ($5::timestamptz is null or next_attempt_at = $5::timestamptz)
 returning *
 `,
     [
@@ -183,6 +254,7 @@ returning *
       input.attemptCount,
       input.nextAttemptAt ? new Date(input.nextAttemptAt) : null,
       input.lastError,
+      input.claimUntil ? new Date(input.claimUntil) : null,
     ],
   );
 }
@@ -198,14 +270,21 @@ set status = 'DEAD_LETTER',
     next_attempt_at = null,
     last_error = $3
 where id = $1::uuid
+  and status in ('PENDING', 'FAILED')
+  and ($4::timestamptz is null or next_attempt_at = $4::timestamptz)
 returning *
 `,
-    [input.id, input.attemptCount, input.lastError],
+    [
+      input.id,
+      input.attemptCount,
+      input.lastError,
+      input.claimUntil ? new Date(input.claimUntil) : null,
+    ],
   );
 }
 
 export async function closePostgresOutboxPool() {
   const current = pool;
   pool = null;
-  await current?.end();
+  await closeWorkerPostgresPool(current);
 }

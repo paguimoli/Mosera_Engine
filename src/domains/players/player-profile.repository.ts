@@ -1,4 +1,5 @@
-import { Pool } from "pg";
+import type { Pool } from "pg";
+import { createApplicationPostgresPool } from "@/src/lib/database/resilient-postgres-pool";
 
 import type {
   CreatePlayerProfileInput,
@@ -67,7 +68,7 @@ function databasePool() {
     );
   }
 
-  pool ??= new Pool({
+  pool ??= createApplicationPostgresPool("player-profile-repository", {
     connectionString: databaseUrl,
     max: 4,
     idleTimeoutMillis: 5_000,

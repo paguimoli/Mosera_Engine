@@ -5,8 +5,170 @@ namespace SettlementService.Application;
 
 public sealed class SettlementRecoveryService(
     FinancialInstructionRepository repository,
-    FinancialInstructionExecutionService executionService)
+    FinancialInstructionExecutionService executionService,
+    TicketCompletionRepository ticketCompletionRepository)
 {
+    public async Task<AutomaticSettlementRecoveryResult> RecoverAutomaticallyAsync(
+        Guid settlementId,
+        int maximumAttempts,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        var contexts = await repository.ListExecutionContextsAsync(settlementId, cancellationToken);
+        if (contexts.Count == 0)
+        {
+            return new AutomaticSettlementRecoveryResult(
+                settlementId,
+                AutomaticSettlementRecoveryStatus.FailedClosed,
+                0,
+                null,
+                "Financial instructions were not found for automatic recovery.");
+        }
+
+        var resumed = 0;
+        foreach (var context in contexts.OrderBy(item => item.Instruction.InstructionSequence))
+        {
+            var instruction = context.Instruction;
+            var attempts = await repository.ListExecutionAttemptsAsync(
+                instruction.InstructionId,
+                cancellationToken);
+            if (attempts.Any(IsTerminal))
+            {
+                continue;
+            }
+
+            var latest = attempts.LastOrDefault();
+            if (latest is not null && latest.Status == FinancialInstructionExecutionAttemptStatus.Failed)
+            {
+                if (!IsAutomaticallyRetryable(latest) || attempts.Count >= maximumAttempts)
+                {
+                    await repository.AppendRecoveryEventAsync(
+                        settlementId,
+                        instruction.InstructionId,
+                        latest.AttemptId,
+                        SettlementRecoveryState.SettlementAwaitingVerification,
+                        "automatic-recovery-failed-closed",
+                        "Unknown",
+                        attempts.Count >= maximumAttempts
+                            ? $"Automatic recovery attempt ceiling {maximumAttempts} reached."
+                            : "Automatic recovery does not retry non-transient or contradictory target evidence.",
+                        cancellationToken);
+                    return new AutomaticSettlementRecoveryResult(
+                        settlementId,
+                        AutomaticSettlementRecoveryStatus.FailedClosed,
+                        resumed,
+                        instruction.InstructionId,
+                        "Automatic recovery found non-transient, contradictory, or exhausted evidence.");
+                }
+
+                var retryDelay = TimeSpan.FromMilliseconds(
+                    Math.Min(30_000, 250 * Math.Pow(2, Math.Min(attempts.Count, 7))));
+                if (DateTimeOffset.UtcNow - latest.CreatedAt < retryDelay)
+                {
+                    return new AutomaticSettlementRecoveryResult(
+                        settlementId,
+                        AutomaticSettlementRecoveryStatus.Deferred,
+                        resumed,
+                        instruction.InstructionId,
+                        "Transient recovery is waiting for bounded retry backoff.");
+                }
+            }
+
+            FinancialInstructionExecutionResult execution;
+            if (latest is not null)
+            {
+                execution = await executionService.RetryAsync(
+                    new FinancialInstructionRetryRequest(
+                        instruction.InstructionId,
+                        "Automatic retry of an idempotent transient financial instruction."),
+                    correlationId,
+                    cancellationToken);
+            }
+            else
+            {
+                execution = await executionService.ExecuteAsync(
+                    new FinancialInstructionExecutionRequest(instruction.InstructionId),
+                    correlationId,
+                    cancellationToken);
+            }
+
+            resumed += 1;
+            var recoveredState = execution.Status == "Failed"
+                ? SettlementRecoveryState.InstructionFailed
+                : SettlementRecoveryState.SettlementCompleted;
+            await repository.AppendRecoveryEventAsync(
+                settlementId,
+                instruction.InstructionId,
+                execution.Attempt.AttemptId,
+                recoveredState,
+                execution.Status == "Failed"
+                    ? "automatic-resume-failed"
+                    : "automatic-missing-stage-resumed",
+                execution.Status == "Failed" ? "NotCommitted" : "Committed",
+                "Bounded automatic financial recovery.",
+                cancellationToken);
+
+            if (execution.Status == "Failed")
+            {
+                return new AutomaticSettlementRecoveryResult(
+                    settlementId,
+                    AutomaticSettlementRecoveryStatus.Deferred,
+                    resumed,
+                    instruction.InstructionId,
+                    "Transient target execution remains incomplete and will be retried.");
+            }
+        }
+
+        TicketCompletionResult completion;
+        try
+        {
+            completion = await ticketCompletionRepository.TryCompleteAsync(
+                settlementId,
+                correlationId,
+                cancellationToken);
+        }
+        catch (Exception error) when (error is TicketCompletionEvidenceConflictException
+            or TicketCompletionValidationException)
+        {
+            await repository.AppendRecoveryEventAsync(
+                settlementId,
+                null,
+                null,
+                SettlementRecoveryState.SettlementAwaitingVerification,
+                "automatic-recovery-failed-closed",
+                "Unknown",
+                error.Message,
+                cancellationToken);
+            return new AutomaticSettlementRecoveryResult(
+                settlementId,
+                AutomaticSettlementRecoveryStatus.FailedClosed,
+                resumed,
+                null,
+                error.Message);
+        }
+        if (completion.Status != TicketCompletionStatus.Pending)
+        {
+            await repository.AppendRecoveryEventAsync(
+                settlementId,
+                null,
+                null,
+                SettlementRecoveryState.SettlementCompleted,
+                "automatic-completion-converged",
+                "Committed",
+                "Canonical financial chain converged automatically.",
+                cancellationToken);
+        }
+
+        return new AutomaticSettlementRecoveryResult(
+            settlementId,
+            completion.Status == TicketCompletionStatus.Pending
+                ? AutomaticSettlementRecoveryStatus.Deferred
+                : AutomaticSettlementRecoveryStatus.Completed,
+            resumed,
+            null,
+            completion.Status.ToString());
+    }
+
     public async Task<SettlementRecoveryStatusDto> GetSettlementStatusAsync(
         Guid settlementId,
         string correlationId,
@@ -162,6 +324,7 @@ public sealed class SettlementRecoveryService(
                 request.ExternalReferenceType ?? (IsNoop(instruction.InstructionType) ? "verified_noop" : "verified_target_commit"),
                 request.ExternalReferenceId ?? "VERIFIED_COMMITTED",
                 request.TargetResponseHash ?? FinancialInstructionService.HashCanonical($"verified:{instruction.InstructionId:N}:{targetKey}"),
+                null,
                 null,
                 null,
                 cancellationToken);
@@ -467,8 +630,51 @@ public sealed class SettlementRecoveryService(
              string.Equals(attempt.ErrorClassification, nameof(HttpRequestException), StringComparison.Ordinal));
     }
 
+    private static bool IsAutomaticallyRetryable(FinancialInstructionExecutionAttemptDto attempt)
+    {
+        if (attempt.Status != FinancialInstructionExecutionAttemptStatus.Failed)
+        {
+            return false;
+        }
+
+        if (attempt.ErrorClassification is nameof(HttpRequestException) or nameof(TaskCanceledException))
+        {
+            return true;
+        }
+
+        if (attempt.ErrorClassification == nameof(SettlementTargetRejectedException))
+        {
+            return attempt.ErrorMessage is not null &&
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    attempt.ErrorMessage,
+                    @"status\s+5\d\d",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        }
+
+        return attempt.ErrorClassification == nameof(SettlementIntegrationException) &&
+            attempt.ErrorMessage is not null &&
+            System.Text.RegularExpressions.Regex.IsMatch(
+                attempt.ErrorMessage,
+                @"(unavailable|timed?\s*out|connection|status(?:code)?[\s=]+5\d\d)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
     private static bool IsNoop(FinancialInstructionType instructionType)
     {
         return instructionType is FinancialInstructionType.LEDGER_NOOP or FinancialInstructionType.CREDIT_NOOP;
     }
 }
+
+public enum AutomaticSettlementRecoveryStatus
+{
+    Completed,
+    Deferred,
+    FailedClosed
+}
+
+public sealed record AutomaticSettlementRecoveryResult(
+    Guid SettlementId,
+    AutomaticSettlementRecoveryStatus Status,
+    int ResumedInstructionCount,
+    Guid? BlockedInstructionId,
+    string Detail);

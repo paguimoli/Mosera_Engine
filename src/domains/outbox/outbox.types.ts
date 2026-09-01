@@ -34,6 +34,7 @@ export type CreateOutboxEventInput = {
 export type ListPendingOutboxEventsInput = {
   limit?: number;
   now?: string;
+  claimLeaseMs?: number;
 };
 
 export type ListRecentOutboxEventsInput = {
@@ -44,6 +45,13 @@ export type ListRecentOutboxEventsInput = {
 export type MarkOutboxEventPublishedInput = {
   id: string;
   publishedAt?: string;
+  claimUntil?: string | null;
+};
+
+export type MarkOutboxEventsPublishedInput = {
+  ids: string[];
+  publishedAt?: string;
+  claimUntil?: string | null;
 };
 
 export type MarkOutboxEventFailedInput = {
@@ -51,10 +59,12 @@ export type MarkOutboxEventFailedInput = {
   attemptCount: number;
   lastError: string;
   nextAttemptAt?: string | null;
+  claimUntil?: string | null;
 };
 
 export type MarkOutboxEventDeadLetterInput = {
   id: string;
   attemptCount: number;
   lastError: string;
+  claimUntil?: string | null;
 };

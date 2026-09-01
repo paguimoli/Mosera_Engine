@@ -80,8 +80,8 @@ const TOPOLOGY_BY_CATEGORY: Record<
     queueName: "lottery.settlement.events",
     deadLetterQueueName: "lottery.settlement.events.dlq",
     retryPolicy: {
-      maxAttempts: 5,
-      backoffSeconds: [60, 300, 900, 3600],
+      maxAttempts: 9,
+      backoffSeconds: [1, 2, 4, 8, 15, 30, 60, 120],
       deadLetterAfterExhaustion: true,
     },
     priorityClass: "HIGH",

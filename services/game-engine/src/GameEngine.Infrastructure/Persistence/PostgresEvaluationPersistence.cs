@@ -682,25 +682,38 @@ internal static class PostgresConnectionString
 {
     public static string Normalize(string value)
     {
-        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
-            (uri.Scheme != "postgres" && uri.Scheme != "postgresql"))
+        NpgsqlConnectionStringBuilder builder;
+        if (Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == "postgres" || uri.Scheme == "postgresql"))
         {
-            return value;
+            var userInfo = uri.UserInfo.Split(':', 2);
+            builder = new NpgsqlConnectionStringBuilder
+            {
+                Host = uri.Host,
+                Port = uri.Port > 0 ? uri.Port : 5432,
+                Database = Uri.UnescapeDataString(uri.AbsolutePath.TrimStart('/')),
+                Username = Uri.UnescapeDataString(userInfo.ElementAtOrDefault(0) ?? string.Empty),
+                Password = Uri.UnescapeDataString(userInfo.ElementAtOrDefault(1) ?? string.Empty)
+            };
+        }
+        else
+        {
+            builder = new NpgsqlConnectionStringBuilder(value);
         }
 
-        var userInfo = uri.UserInfo.Split(':', 2);
-        var builder = new NpgsqlConnectionStringBuilder
-        {
-            Host = uri.Host,
-            Port = uri.Port > 0 ? uri.Port : 5432,
-            Database = Uri.UnescapeDataString(uri.AbsolutePath.TrimStart('/')),
-            Username = Uri.UnescapeDataString(userInfo.ElementAtOrDefault(0) ?? string.Empty),
-            Password = Uri.UnescapeDataString(userInfo.ElementAtOrDefault(1) ?? string.Empty),
-            Pooling = true
-        };
+        builder.Pooling = true;
+        builder.MinPoolSize = 0;
+        builder.MaxPoolSize = ReadPoolMaximum(8);
+        var applicationName = Environment.GetEnvironmentVariable("DATABASE_APPLICATION_NAME")?.Trim();
+        if (!string.IsNullOrEmpty(applicationName)) builder.ApplicationName = applicationName;
 
         return builder.ConnectionString;
     }
+
+    private static int ReadPoolMaximum(int fallback) =>
+        int.TryParse(Environment.GetEnvironmentVariable("DATABASE_MAX_POOL_SIZE"), out var value)
+            ? Math.Clamp(value, 1, 32)
+            : fallback;
 }
 
 internal static class PostgresEvaluationStorageSupport

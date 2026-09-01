@@ -31,6 +31,17 @@ public interface ISettlementInputRepository
         SettlementInput input,
         CancellationToken cancellationToken);
 
+    Task<SettlementInput?> FindTicketDrawAggregateAsync(
+        Guid ticketId,
+        Guid drawId,
+        Guid outcomeCertificateId,
+        CancellationToken cancellationToken);
+
+    Task<SettlementInput> SaveTicketDrawAggregateAsync(
+        SettlementInput input,
+        TicketDrawSettlementAggregateEvidence aggregate,
+        CancellationToken cancellationToken);
+
     Task<SettlementInputReadiness> CheckReadinessAsync(CancellationToken cancellationToken);
 }
 
@@ -58,20 +69,6 @@ public sealed class SettlementInputAdapter(ISettlementInputRepository repository
         ValidateMathEvaluationResult(result);
 
         var input = BuildSettlementInput(result);
-        var existing = await repository.FindByMathEvaluationCertificateAsync(
-            input.MathEvaluationCertificateId,
-            input.MathEvaluationCertificateHash,
-            cancellationToken);
-        if (existing is not null)
-        {
-            if (!string.Equals(existing.CanonicalPayloadHash, input.CanonicalPayloadHash, StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException("Conflicting SettlementInput payload for the same Math Evaluation Certificate.");
-            }
-
-            return existing;
-        }
-
         return await repository.SaveAsync(input, cancellationToken);
     }
 
@@ -118,6 +115,198 @@ public sealed class SettlementInputAdapter(ISettlementInputRepository repository
     {
         return repository.CheckReadinessAsync(cancellationToken);
     }
+
+    public async Task<SettlementInput> ConvertTicketDrawAggregateAsync(
+        Guid ticketId,
+        Guid drawId,
+        Guid productVersionId,
+        string productVersionHash,
+        string currency,
+        IReadOnlyList<(Guid TicketItemId, int ItemIndex, long StakeMinor, MathEvaluationResult Evaluation)> evaluations,
+        long? effectiveCapMinor,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (ticketId == Guid.Empty || drawId == Guid.Empty || productVersionId == Guid.Empty)
+        {
+            throw new InvalidOperationException("Ticket, draw, and product version identifiers are required for aggregate SettlementInput.");
+        }
+        if (evaluations.Count == 0 || evaluations.Select(item => item.TicketItemId).Distinct().Count() != evaluations.Count)
+        {
+            throw new InvalidOperationException("Aggregate SettlementInput requires a non-empty unique item evaluation set.");
+        }
+        if (string.IsNullOrWhiteSpace(currency) || currency.Length != 3)
+        {
+            throw new InvalidOperationException("Aggregate SettlementInput requires an ISO-4217 currency.");
+        }
+
+        var ordered = evaluations.OrderBy(item => item.ItemIndex).ThenBy(item => item.TicketItemId).ToArray();
+        foreach (var item in ordered) ValidateMathEvaluationResult(item.Evaluation);
+        var anchor = ordered[0].Evaluation;
+        if (ordered.Any(item =>
+                item.StakeMinor <= 0 ||
+                item.Evaluation.Certificate.OutcomeCertificateId != anchor.Certificate.OutcomeCertificateId ||
+                !string.Equals(item.Evaluation.Certificate.OutcomeCertificateHash, anchor.Certificate.OutcomeCertificateHash, StringComparison.Ordinal) ||
+                !string.Equals(item.Evaluation.Certificate.GameManifestHash, anchor.Certificate.GameManifestHash, StringComparison.Ordinal) ||
+                !string.Equals(item.Evaluation.Certificate.MathModelHash, anchor.Certificate.MathModelHash, StringComparison.Ordinal) ||
+                !string.Equals(item.Evaluation.Certificate.PaytableHash, anchor.Certificate.PaytableHash, StringComparison.Ordinal) ||
+                !string.Equals(item.Evaluation.Certificate.EvaluatorVersion, anchor.Certificate.EvaluatorVersion, StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException("Aggregate SettlementInput item lineage must be exact and homogeneous.");
+        }
+
+        var itemEvidence = ordered.Select(item => BuildItemEvidence(item)).ToArray();
+        var totalStake = checked(itemEvidence.Sum(item => item.StakeMinor));
+        var preCapGross = checked(itemEvidence.Sum(item => item.GrossReturnMinor));
+        var postCapGross = effectiveCapMinor is > 0
+            ? Math.Min(preCapGross, effectiveCapMinor.Value)
+            : preCapGross;
+        var capScope = effectiveCapMinor is > 0 ? "TICKET_DRAW" : "NONE";
+        var issuedAt = ordered.Max(item => item.Evaluation.Certificate.IssuedAt);
+        var itemPayload = itemEvidence.Select(item => new SortedDictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["evaluationOutcome"] = item.EvaluationOutcome.ToString(),
+            ["grossReturnMinor"] = item.GrossReturnMinor,
+            ["itemIndex"] = item.ItemIndex,
+            ["lossStakeMinor"] = item.LossStakeMinor,
+            ["mathEvaluationCertificateHash"] = item.MathEvaluationCertificateHash,
+            ["mathEvaluationCertificateId"] = item.MathEvaluationCertificateId,
+            ["mathEvaluationId"] = item.MathEvaluationId,
+            ["prizeFactsHash"] = item.PrizeFactsHash,
+            ["prizeTier"] = item.PrizeTier,
+            ["refundReturnMinor"] = item.RefundReturnMinor,
+            ["stakeMinor"] = item.StakeMinor,
+            ["ticketItemId"] = item.TicketItemId
+        }).ToArray();
+        var itemEvidenceJson = JsonSerializer.Serialize(itemPayload);
+        var itemEvidenceHash = HashCanonical(itemEvidenceJson);
+        var aggregatePayload = new SortedDictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["capScope"] = capScope,
+            ["captureAmountMinor"] = totalStake,
+            ["creditAmountMinor"] = postCapGross,
+            ["currency"] = currency.ToUpperInvariant(),
+            ["drawId"] = drawId,
+            ["effectiveCapMinor"] = effectiveCapMinor,
+            ["evaluatorVersion"] = anchor.Certificate.EvaluatorVersion,
+            ["gameManifestHash"] = anchor.Certificate.GameManifestHash,
+            ["gameManifestId"] = anchor.Certificate.GameManifestId,
+            ["gameManifestVersion"] = anchor.Certificate.GameManifestVersion,
+            ["itemEvidenceHash"] = itemEvidenceHash,
+            ["items"] = itemPayload,
+            ["mathModelHash"] = anchor.Certificate.MathModelHash,
+            ["mathModelId"] = anchor.Certificate.MathModelId,
+            ["mathModelVersion"] = anchor.Certificate.MathModelVersion,
+            ["outcomeCertificateHash"] = anchor.Certificate.OutcomeCertificateHash,
+            ["outcomeCertificateId"] = anchor.Certificate.OutcomeCertificateId,
+            ["paytableHash"] = anchor.Certificate.PaytableHash,
+            ["paytableId"] = anchor.Certificate.PaytableId,
+            ["paytableVersion"] = anchor.Certificate.PaytableVersion,
+            ["postCapGrossReturnMinor"] = postCapGross,
+            ["preCapGrossReturnMinor"] = preCapGross,
+            ["productVersionHash"] = productVersionHash,
+            ["productVersionId"] = productVersionId,
+            ["releaseAmountMinor"] = 0L,
+            ["ticketId"] = ticketId,
+            ["totalReservedStakeMinor"] = totalStake
+        };
+        var canonicalJson = JsonSerializer.Serialize(aggregatePayload);
+        var canonicalHash = HashCanonical(canonicalJson);
+        var aggregateOutcome = postCapGross switch
+        {
+            0 => PrizeOutcome.Loss,
+            _ when postCapGross == totalStake => PrizeOutcome.Push,
+            _ => PrizeOutcome.Win
+        };
+        var aggregateFacts = new PrizeFacts(
+            aggregateOutcome,
+            "TICKET_DRAW_AGGREGATE",
+            totalStake == 0 ? 0m : (decimal)postCapGross / totalStake,
+            0m,
+            new SortedDictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["capReductionMinor"] = preCapGross - postCapGross,
+                ["capScope"] = capScope,
+                ["effectiveCapMinor"] = effectiveCapMinor,
+                ["itemCount"] = itemEvidence.Length,
+                ["itemEvidenceHash"] = itemEvidenceHash,
+                ["postCapGrossReturnMinor"] = postCapGross,
+                ["preCapGrossReturnMinor"] = preCapGross,
+                ["totalReservedStakeMinor"] = totalStake
+            },
+            EvaluationReasonCode: "TICKET_DRAW_AGGREGATE");
+        var aggregateFactsJson = MathEvaluationCanonicalizer.CanonicalizePrizeFacts(aggregateFacts);
+        var aggregateFactsHash = MathEvaluationCanonicalizer.HashJson(aggregateFactsJson);
+        var inputId = DeterministicGuid($"ticket-draw-aggregate:{ticketId:N}:{drawId:N}:{canonicalHash}");
+        var provenance = new SortedDictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["adapterVersion"] = "ticket-draw-settlement-aggregate-1",
+            ["authority"] = "MathAuthority",
+            ["itemEvidenceHash"] = itemEvidenceHash,
+            ["source"] = "MathEvaluationCertificateSet"
+        };
+        var input = new SettlementInput(
+            inputId,
+            anchor.Certificate.CertificateId,
+            anchor.CanonicalPrizeFactsHash,
+            anchor.Certificate.OutcomeCertificateId,
+            anchor.Certificate.OutcomeCertificateHash,
+            ticketId.ToString(),
+            anchor.Certificate.GameManifestId!,
+            anchor.Certificate.GameManifestVersion!,
+            anchor.Certificate.GameManifestHash!,
+            anchor.Certificate.MathModelId,
+            anchor.Certificate.MathModelVersion,
+            anchor.Certificate.MathModelHash,
+            anchor.Certificate.PaytableId,
+            anchor.Certificate.PaytableVersion,
+            anchor.Certificate.PaytableHash,
+            anchor.Certificate.EvaluatorVersion!,
+            aggregateOutcome,
+            aggregateFacts.PrizeTier,
+            aggregateFacts,
+            aggregateFactsHash,
+            0m,
+            aggregateFacts.Multiplier,
+            HashCanonical($"{canonicalHash}|{itemEvidenceHash}|{ticketId:N}|{drawId:N}"),
+            $"ticket-draw-settlement:{ticketId:N}:{drawId:N}:{anchor.Certificate.OutcomeCertificateId:N}",
+            issuedAt,
+            provenance,
+            canonicalJson,
+            canonicalHash,
+            "TICKET_DRAW_AGGREGATE");
+        var aggregate = new TicketDrawSettlementAggregateEvidence(
+            inputId, ticketId, drawId, productVersionId, productVersionHash,
+            currency.ToUpperInvariant(), totalStake, preCapGross, effectiveCapMinor,
+            capScope, postCapGross, totalStake, 0, postCapGross,
+            itemEvidenceHash, canonicalHash, itemEvidence);
+        return await repository.SaveTicketDrawAggregateAsync(input, aggregate, cancellationToken);
+    }
+
+    private static TicketDrawSettlementItemEvidence BuildItemEvidence(
+        (Guid TicketItemId, int ItemIndex, long StakeMinor, MathEvaluationResult Evaluation) item)
+    {
+        var facts = item.Evaluation.PrizeFacts;
+        var gross = facts.Outcome switch
+        {
+            PrizeOutcome.Win when facts.PayoutUnits > 0m => checked(item.StakeMinor + ToMinor(facts.PayoutUnits)),
+            PrizeOutcome.Win when facts.Multiplier > 0m => ToMinor(item.StakeMinor * facts.Multiplier),
+            PrizeOutcome.Push when facts.Multiplier > 0m => ToMinor(item.StakeMinor * facts.Multiplier),
+            PrizeOutcome.Push => item.StakeMinor,
+            PrizeOutcome.Loss => 0,
+            _ => throw new InvalidOperationException("Rejected Math evaluation cannot enter aggregate SettlementInput.")
+        };
+        return new TicketDrawSettlementItemEvidence(
+            item.TicketItemId, item.ItemIndex, item.StakeMinor,
+            item.Evaluation.MathEvaluationId, item.Evaluation.Certificate.CertificateId,
+            item.Evaluation.CanonicalPrizeFactsHash, facts.Outcome, facts.PrizeTier,
+            gross, facts.Outcome == PrizeOutcome.Push ? gross : 0,
+            facts.Outcome == PrizeOutcome.Loss ? item.StakeMinor : 0,
+            item.Evaluation.CanonicalPrizeFactsHash);
+    }
+
+    private static long ToMinor(decimal value) =>
+        checked((long)Math.Round(value, 0, MidpointRounding.AwayFromZero));
 
     public static SettlementInput BuildSettlementInput(MathEvaluationResult result)
     {
@@ -289,8 +478,18 @@ public sealed class SettlementInputAdapter(ISettlementInputRepository repository
 public sealed class InMemorySettlementInputRepository : ISettlementInputRepository
 {
     private readonly List<SettlementInput> inputs = [];
+    private readonly List<TicketDrawSettlementAggregateEvidence> aggregates = [];
+    private readonly object sync = new();
 
-    public IReadOnlyCollection<SettlementInput> Inputs => inputs;
+    public IReadOnlyCollection<SettlementInput> Inputs
+    {
+        get { lock (sync) return inputs.ToArray(); }
+    }
+
+    public IReadOnlyCollection<TicketDrawSettlementAggregateEvidence> Aggregates
+    {
+        get { lock (sync) return aggregates.ToArray(); }
+    }
 
     public Task<SettlementInput?> FindByMathEvaluationCertificateAsync(
         Guid mathEvaluationCertificateId,
@@ -298,9 +497,12 @@ public sealed class InMemorySettlementInputRepository : ISettlementInputReposito
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(inputs.LastOrDefault(input =>
-            input.MathEvaluationCertificateId == mathEvaluationCertificateId &&
-            string.Equals(input.MathEvaluationCertificateHash, mathEvaluationCertificateHash, StringComparison.Ordinal)));
+        lock (sync)
+        {
+            return Task.FromResult(inputs.LastOrDefault(input =>
+                input.MathEvaluationCertificateId == mathEvaluationCertificateId &&
+                string.Equals(input.MathEvaluationCertificateHash, mathEvaluationCertificateHash, StringComparison.Ordinal)));
+        }
     }
 
     public Task<SettlementInput?> FindByCanonicalPayloadHashAsync(
@@ -308,8 +510,11 @@ public sealed class InMemorySettlementInputRepository : ISettlementInputReposito
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(inputs.LastOrDefault(input =>
-            string.Equals(input.CanonicalPayloadHash, canonicalPayloadHash, StringComparison.Ordinal)));
+        lock (sync)
+        {
+            return Task.FromResult(inputs.LastOrDefault(input =>
+                string.Equals(input.CanonicalPayloadHash, canonicalPayloadHash, StringComparison.Ordinal)));
+        }
     }
 
     public Task<SettlementInput> SaveAsync(
@@ -317,26 +522,86 @@ public sealed class InMemorySettlementInputRepository : ISettlementInputReposito
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var existing = inputs.LastOrDefault(item =>
-            item.MathEvaluationCertificateId == input.MathEvaluationCertificateId &&
-            item.MathEvaluationCertificateHash == input.MathEvaluationCertificateHash);
-        if (existing is not null)
+        lock (sync)
         {
-            if (!string.Equals(existing.CanonicalPayloadHash, input.CanonicalPayloadHash, StringComparison.Ordinal))
+            var existing = inputs.LastOrDefault(item =>
+                item.MathEvaluationCertificateId == input.MathEvaluationCertificateId &&
+                item.MathEvaluationCertificateHash == input.MathEvaluationCertificateHash);
+            if (existing is not null)
             {
-                throw new InvalidOperationException("Conflicting SettlementInput payload for the same Math Evaluation Certificate.");
+                if (!string.Equals(existing.CanonicalPayloadHash, input.CanonicalPayloadHash, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("Conflicting SettlementInput payload for the same Math Evaluation Certificate.");
+                }
+
+                return Task.FromResult(existing);
             }
 
-            return Task.FromResult(existing);
-        }
+            if (inputs.Any(item => item.CanonicalPayloadHash == input.CanonicalPayloadHash))
+            {
+                throw new InvalidOperationException("Duplicate SettlementInput canonical payload hash detected.");
+            }
 
-        if (inputs.Any(item => item.CanonicalPayloadHash == input.CanonicalPayloadHash))
+            inputs.Add(input);
+            return Task.FromResult(input);
+        }
+    }
+
+    public Task<SettlementInput?> FindTicketDrawAggregateAsync(
+        Guid ticketId,
+        Guid drawId,
+        Guid outcomeCertificateId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (sync)
         {
-            throw new InvalidOperationException("Duplicate SettlementInput canonical payload hash detected.");
-        }
+            var aggregate = aggregates.LastOrDefault(item =>
+                item.TicketId == ticketId &&
+                item.DrawId == drawId);
+            if (aggregate is null)
+            {
+                return Task.FromResult<SettlementInput?>(null);
+            }
 
-        inputs.Add(input);
-        return Task.FromResult(input);
+            return Task.FromResult(inputs.LastOrDefault(input =>
+                input.SettlementInputId == aggregate.SettlementInputId &&
+                input.OutcomeCertificateId == outcomeCertificateId));
+        }
+    }
+
+    public Task<SettlementInput> SaveTicketDrawAggregateAsync(
+        SettlementInput input,
+        TicketDrawSettlementAggregateEvidence aggregate,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (sync)
+        {
+            var existingAggregate = aggregates.LastOrDefault(item =>
+                item.TicketId == aggregate.TicketId &&
+                item.DrawId == aggregate.DrawId);
+            if (existingAggregate is not null)
+            {
+                var existingInput = inputs.Single(item =>
+                    item.SettlementInputId == existingAggregate.SettlementInputId);
+                if (!string.Equals(existingInput.CanonicalPayloadHash, input.CanonicalPayloadHash, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("Conflicting aggregate SettlementInput payload for the same ticket and draw.");
+                }
+
+                return Task.FromResult(existingInput);
+            }
+
+            if (inputs.Any(item => item.CanonicalPayloadHash == input.CanonicalPayloadHash))
+            {
+                throw new InvalidOperationException("Duplicate SettlementInput canonical payload hash detected.");
+            }
+
+            inputs.Add(input);
+            aggregates.Add(aggregate);
+            return Task.FromResult(input);
+        }
     }
 
     public Task<SettlementInputReadiness> CheckReadinessAsync(CancellationToken cancellationToken)

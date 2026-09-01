@@ -12,7 +12,12 @@ public sealed record FinancialInstructionExecutionContext(
     SettlementRecordResponse SettlementRecord,
     string? CreditReservationReference,
     Guid? LedgerInstructionId,
-    FinancialInstructionType? LedgerInstructionType);
+    FinancialInstructionType? LedgerInstructionType,
+    bool HasExecutionAttempts);
+
+public sealed record AutomaticFinancialRecoveryBacklog(
+    int IncompleteSettlements,
+    int IncompleteInstructions);
 
 public sealed class FinancialInstructionRepository(ServiceConfiguration configuration)
 {
@@ -312,7 +317,11 @@ select
   record.*,
   request.credit_reservation_reference,
   ledger_instruction.instruction_id as required_ledger_instruction_id,
-  ledger_instruction.instruction_type as required_ledger_instruction_type
+  ledger_instruction.instruction_type as required_ledger_instruction_type,
+  exists (
+    select 1 from settlement_service.financial_instruction_execution_attempts execution_attempt
+    where execution_attempt.instruction_id = instruction.instruction_id
+  ) as has_execution_attempts
 from settlement_service.financial_instructions instruction
 join settlement_service.authoritative_settlement_records record
   on record.settlement_id = instruction.settlement_id
@@ -348,7 +357,8 @@ where instruction.instruction_id = @instruction_id;
                 : reader.GetGuid(reader.GetOrdinal("required_ledger_instruction_id")),
             reader.IsDBNull(reader.GetOrdinal("required_ledger_instruction_type"))
                 ? null
-                : Enum.Parse<FinancialInstructionType>(reader.GetString(reader.GetOrdinal("required_ledger_instruction_type"))));
+                : Enum.Parse<FinancialInstructionType>(reader.GetString(reader.GetOrdinal("required_ledger_instruction_type"))),
+            reader.GetBoolean(reader.GetOrdinal("has_execution_attempts")));
     }
 
     public async Task<IReadOnlyList<FinancialInstructionExecutionContext>> ListExecutionContextsAsync(
@@ -363,7 +373,11 @@ select
   record.*,
   request.credit_reservation_reference,
   ledger_instruction.instruction_id as required_ledger_instruction_id,
-  ledger_instruction.instruction_type as required_ledger_instruction_type
+  ledger_instruction.instruction_type as required_ledger_instruction_type,
+  exists (
+    select 1 from settlement_service.financial_instruction_execution_attempts execution_attempt
+    where execution_attempt.instruction_id = instruction.instruction_id
+  ) as has_execution_attempts
 from settlement_service.financial_instructions instruction
 join settlement_service.authoritative_settlement_records record
   on record.settlement_id = instruction.settlement_id
@@ -396,9 +410,10 @@ order by instruction.instruction_sequence asc;
                 reader.IsDBNull(reader.GetOrdinal("required_ledger_instruction_id"))
                     ? null
                     : reader.GetGuid(reader.GetOrdinal("required_ledger_instruction_id")),
-                reader.IsDBNull(reader.GetOrdinal("required_ledger_instruction_type"))
-                    ? null
-                    : Enum.Parse<FinancialInstructionType>(reader.GetString(reader.GetOrdinal("required_ledger_instruction_type")))));
+                    reader.IsDBNull(reader.GetOrdinal("required_ledger_instruction_type"))
+                        ? null
+                        : Enum.Parse<FinancialInstructionType>(reader.GetString(reader.GetOrdinal("required_ledger_instruction_type"))),
+                    reader.GetBoolean(reader.GetOrdinal("has_execution_attempts"))));
         }
 
         return contexts;
@@ -415,7 +430,11 @@ select
   record.*,
   request.credit_reservation_reference,
   ledger_instruction.instruction_id as required_ledger_instruction_id,
-  ledger_instruction.instruction_type as required_ledger_instruction_type
+  ledger_instruction.instruction_type as required_ledger_instruction_type,
+  exists (
+    select 1 from settlement_service.financial_instruction_execution_attempts execution_attempt
+    where execution_attempt.instruction_id = instruction.instruction_id
+  ) as has_execution_attempts
 from settlement_service.financial_instructions instruction
 join settlement_service.authoritative_settlement_records record
   on record.settlement_id = instruction.settlement_id
@@ -452,12 +471,182 @@ order by record.issued_at asc, instruction.instruction_sequence asc;
                 reader.IsDBNull(reader.GetOrdinal("required_ledger_instruction_id"))
                     ? null
                     : reader.GetGuid(reader.GetOrdinal("required_ledger_instruction_id")),
-                reader.IsDBNull(reader.GetOrdinal("required_ledger_instruction_type"))
-                    ? null
-                    : Enum.Parse<FinancialInstructionType>(reader.GetString(reader.GetOrdinal("required_ledger_instruction_type")))));
+                    reader.IsDBNull(reader.GetOrdinal("required_ledger_instruction_type"))
+                        ? null
+                        : Enum.Parse<FinancialInstructionType>(reader.GetString(reader.GetOrdinal("required_ledger_instruction_type"))),
+                    reader.GetBoolean(reader.GetOrdinal("has_execution_attempts"))));
         }
 
         return contexts;
+    }
+
+    public async Task<IReadOnlyList<Guid>> ListAutomaticRecoveryCandidateSettlementIdsAsync(
+        int limit,
+        int minimumAgeMs,
+        CancellationToken cancellationToken)
+    {
+        if (limit <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(limit));
+        }
+        if (minimumAgeMs < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(minimumAgeMs));
+        }
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+with candidates as (
+  select record.settlement_id, record.issued_at, 0 priority
+  from settlement_service.authoritative_settlement_records record
+  where record.issued_at <= clock_timestamp() - (@minimum_age_ms * interval '1 millisecond')
+  and not exists (
+    select 1
+    from settlement_service.recovery_events recovery
+    where recovery.settlement_id = record.settlement_id
+      and recovery.decision = 'automatic-recovery-failed-closed'
+  )
+  and exists (
+    select 1
+    from settlement_service.financial_instructions instruction
+    where instruction.settlement_id = record.settlement_id
+      and not exists (
+        select 1
+        from settlement_service.financial_instruction_execution_attempts attempt
+        where attempt.instruction_id = instruction.instruction_id
+          and attempt.status in ('Posted', 'Skipped')
+      )
+  )
+  union
+  select record.settlement_id, record.issued_at, 1 priority
+  from settlement_service.authoritative_settlement_records record
+  where record.issued_at <= clock_timestamp() - (@minimum_age_ms * interval '1 millisecond')
+    and not exists (
+      select 1
+      from settlement_service.recovery_events recovery
+      where recovery.settlement_id = record.settlement_id
+        and recovery.decision = 'automatic-recovery-failed-closed'
+    )
+    and record.ticket_id ~* '^[0-9a-f-]{36}$'
+    and not exists (
+      select 1
+      from ticket_completion_authority.completion_evidence completion
+      where completion.ticket_id = record.ticket_id::uuid
+    )
+    and not exists (
+      select 1
+      from ticket_authority.ticket_items item
+      where item.ticket_id = record.ticket_id::uuid
+        and not exists (
+          select 1
+          from settlement_service.authoritative_settlement_records source
+          where source.ticket_id = record.ticket_id
+            and (
+              source.ticket_line_id = item.ticket_item_id::text
+              or exists (
+                select 1
+                from game_engine.ticket_draw_settlement_aggregate_items aggregate_item
+                where aggregate_item.settlement_input_id = source.settlement_input_id
+                  and aggregate_item.ticket_item_id = item.ticket_item_id
+              )
+            )
+            and exists (
+              select 1
+              from settlement_service.financial_instruction_execution_attempts attempt
+              where attempt.settlement_id = source.settlement_id
+                and attempt.target_service = 'ledger-service'
+                and attempt.status in ('Posted', 'Skipped')
+            )
+            and exists (
+              select 1
+              from settlement_service.financial_instruction_execution_attempts attempt
+              where attempt.settlement_id = source.settlement_id
+                and attempt.target_service = 'credit-wallet-service'
+                and attempt.status in ('Posted', 'Skipped')
+            )
+        )
+    )
+)
+select settlement_id
+from candidates
+group by settlement_id
+order by min(priority), min(issued_at), settlement_id
+limit @limit;
+""";
+        command.Parameters.AddWithValue("limit", limit);
+        command.Parameters.AddWithValue("minimum_age_ms", minimumAgeMs);
+
+        var settlements = new List<Guid>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            settlements.Add(reader.GetGuid(0));
+        }
+
+        return settlements;
+    }
+
+    public async Task<AutomaticFinancialRecoveryBacklog> GetAutomaticRecoveryBacklogAsync(
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+select
+  count(distinct instruction.settlement_id) filter (
+    where not exists (
+      select 1
+      from settlement_service.financial_instruction_execution_attempts attempt
+      where attempt.instruction_id = instruction.instruction_id
+        and attempt.status in ('Posted', 'Skipped')
+    )
+  )::integer as incomplete_settlements,
+  count(*) filter (
+    where not exists (
+      select 1
+      from settlement_service.financial_instruction_execution_attempts attempt
+      where attempt.instruction_id = instruction.instruction_id
+        and attempt.status in ('Posted', 'Skipped')
+    )
+  )::integer as incomplete_instructions
+from settlement_service.financial_instructions instruction;
+""";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return new AutomaticFinancialRecoveryBacklog(0, 0);
+        }
+
+        return new AutomaticFinancialRecoveryBacklog(reader.GetInt32(0), reader.GetInt32(1));
+    }
+
+    public async Task<bool> RunWithAutomaticRecoveryLeaderLeaseAsync(
+        Func<CancellationToken, Task> action,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var acquire = connection.CreateCommand();
+        acquire.CommandText =
+            "select pg_try_advisory_lock(hashtextextended('settlement-service:automatic-financial-recovery', 0));";
+        var acquired = await acquire.ExecuteScalarAsync(cancellationToken) is true;
+        if (!acquired)
+        {
+            return false;
+        }
+
+        try
+        {
+            await action(cancellationToken);
+            return true;
+        }
+        finally
+        {
+            await using var release = connection.CreateCommand();
+            release.CommandText =
+                "select pg_advisory_unlock(hashtextextended('settlement-service:automatic-financial-recovery', 0));";
+            await release.ExecuteNonQueryAsync(CancellationToken.None);
+        }
     }
 
     public async Task<IReadOnlyList<FinancialInstructionExecutionAttemptDto>> ListExecutionAttemptsAsync(
@@ -641,6 +830,7 @@ returning *;
         string? targetResponseHash,
         string? errorClassification,
         string? errorMessage,
+        SettlementTargetExecutionTiming? targetTiming,
         CancellationToken cancellationToken)
     {
         await using var connection = await OpenConnectionAsync(cancellationToken);
@@ -653,20 +843,43 @@ returning *;
             return existingTerminal;
         }
 
-        var attempt = await InsertExecutionAttemptAsync(
-            connection,
-            transaction,
-            instruction,
-            status,
-            targetIdempotencyKey,
-            externalReferenceType,
-            externalReferenceId,
-            targetResponseHash,
-            errorClassification,
-            errorMessage,
-            cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        return attempt;
+        try
+        {
+            var attempt = await InsertExecutionAttemptAsync(
+                connection,
+                transaction,
+                instruction,
+                status,
+                targetIdempotencyKey,
+                externalReferenceType,
+                externalReferenceId,
+                targetResponseHash,
+                errorClassification,
+                errorMessage,
+                targetTiming,
+                cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return attempt;
+        }
+        catch (PostgresException error) when (
+            error.SqlState == PostgresErrorCodes.UniqueViolation &&
+            status is FinancialInstructionExecutionAttemptStatus.Posted or
+                FinancialInstructionExecutionAttemptStatus.Skipped)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            await using var readTransaction = await connection.BeginTransactionAsync(cancellationToken);
+            var winner = await GetTerminalExecutionAttemptAsync(
+                connection,
+                readTransaction,
+                instruction.InstructionId,
+                cancellationToken);
+            await readTransaction.CommitAsync(cancellationToken);
+            if (winner is null)
+            {
+                throw;
+            }
+            return winner;
+        }
     }
 
     private static void EnsureExistingMatchesDefinitions(
@@ -914,6 +1127,7 @@ limit 1;
         string? targetResponseHash,
         string? errorClassification,
         string? errorMessage,
+        SettlementTargetExecutionTiming? targetTiming,
         CancellationToken cancellationToken)
     {
         var attemptNumber = await NextExecutionAttemptNumberAsync(connection, transaction, instruction.InstructionId, cancellationToken);
@@ -937,7 +1151,11 @@ insert into settlement_service.financial_instruction_execution_attempts (
   target_response_hash,
   error_classification,
   error_message,
-  evidence_hash
+  evidence_hash,
+  target_request_started_at,
+  target_service_received_at,
+  target_service_completed_at,
+  target_response_received_at
 )
 values (
   @attempt_id,
@@ -952,7 +1170,11 @@ values (
   @target_response_hash,
   @error_classification,
   @error_message,
-  @evidence_hash
+  @evidence_hash,
+  @target_request_started_at,
+  @target_service_received_at,
+  @target_service_completed_at,
+  @target_response_received_at
 )
 returning *;
 """;
@@ -969,6 +1191,14 @@ returning *;
         command.Parameters.Add("error_classification", NpgsqlDbType.Text).Value = (object?)errorClassification ?? DBNull.Value;
         command.Parameters.Add("error_message", NpgsqlDbType.Text).Value = (object?)errorMessage ?? DBNull.Value;
         command.Parameters.AddWithValue("evidence_hash", evidenceHash);
+        command.Parameters.Add("target_request_started_at", NpgsqlDbType.TimestampTz).Value =
+            (object?)targetTiming?.RequestStartedAt ?? DBNull.Value;
+        command.Parameters.Add("target_service_received_at", NpgsqlDbType.TimestampTz).Value =
+            (object?)targetTiming?.ServiceReceivedAt ?? DBNull.Value;
+        command.Parameters.Add("target_service_completed_at", NpgsqlDbType.TimestampTz).Value =
+            (object?)targetTiming?.ServiceCompletedAt ?? DBNull.Value;
+        command.Parameters.Add("target_response_received_at", NpgsqlDbType.TimestampTz).Value =
+            (object?)targetTiming?.ResponseReceivedAt ?? DBNull.Value;
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))

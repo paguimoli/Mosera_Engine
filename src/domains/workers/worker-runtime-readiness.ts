@@ -1,7 +1,8 @@
 import type { Pool } from "pg";
 
 import {
-  createResilientPostgresPool,
+  closeWorkerPostgresPool,
+  createWorkerPostgresPool,
   queryWithBoundedReconnect,
 } from "@/src/lib/database/resilient-postgres-pool";
 import { logger } from "@/src/lib/observability/logger";
@@ -16,7 +17,7 @@ function getPool() {
     throw new Error("DATABASE_URL is required for durable worker readiness.");
   }
 
-  pool ??= createResilientPostgresPool("compiled-worker-runtime", {
+  pool ??= createWorkerPostgresPool("compiled-worker-runtime", {
     connectionString: databaseUrl,
     connectionTimeoutMillis: 2_000,
     idleTimeoutMillis: 10_000,
@@ -107,5 +108,5 @@ export function startCompiledWorkerHeartbeat({
 export async function closeCompiledWorkerRuntimePool() {
   const activePool = pool;
   pool = null;
-  await activePool?.end();
+  await closeWorkerPostgresPool(activePool);
 }

@@ -111,22 +111,52 @@ order by definition.code, version.version_number desc;
         CancellationToken cancellationToken)
     {
         var draws = new List<DurableScheduledDraw>();
-        foreach (var slot in slots.OrderBy(item => item.ScheduledExecutionAt))
+        if (slots.Count == 0)
         {
-            await using var connection = await OpenConnectionAsync(cancellationToken);
-            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            return draws;
+        }
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using (var lockCommand = connection.CreateCommand())
+        {
+            lockCommand.Transaction = transaction;
+            lockCommand.CommandText = "select pg_advisory_xact_lock(hashtextextended('durable-scheduler-materialize:' || @product_code, 0));";
+            lockCommand.Parameters.AddWithValue("product_code", definition.ProductCode);
+            await lockCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var orderedSlots = slots.OrderBy(item => item.ScheduledExecutionAt).ToArray();
+        var existingInstants = new HashSet<DateTimeOffset>();
+        await using (var existingCommand = connection.CreateCommand())
+        {
+            existingCommand.Transaction = transaction;
+            existingCommand.CommandText = """
+select scheduled_execution_at
+from game_engine.durable_scheduler_draws
+where schedule_version_id = @schedule_version_id
+  and scheduled_execution_at between @window_start and @window_end;
+""";
+            existingCommand.Parameters.AddWithValue("schedule_version_id", definition.ScheduleVersionId);
+            existingCommand.Parameters.AddWithValue("window_start", orderedSlots[0].ScheduledExecutionAt);
+            existingCommand.Parameters.AddWithValue("window_end", orderedSlots[^1].ScheduledExecutionAt);
+            await using var reader = await existingCommand.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                existingInstants.Add(reader.GetFieldValue<DateTimeOffset>(0));
+            }
+        }
+
+        foreach (var slot in orderedSlots.Where(item => !existingInstants.Contains(item.ScheduledExecutionAt)))
+        {
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
-with materialization_lock as (
-  select pg_advisory_xact_lock(
-    hashtextextended('durable-scheduler-materialize:' || @product_code, 0))
-), eligible_version as (
+with eligible_version as (
   select version.id
   from game_engine.game_definition_versions version
   join game_engine.game_definitions definition
     on definition.id = version.game_definition_id
-  cross join materialization_lock
   where version.id = @product_version_id
     and definition.id = @product_id
     and definition.active_version_id = version.id
@@ -143,12 +173,19 @@ with materialization_lock as (
 ), allocated as (
   insert into game_engine.durable_scheduler_product_sequences(
     product_code, next_public_draw_number)
-  select @product_code, 2
+  select @product_code,
+    coalesce((
+      select max(runtime.public_draw_number) + 2
+      from game_engine.durable_scheduler_draws runtime
+      where runtime.product_code = @product_code
+    ), 2)
   from eligible_version
   where not exists (select 1 from existing)
   on conflict (product_code) do update
     set next_public_draw_number =
-      game_engine.durable_scheduler_product_sequences.next_public_draw_number + 1
+      greatest(
+        game_engine.durable_scheduler_product_sequences.next_public_draw_number + 1,
+        excluded.next_public_draw_number)
   returning next_public_draw_number - 1 as public_draw_number
 ), inserted_draw as (
   insert into game_engine.draw_schedules(
@@ -189,7 +226,27 @@ with materialization_lock as (
   from allocated
   where exists (select 1 from inserted_draw)
   on conflict (schedule_version_id, scheduled_execution_at) do nothing
-  returning draw_id, public_draw_number, scheduler_state, materialized_at
+  returning
+    draw_id, product_id, product_version_id, product_code,
+    schedule_version_id, sales_open_at, cutoff_at,
+    scheduled_execution_at, draw_identity_hash, public_draw_number,
+    scheduler_state, recovery_deadline_at, materialized_at,
+    authoritative_result_at, settlement_requested_at, wallet_available_at
+), selected_runtime as (
+  select * from inserted_runtime
+  union all
+  select
+    runtime.draw_id, runtime.product_id, runtime.product_version_id,
+    runtime.product_code, runtime.schedule_version_id, runtime.sales_open_at,
+    runtime.cutoff_at, runtime.scheduled_execution_at,
+    runtime.draw_identity_hash, runtime.public_draw_number,
+    runtime.scheduler_state, runtime.recovery_deadline_at,
+    runtime.materialized_at, runtime.authoritative_result_at,
+    runtime.settlement_requested_at, runtime.wallet_available_at
+  from game_engine.durable_scheduler_draws runtime
+  where runtime.schedule_version_id = @schedule_version_id
+    and runtime.scheduled_execution_at = @scheduled_execution_at
+    and not exists (select 1 from inserted_runtime)
 ), inserted_manifest as (
   insert into game_engine.draw_execution_manifests(
     execution_manifest_id, draw_id, schedule_version_id,
@@ -206,11 +263,13 @@ with materialization_lock as (
     version.provider_configuration_version, version.evaluator_version,
     version.paytable_version, @scheduled_execution_at, @schedule_hash,
     @draw_identity_hash, @execution_manifest_hash, runtime.materialized_at
-  from inserted_runtime runtime
+  from selected_runtime runtime
   join game_engine.game_definition_versions version on version.id = @product_version_id
   join game_engine.game_definitions definition on definition.id = version.game_definition_id
   join game_engine.game_modules module on module.id = definition.game_module_id
-  join game_engine.game_module_versions module_version on module_version.id = module.active_version_id
+  join game_engine.game_module_versions module_version
+    on module_version.game_module_id = module.id
+   and module_version.version = version.product_configuration->>'engineVersion'
   join game_engine.draw_authority_assignments assignment
     on assignment.id = @draw_authority_assignment_id
   on conflict (draw_id) do nothing
@@ -229,17 +288,14 @@ with materialization_lock as (
 select
   runtime.draw_id, runtime.product_id, runtime.product_version_id,
   runtime.product_code, runtime.schedule_version_id,
-  schedule.draw_authority_assignment_id, runtime.sales_open_at,
+  @draw_authority_assignment_id, runtime.sales_open_at,
   runtime.cutoff_at, runtime.scheduled_execution_at,
-  runtime.draw_identity_hash, schedule.schedule_hash,
+  runtime.draw_identity_hash, @schedule_hash,
   runtime.public_draw_number, runtime.scheduler_state,
   runtime.recovery_deadline_at, runtime.materialized_at,
   runtime.authoritative_result_at, runtime.settlement_requested_at,
   runtime.wallet_available_at
-from game_engine.durable_scheduler_draws runtime
-join game_engine.draw_schedules schedule on schedule.id = runtime.draw_id
-where runtime.schedule_version_id = @schedule_version_id
-  and runtime.scheduled_execution_at = @scheduled_execution_at;
+from selected_runtime runtime;
 """;
             AddSlotParameters(command, definition, slot, recoveryWindow);
             DurableScheduledDraw persisted;
@@ -252,10 +308,10 @@ where runtime.schedule_version_id = @schedule_version_id
 
                 persisted = ReadDraw(reader);
             }
-            await transaction.CommitAsync(cancellationToken);
             draws.Add(persisted);
         }
 
+        await transaction.CommitAsync(cancellationToken);
         return draws;
     }
 
@@ -537,6 +593,7 @@ where draw_id = @draw_id;
     }
 
     public async Task<IReadOnlyCollection<DurableScheduledDraw>> ListNextAcceptingHotSpotDrawsAsync(
+        Guid ticketId,
         DateTimeOffset after,
         int count,
         CancellationToken cancellationToken)
@@ -544,13 +601,27 @@ where draw_id = @draw_id;
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = $"""
+with accepted_ticket_draw as (
+  select ticket.draw_id, accepted.scheduled_execution_at
+  from ticket_authority.tickets ticket
+  join game_engine.durable_scheduler_draws accepted on accepted.draw_id = ticket.draw_id
+  where ticket.ticket_id = @ticket_id
+    and accepted.product_code = 'HOT_SPOT_V1'
+    and accepted.scheduler_state in ('Scheduled', 'Accepting')
+    and accepted.cutoff_at > @after
+)
 {DrawSelect}
+cross join accepted_ticket_draw accepted
 where runtime.product_code = 'HOT_SPOT_V1'
   and runtime.scheduler_state in ('Scheduled', 'Accepting')
   and runtime.cutoff_at > @after
-order by runtime.scheduled_execution_at, runtime.draw_id
+  and (runtime.draw_id = accepted.draw_id
+    or runtime.scheduled_execution_at > accepted.scheduled_execution_at)
+order by case when runtime.draw_id = accepted.draw_id then 0 else 1 end,
+  runtime.scheduled_execution_at, runtime.draw_id
 limit @count;
 """;
+        command.Parameters.AddWithValue("ticket_id", ticketId);
         command.Parameters.AddWithValue("after", after);
         command.Parameters.AddWithValue("count", count);
         return await ReadDrawsAsync(command, cancellationToken);
@@ -639,9 +710,163 @@ on conflict (purchase_id, sequence) do nothing;
             await bindingCommand.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        await using (var participationCommand = connection.CreateCommand())
+        {
+            participationCommand.Transaction = transaction;
+            participationCommand.CommandText = """
+with base_items as materialized (
+  select item.ticket_item_id base_ticket_item_id, item.item_index,
+    item.wager_type, item.wager_version, item.normalized_selections,
+    item.stake_minor, item.created_at
+  from ticket_authority.ticket_items item
+  where item.ticket_id = @ticket_id
+    and not exists (
+      select 1 from game_engine.hot_spot_multi_draw_participations existing
+      where existing.ticket_item_id = item.ticket_item_id
+    )
+    and item.item_index < 1000
+), expanded as materialized (
+  select binding.binding_id, binding.draw_id, binding.sequence,
+    binding.bound_at, base.*
+  from game_engine.hot_spot_multi_draw_bindings binding
+  cross join base_items base
+  where binding.purchase_id = @purchase_id
+), inserted_items as (
+  insert into ticket_authority.ticket_items(
+    ticket_item_id, ticket_id, item_index, wager_type, wager_version,
+    normalized_selections, stake_minor, item_hash, created_at)
+  select gen_random_uuid(), @ticket_id,
+    expanded.item_index + ((expanded.sequence - 1) * 1000),
+    expanded.wager_type, expanded.wager_version, expanded.normalized_selections,
+    expanded.stake_minor,
+    ticket_authority.hash_json(jsonb_build_object(
+      'ticketId', @ticket_id,
+      'baseTicketItemId', expanded.base_ticket_item_id,
+      'drawId', expanded.draw_id,
+      'drawSequence', expanded.sequence,
+      'wagerType', expanded.wager_type,
+      'wagerVersion', expanded.wager_version,
+      'selections', expanded.normalized_selections,
+      'stakeMinor', expanded.stake_minor
+    )), expanded.bound_at
+  from expanded
+  where expanded.sequence > 1
+  on conflict (ticket_id, item_index) do nothing
+  returning ticket_item_id, item_index
+), participation_items as (
+  select expanded.binding_id, expanded.draw_id, expanded.sequence,
+    expanded.bound_at, expanded.base_ticket_item_id,
+    expanded.base_ticket_item_id ticket_item_id, expanded.stake_minor
+  from expanded where expanded.sequence = 1
+  union all
+  select expanded.binding_id, expanded.draw_id, expanded.sequence,
+    expanded.bound_at, expanded.base_ticket_item_id,
+    inserted.ticket_item_id, expanded.stake_minor
+  from expanded
+  join inserted_items inserted
+    on inserted.item_index = expanded.item_index + ((expanded.sequence - 1) * 1000)
+  where expanded.sequence > 1
+)
+insert into game_engine.hot_spot_multi_draw_participations(
+  participation_id, purchase_id, binding_id, ticket_id, ticket_item_id,
+  base_ticket_item_id, draw_id, draw_sequence, allocated_stake_minor,
+  participation_hash, created_at)
+select gen_random_uuid(), @purchase_id, item.binding_id, @ticket_id,
+  item.ticket_item_id, item.base_ticket_item_id, item.draw_id, item.sequence,
+  item.stake_minor,
+  ticket_authority.hash_json(jsonb_build_object(
+    'purchaseId', @purchase_id,
+    'bindingId', item.binding_id,
+    'ticketId', @ticket_id,
+    'ticketItemId', item.ticket_item_id,
+    'baseTicketItemId', item.base_ticket_item_id,
+    'drawId', item.draw_id,
+    'drawSequence', item.sequence,
+    'allocatedStakeMinor', item.stake_minor
+  )), item.bound_at
+from participation_items item
+on conflict (purchase_id, binding_id, base_ticket_item_id) do nothing;
+""";
+            participationCommand.Parameters.AddWithValue("purchase_id", plan.PurchaseId);
+            participationCommand.Parameters.AddWithValue("ticket_id", plan.TicketId);
+            await participationCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var validationCommand = connection.CreateCommand())
+        {
+            validationCommand.Transaction = transaction;
+            validationCommand.CommandText = """
+select
+  (select count(*) from game_engine.hot_spot_multi_draw_bindings
+    where purchase_id = @purchase_id),
+  (select count(*) from game_engine.hot_spot_multi_draw_participations
+    where purchase_id = @purchase_id),
+  (select count(*) from ticket_authority.ticket_items
+    where ticket_id = @ticket_id and item_index < 1000),
+  (select coalesce(sum(allocated_stake_minor), 0)
+    from game_engine.hot_spot_multi_draw_participations
+    where purchase_id = @purchase_id),
+  (select ticket.draw_id = binding.draw_id
+    from ticket_authority.tickets ticket
+    join game_engine.hot_spot_multi_draw_bindings binding
+      on binding.purchase_id = @purchase_id and binding.sequence = 1
+    where ticket.ticket_id = @ticket_id);
+""";
+            validationCommand.Parameters.AddWithValue("purchase_id", plan.PurchaseId);
+            validationCommand.Parameters.AddWithValue("ticket_id", plan.TicketId);
+            await using var reader = await validationCommand.ExecuteReaderAsync(cancellationToken);
+            await reader.ReadAsync(cancellationToken);
+            var bindingCount = reader.GetInt64(0);
+            var participationCount = reader.GetInt64(1);
+            var baseItemCount = reader.GetInt64(2);
+            var allocatedTotal = reader.GetInt64(3);
+            var startsAtAcceptedDraw = reader.GetBoolean(4);
+            if (bindingCount != plan.DrawCount ||
+                participationCount != plan.DrawCount * baseItemCount ||
+                allocatedTotal != plan.TotalReservationMinor ||
+                !startsAtAcceptedDraw)
+            {
+                throw new InvalidOperationException(
+                    "Hot Spot multi-draw participation fanout did not preserve the exact reservation allocation.");
+            }
+        }
+
         await transaction.CommitAsync(cancellationToken);
         return await FindMultiDrawPlanAsync(plan.PurchaseId, cancellationToken)
             ?? throw new InvalidOperationException("Hot Spot multi-draw plan was not persisted.");
+    }
+
+    public async Task<HotSpotMultiDrawCancellationResult> CancelFutureParticipationsAsync(
+        HotSpotMultiDrawCancellationRequest request,
+        DateTimeOffset cancelledAt,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+select game_engine.cancel_hot_spot_future_participations(
+  @purchase_id, @idempotency_key, @reason_code, @requested_by,
+  @correlation_id, @cancelled_at)::text;
+""";
+        command.Parameters.AddWithValue("purchase_id", request.PurchaseId);
+        command.Parameters.AddWithValue("idempotency_key", request.IdempotencyKey.Trim());
+        command.Parameters.AddWithValue("reason_code", request.ReasonCode.Trim());
+        command.Parameters.AddWithValue("requested_by", request.RequestedBy.Trim());
+        command.Parameters.AddWithValue("correlation_id", request.CorrelationId.Trim());
+        command.Parameters.AddWithValue("cancelled_at", cancelledAt);
+        var json = (string?)await command.ExecuteScalarAsync(cancellationToken)
+            ?? throw new InvalidOperationException("Hot Spot future cancellation returned no evidence.");
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        return new HotSpotMultiDrawCancellationResult(
+            root.GetProperty("cancellationId").GetGuid(),
+            root.GetProperty("purchaseId").GetGuid(),
+            root.GetProperty("cancelledParticipationCount").GetInt32(),
+            root.GetProperty("releasedAmountMinor").GetInt64(),
+            root.GetProperty("walletOperationId").GetGuid(),
+            root.GetProperty("evidenceHash").GetString()!,
+            root.GetProperty("cancelledAt").GetDateTimeOffset(),
+            root.GetProperty("duplicate").GetBoolean());
     }
 
     private static void AddSlotParameters(

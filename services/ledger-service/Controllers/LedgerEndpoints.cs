@@ -10,7 +10,7 @@ public static class LedgerEndpoints
     {
         var group = app.MapGroup("/v1/ledger");
 
-        group.MapPost("/entries", (
+        group.MapPost("/entries", async (
             HttpContext context,
             CreateLedgerEntryRequest request,
             DurableLedgerService durableLedgerService,
@@ -18,6 +18,8 @@ public static class LedgerEndpoints
             LedgerContractService ledgerContractService,
             ILoggerFactory loggerFactory) =>
         {
+            var serviceReceivedAt = DateTimeOffset.UtcNow;
+            context.Response.Headers["X-Mosera-Service-Received-At"] = serviceReceivedAt.ToString("O");
             var correlationId = context.GetCorrelationId();
             var idempotencyKey = GetIdempotencyKey(context);
             var logger = loggerFactory.CreateLogger("LedgerCommandEndpoints");
@@ -63,11 +65,12 @@ public static class LedgerEndpoints
 
             try
             {
-                var result = ledgerPostingService.PostAsync(
+                var result = await ledgerPostingService.PostAsync(
                     request,
                     idempotencyKey,
                     correlationId,
-                    context.RequestAborted).GetAwaiter().GetResult();
+                    context.RequestAborted);
+                context.Response.Headers["X-Mosera-Service-Completed-At"] = DateTimeOffset.UtcNow.ToString("O");
 
                 return Results.Ok(new LedgerEntryResponse(
                     result.LedgerEntry,

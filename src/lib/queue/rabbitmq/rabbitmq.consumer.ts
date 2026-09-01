@@ -52,6 +52,59 @@ function getPositiveNumberEnv(name: string, fallback: number) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+function getConsumerPrefetch(workloadCategory: string) {
+  const categoryName = `WORKER_RABBITMQ_PREFETCH_${workloadCategory}`;
+  const configured = getPositiveNumberEnv(
+    categoryName,
+    getPositiveNumberEnv("WORKER_RABBITMQ_PREFETCH", 1)
+  );
+  return Math.min(32, Math.max(1, Math.floor(configured)));
+}
+
+function getConsumerExecutionConcurrency(workloadCategory: string, prefetch: number) {
+  const categoryName = `WORKER_EXECUTION_CONCURRENCY_${workloadCategory}`;
+  const configured = getPositiveNumberEnv(
+    categoryName,
+    getPositiveNumberEnv("WORKER_EXECUTION_CONCURRENCY", prefetch)
+  );
+  return Math.min(prefetch, Math.min(32, Math.max(1, Math.floor(configured))));
+}
+
+class AsyncExecutionGate {
+  private readonly capacity: number;
+  private available: number;
+  private readonly waiting: Array<() => void> = [];
+
+  constructor(capacity: number) {
+    this.capacity = capacity;
+    this.available = capacity;
+  }
+
+  async acquire(): Promise<() => void> {
+    if (this.available === 0) {
+      await new Promise<void>((resolve) => this.waiting.push(resolve));
+    } else {
+      this.available -= 1;
+    }
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const next = this.waiting.shift();
+      if (next) next();
+      else this.available += 1;
+    };
+  }
+
+  snapshot() {
+    return {
+      active: this.capacity - this.available,
+      waiting: this.waiting.length,
+      capacity: this.capacity,
+    };
+  }
+}
+
 export class RabbitMqQueueConsumer {
   private connection: ChannelModel | null = null;
   private channel: ConfirmChannel | null = null;
@@ -91,7 +144,13 @@ export class RabbitMqQueueConsumer {
     for (const bindingKey of routing.bindingKeys) {
       await channel.bindQueue(routing.queue, routing.exchange, bindingKey);
     }
-    await channel.prefetch(1);
+    const prefetch = getConsumerPrefetch(routing.workloadCategory);
+    const executionConcurrency = getConsumerExecutionConcurrency(
+      routing.workloadCategory,
+      prefetch
+    );
+    const executionGate = new AsyncExecutionGate(executionConcurrency);
+    await channel.prefetch(prefetch);
     await safeRecordWorkerHeartbeat({
       workerName: resolvedWorkerName,
       workloadCategory: routing.workloadCategory,
@@ -100,9 +159,12 @@ export class RabbitMqQueueConsumer {
       metadata: {
         queue: routing.queue,
         routingKey: routing.routingKey,
+        prefetch,
+        executionConcurrency,
       },
     });
     const heartbeatInterval = setInterval(() => {
+      const execution = executionGate.snapshot();
       void safeRecordWorkerHeartbeat({
         workerName: resolvedWorkerName,
         workloadCategory: routing.workloadCategory,
@@ -111,7 +173,11 @@ export class RabbitMqQueueConsumer {
         metadata: {
           queue: routing.queue,
           routingKey: routing.routingKey,
-          idle: true,
+          prefetch,
+          executionConcurrency,
+          activeHandlers: execution.active,
+          waitingHandlers: execution.waiting,
+          idle: execution.active === 0 && execution.waiting === 0,
         },
       });
     }, getPositiveNumberEnv("WORKER_HEARTBEAT_INTERVAL_MS", 30000));
@@ -124,6 +190,7 @@ export class RabbitMqQueueConsumer {
           return;
         }
 
+        const transportReceivedAt = new Date().toISOString();
         let message: QueueMessage;
 
         const parseStartedAt = Date.now();
@@ -140,6 +207,26 @@ export class RabbitMqQueueConsumer {
           ) {
             throw new Error("Canonical event envelope is incomplete or unsupported.");
           }
+          const transportPublishedAt =
+            rawMessage.properties.headers?.["x-mosera-published-at"];
+          if (typeof transportPublishedAt === "string") {
+            message.transportPublishedAt = transportPublishedAt;
+          }
+          const transportDispatcherSeenAt =
+            rawMessage.properties.headers?.["x-mosera-dispatcher-seen-at"];
+          if (typeof transportDispatcherSeenAt === "string") {
+            message.transportDispatcherSeenAt = transportDispatcherSeenAt;
+          }
+          const transportPublishStartedAt =
+            rawMessage.properties.headers?.["x-mosera-publish-started-at"];
+          if (typeof transportPublishStartedAt === "string") {
+            message.transportPublishStartedAt = transportPublishStartedAt;
+          }
+          message.transportReceivedAt = transportReceivedAt;
+          message.transportConsumerCallbackEnteredAt = transportReceivedAt;
+          message.transportConsumerInstanceId = resolvedInstanceId;
+          message.transportConsumerPrefetch = prefetch;
+          message.transportConsumerExecutionConcurrency = executionConcurrency;
         } catch (error) {
           const metadata = getMessageMetadata(rawMessage);
 
@@ -189,9 +276,23 @@ export class RabbitMqQueueConsumer {
         });
 
         try {
-          await handler(message, rawMessage);
+          const slotRequestedAt = new Date();
+          message.transportExecutionSlotRequestedAt = slotRequestedAt.toISOString();
+          const release = await executionGate.acquire();
+          const slotAcquiredAt = new Date();
+          const executionAtStart = executionGate.snapshot();
+          message.transportExecutionSlotAcquiredAt = slotAcquiredAt.toISOString();
+          message.transportHandlerStartedAt = slotAcquiredAt.toISOString();
+          message.transportActiveHandlersAtStart = executionAtStart.active;
+          message.transportWaitingHandlersAtStart = executionAtStart.waiting;
+          try {
+            await handler(message, rawMessage);
+          } finally {
+            release();
+          }
           channel.ack(rawMessage);
           const processingMs = Date.now() - startedAt;
+          const executionAfterAck = executionGate.snapshot();
 
           await safeRecordWorkerHeartbeat({
             workerName: resolvedWorkerName,
@@ -201,6 +302,10 @@ export class RabbitMqQueueConsumer {
             metadata: {
               lastSuccessfulEventAt: new Date().toISOString(),
               eventType: message.type,
+              prefetch,
+              executionConcurrency,
+              activeHandlers: executionAfterAck.active,
+              waitingHandlers: executionAfterAck.waiting,
             },
           });
           await safeRecordWorkerProcessingMetric({
@@ -214,7 +319,18 @@ export class RabbitMqQueueConsumer {
           logger.info({
             message: "RabbitMQ message acknowledged.",
             correlationId: metadata.correlationId,
-            metadata,
+            metadata: {
+              ...metadata,
+              callbackToSlotRequestMs:
+                slotRequestedAt.getTime() - new Date(transportReceivedAt).getTime(),
+              executionAdmissionMs:
+                slotAcquiredAt.getTime() - slotRequestedAt.getTime(),
+              handlerAndAckMs: Date.now() - slotAcquiredAt.getTime(),
+              activeHandlersAtStart: executionAtStart.active,
+              waitingHandlersAtStart: executionAtStart.waiting,
+              prefetch,
+              executionConcurrency,
+            },
           });
         } catch (error) {
           const classified = error as ClassifiedWorkerError;

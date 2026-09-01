@@ -81,6 +81,18 @@ public static class DurableSchedulerTests
             var local = TimeZoneInfo.ConvertTime(slot.ScheduledExecutionAt, zone).TimeOfDay;
             return local >= TimeSpan.FromHours(6) || local <= TimeSpan.FromHours(2);
         }), "Hot Spot must not schedule draws in the 02:00-06:00 maintenance window.");
+
+        var overnight = calculator.GetNextSlots(
+            definition,
+            DateTimeOffset.Parse("2026-08-25T05:56:00Z"),
+            20).ToArray();
+        var overnightLocal = overnight
+            .Select(slot => TimeZoneInfo.ConvertTime(slot.ScheduledExecutionAt, zone))
+            .ToArray();
+        Require(overnight.Length == 20 &&
+            overnightLocal[0].TimeOfDay == TimeSpan.FromHours(2) &&
+            overnightLocal[1].TimeOfDay == TimeSpan.FromHours(6),
+            "Hot Spot multi-draw binding must skip 02:00-06:00 ET and preserve the requested valid-draw count.");
     }
 
     private static void TestDaylightSavingTransitions(AuthoritativeScheduleCalculator calculator)
@@ -117,6 +129,12 @@ public static class DurableSchedulerTests
             "Published but inactive/unassigned products must not materialize runtime draws.");
 
         var active = Definition(DurableSchedulerProductKind.FastKeno, "FAST_KENO_V1", active: true);
+        var activationRepository = new InMemoryDurableSchedulerRepository([active]);
+        await Runtime(activationRepository, calculator, new MutableClock(now), execute: false)
+            .RunCycleAsync("activation-test", CancellationToken.None);
+        Require(activationRepository.Draws.All(draw => draw.Slot.ScheduledExecutionAt >= now),
+            "First activation must not fabricate outcomes for unmaterialized historical schedule slots.");
+
         var repository = new InMemoryDurableSchedulerRepository([active]);
         var slots = calculator.MaterializeWindow(active, now, now.AddMinutes(1));
         await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => repository.MaterializeAsync(

@@ -14,6 +14,11 @@ public sealed record SchedulerOutcomeFanoutOptions(
     string QualificationFailureStage,
     int QualificationFailureAfterPages)
 {
+    public int AdmissionBatchSize { get; init; } = 100;
+    public int AdmissionConcurrency { get; init; } = 2;
+    public int MaxBufferedEvaluations { get; init; } = 5_000;
+    public int SettlementPreparationConcurrency { get; init; } = 6;
+
     public bool IsQualificationRuntime =>
         Enabled && QualificationMode &&
         !string.Equals(DeploymentEnvironment, "production", StringComparison.OrdinalIgnoreCase);
@@ -292,50 +297,138 @@ public sealed class SchedulerOutcomeCompletionFanout(
 
             pages += 1;
             eligible += page.Items.Count;
-            var throttle = new SemaphoreSlim(Math.Clamp(options.MaxDegreeOfParallelism, 1, 8));
-            var tasks = page.Items.GroupBy(item => item.TicketId).Select(async ticketItems =>
+            var pageWork = page.Items.GroupBy(item => item.TicketId).Select(ticketItems =>
             {
-                await throttle.WaitAsync(cancellationToken);
+                var orderedItems = ticketItems.OrderBy(item => item.ItemIndex).ToArray();
+                decimal allocatedPayoutMinor = 0m;
+                var evaluationRequests = new List<MathCertificateEvaluationRequest>();
+                foreach (var item in orderedItems)
+                {
+                    ValidateLineage(outcome, item);
+                    var wagerPayload = new Dictionary<string, object?>(item.WagerPayload, StringComparer.Ordinal);
+                    if (verifiedOutcome.BullseyeNumber is not null)
+                    {
+                        wagerPayload["authorityBullseye"] = verifiedOutcome.BullseyeNumber.Value;
+                        wagerPayload["authorityBullseyeEvidenceHash"] = verifiedOutcome.BullseyeEvidenceHash;
+                        wagerPayload["authorityBullseyePrimaryResultHash"] = verifiedOutcome.BullseyePrimaryResultHash;
+                        wagerPayload["authorityBullseyeProviderConfigurationHash"] = verifiedOutcome.BullseyeProviderConfigurationHash;
+                        wagerPayload["authorityBullseyeExecutionManifestId"] = verifiedOutcome.BullseyeExecutionManifestId;
+                    }
+                    var ticketCapMinor = ReadCapMinor(item.Paytable.Caps, "combinedTicketPayoutCapMinor");
+                    if (ticketCapMinor is decimal capMinor &&
+                        !string.Equals(item.Manifest.GameCode, "FAST_KENO_V1", StringComparison.Ordinal))
+                    {
+                        wagerPayload["ticketPayoutCapMinor"] = capMinor;
+                        wagerPayload["ticketPriorPayoutMinor"] = allocatedPayoutMinor;
+                    }
+                    var ticketReference = item.TicketItemId.ToString();
+                    var idempotencyKey = $"scheduler-math:{outcome.OutcomeVersionId:N}:{item.TicketItemId:N}";
+                    var evaluationRequest = new MathCertificateEvaluationRequest(
+                        DeterministicGuid($"{idempotencyKey}:request"),
+                        idempotencyKey,
+                        MathEvaluationMode.DryRun,
+                        item.Manifest,
+                        certificate,
+                        item.MathModel,
+                        item.Paytable,
+                        ticketReference,
+                        item.WagerSchema,
+                        wagerPayload,
+                        verifiedOutcome.CanonicalPayload,
+                        verifiedOutcome.CanonicalJson);
+                    evaluationRequests.Add(evaluationRequest);
+                    if (ticketCapMinor is not null &&
+                        !string.Equals(item.Manifest.GameCode, "FAST_KENO_V1", StringComparison.Ordinal))
+                    {
+                        var plannedPrizeFacts = mathAuthority.EvaluatePrizeFactsForTicketCap(evaluationRequest);
+                        allocatedPayoutMinor += item.StakeMinor * plannedPrizeFacts.Multiplier;
+                    }
+                }
+                return (Items: orderedItems, Requests: evaluationRequests.ToArray());
+            }).ToArray();
+
+            var flattened = pageWork.SelectMany(item => item.Requests).ToArray();
+            if (flattened.Length > Math.Clamp(options.MaxBufferedEvaluations, 100, 20_000))
+            {
+                throw new InvalidOperationException(
+                    "Math Evaluation admission page exceeds the configured bounded in-memory buffer.");
+            }
+            using var admissionThrottle = new SemaphoreSlim(Math.Clamp(options.AdmissionConcurrency, 1, 8));
+            var admissionTasks = flattened
+                .Chunk(Math.Clamp(options.AdmissionBatchSize, 1, 500))
+                .Select(async batch =>
+                {
+                    await admissionThrottle.WaitAsync(cancellationToken);
+                    try
+                    {
+                        return await mathAuthority.AdmitBatchAsync(batch, cancellationToken);
+                    }
+                    finally
+                    {
+                        admissionThrottle.Release();
+                    }
+                }).ToArray();
+            var admittedByRequest = (await Task.WhenAll(admissionTasks))
+                .SelectMany(batch => batch)
+                .ToDictionary(item => item.Evaluation.RequestId);
+
+            using var executionThrottle = new SemaphoreSlim(Math.Clamp(options.MaxDegreeOfParallelism, 1, 32));
+            using var settlementThrottle = new SemaphoreSlim(Math.Clamp(options.SettlementPreparationConcurrency, 1, 16));
+            var tasks = pageWork.Select(async ticketWork =>
+            {
+                var orderedItems = ticketWork.Items;
+                var admitted = ticketWork.Requests.Select(request => admittedByRequest[request.RequestId]).ToArray();
+                var evaluationResults = await Task.WhenAll(admitted.Select(async work =>
+                {
+                    await executionThrottle.WaitAsync(cancellationToken);
+                    try
+                    {
+                        return await mathAuthority.EvaluateAdmittedAsync(work, cancellationToken);
+                    }
+                    finally
+                    {
+                        executionThrottle.Release();
+                    }
+                }));
+                await settlementThrottle.WaitAsync(cancellationToken);
                 try
                 {
-                    var completed = new List<(MathEvaluationResult Evaluation, SettlementInput Input, OutcomeSettlementRequest Request)>();
-                    decimal allocatedPayoutMinor = 0m;
-                    foreach (var item in ticketItems.OrderBy(item => item.ItemIndex))
+                    if (orderedItems.All(item =>
+                        string.Equals(item.Manifest.GameCode, "FAST_KENO_V1", StringComparison.Ordinal)))
                     {
-                        ValidateLineage(outcome, item);
-                        var wagerPayload = new Dictionary<string, object?>(item.WagerPayload, StringComparer.Ordinal);
-                        if (verifiedOutcome.BullseyeNumber is not null)
-                        {
-                            wagerPayload["authorityBullseye"] = verifiedOutcome.BullseyeNumber.Value;
-                            wagerPayload["authorityBullseyeEvidenceHash"] = verifiedOutcome.BullseyeEvidenceHash;
-                            wagerPayload["authorityBullseyePrimaryResultHash"] = verifiedOutcome.BullseyePrimaryResultHash;
-                            wagerPayload["authorityBullseyeProviderConfigurationHash"] = verifiedOutcome.BullseyeProviderConfigurationHash;
-                            wagerPayload["authorityBullseyeExecutionManifestId"] = verifiedOutcome.BullseyeExecutionManifestId;
-                        }
-                        if (ReadCapMinor(item.Paytable.Caps, "combinedTicketPayoutCapMinor") is decimal ticketCapMinor)
-                        {
-                            wagerPayload["ticketPayoutCapMinor"] = ticketCapMinor;
-                            wagerPayload["ticketPriorPayoutMinor"] = allocatedPayoutMinor;
-                        }
-                        var ticketReference = item.TicketItemId.ToString();
-                        var idempotencyKey = $"scheduler-math:{outcome.OutcomeVersionId:N}:{item.TicketItemId:N}";
-                        var result = await mathAuthority.EvaluateAsync(
-                            new MathCertificateEvaluationRequest(
-                                DeterministicGuid($"{idempotencyKey}:request"),
-                                idempotencyKey,
-                                MathEvaluationMode.DryRun,
-                                item.Manifest,
-                                certificate,
-                                item.MathModel,
-                                item.Paytable,
-                                ticketReference,
-                                item.WagerSchema,
-                                wagerPayload,
-                                verifiedOutcome.CanonicalPayload,
-                                verifiedOutcome.CanonicalJson),
-                            cancellationToken);
                         InjectFailure("AfterMathBeforeSettlementInput");
-                        allocatedPayoutMinor += item.StakeMinor * result.PrizeFacts.Multiplier;
+                        var cap = ReadCapMinor(
+                            orderedItems[0].Paytable.Caps,
+                            "combinedTicketPayoutCapMinor");
+                        var settlementInput = await settlementInputAdapter.ConvertTicketDrawAggregateAsync(
+                            orderedItems[0].TicketId,
+                            outcome.DrawId,
+                            orderedItems[0].ProductVersionId,
+                            orderedItems[0].ProductVersionHash,
+                            orderedItems[0].Currency,
+                            orderedItems.Zip(evaluationResults, (item, result) =>
+                                (item.TicketItemId, item.ItemIndex, item.StakeMinor, result)).ToArray(),
+                            cap is null ? null : checked((long)cap.Value),
+                            cancellationToken);
+                        InjectFailure("AfterSettlementInputBeforeRequest");
+                        var settlementRequest = await outcomeAuthority.EmitSettlementRequestAsync(
+                            new OutcomeSettlementRequestCommand(
+                                $"scheduler-settlement-aggregate:{outcome.OutcomeVersionId:N}:{orderedItems[0].TicketId:N}:{settlementInput.CanonicalPayloadHash}",
+                                outcome.OutcomeVersionId,
+                                settlementInput.SettlementInputId,
+                                outcome.CorrelationId,
+                                $"math-evaluation-set:{settlementInput.CanonicalPayloadHash}",
+                                outcome.AuditReference),
+                            cancellationToken);
+                        return (
+                            Evaluations: (IReadOnlyCollection<MathEvaluationResult>)evaluationResults,
+                            Inputs: (IReadOnlyCollection<SettlementInput>)[settlementInput],
+                            Requests: (IReadOnlyCollection<OutcomeSettlementRequest>)[settlementRequest]);
+                    }
+
+                    var completed = await Task.WhenAll(evaluationResults.Select(async result =>
+                    {
+                        InjectFailure("AfterMathBeforeSettlementInput");
                         var settlementInput = await settlementInputAdapter.ConvertAsync(result, cancellationToken);
                         InjectFailure("AfterSettlementInputBeforeRequest");
                         var settlementRequest = await outcomeAuthority.EmitSettlementRequestAsync(
@@ -347,19 +440,22 @@ public sealed class SchedulerOutcomeCompletionFanout(
                                 $"math-evaluation:{result.MathEvaluationId:N}",
                                 outcome.AuditReference),
                             cancellationToken);
-                        completed.Add((result, settlementInput, settlementRequest));
-                    }
-                    return completed;
+                        return (Evaluation: result, Input: settlementInput, Request: settlementRequest);
+                    }));
+                    return (
+                        Evaluations: (IReadOnlyCollection<MathEvaluationResult>)completed.Select(item => item.Evaluation).ToArray(),
+                        Inputs: (IReadOnlyCollection<SettlementInput>)completed.Select(item => item.Input).ToArray(),
+                        Requests: (IReadOnlyCollection<OutcomeSettlementRequest>)completed.Select(item => item.Request).ToArray());
                 }
                 finally
                 {
-                    throttle.Release();
+                    settlementThrottle.Release();
                 }
             }).ToArray();
-            var completed = (await Task.WhenAll(tasks)).SelectMany(item => item).ToArray();
-            evaluations += completed.Length;
-            settlementInputs += completed.Select(item => item.Input.SettlementInputId).Distinct().Count();
-            settlementRequests += completed.Select(item => item.Request.SettlementRequestId).Distinct().Count();
+            var completed = await Task.WhenAll(tasks);
+            evaluations += completed.Sum(item => item.Evaluations.Count);
+            settlementInputs += completed.SelectMany(item => item.Inputs).Select(item => item.SettlementInputId).Distinct().Count();
+            settlementRequests += completed.SelectMany(item => item.Requests).Select(item => item.SettlementRequestId).Distinct().Count();
             if (options.ShouldInjectFailure("AfterCompletedPages") &&
                 pages >= options.QualificationFailureAfterPages)
             {

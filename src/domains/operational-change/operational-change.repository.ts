@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { Pool } from "pg";
+import type { Pool } from "pg";
+import {
+  closeApplicationPostgresPool,
+  createApplicationPostgresPool,
+} from "@/src/lib/database/resilient-postgres-pool";
 
 import { canonicalHash } from "../operational-governance/operational-governance.repository";
 import type {
@@ -13,7 +17,7 @@ let pool: Pool | null = null;
 function database() {
   const connectionString = process.env.DATABASE_URL?.trim();
   if (!connectionString) throw new Error("Operational Change persistence is unavailable.");
-  pool ??= new Pool({ connectionString });
+  pool ??= createApplicationPostgresPool("operational-change-repository", { connectionString });
   return pool;
 }
 
@@ -138,5 +142,5 @@ export async function closeOperationalChangePool() {
   if (!pool) return;
   const current = pool;
   pool = null;
-  await current.end();
+  await closeApplicationPostgresPool(current);
 }

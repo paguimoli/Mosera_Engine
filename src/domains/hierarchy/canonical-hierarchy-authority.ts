@@ -1,4 +1,5 @@
-import { Pool } from "pg";
+import type { Pool } from "pg";
+import { createApplicationPostgresPool } from "@/src/lib/database/resilient-postgres-pool";
 
 import type {
   Account,
@@ -83,7 +84,7 @@ function databasePool() {
     );
   }
 
-  pool ??= new Pool({
+  pool ??= createApplicationPostgresPool("canonical-hierarchy-authority", {
     connectionString: databaseUrl,
     max: 4,
     idleTimeoutMillis: 5_000,

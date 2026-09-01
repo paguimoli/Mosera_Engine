@@ -1,5 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { Pool } from "pg";
+import type { Pool } from "pg";
+import {
+  closeApplicationPostgresPool,
+  createApplicationPostgresPool,
+} from "@/src/lib/database/resilient-postgres-pool";
 
 import type { AuthContext } from "../auth/auth-context.types";
 import type { OperationalCommandRecord } from "./operational-governance.types";
@@ -13,7 +17,7 @@ function databasePool() {
       "Operational Governance database is not configured."
     );
   }
-  pool ??= new Pool({ connectionString });
+  pool ??= createApplicationPostgresPool("operational-governance-repository", { connectionString });
   return pool;
 }
 
@@ -240,5 +244,5 @@ export async function closeOperationalGovernancePool() {
   if (!pool) return;
   const current = pool;
   pool = null;
-  await current.end();
+  await closeApplicationPostgresPool(current);
 }

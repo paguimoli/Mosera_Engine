@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 
-import { createResilientPostgresPool } from "@/src/lib/database/resilient-postgres-pool";
+import {
+  closeWorkerPostgresPool,
+  createWorkerPostgresPool,
+} from "@/src/lib/database/resilient-postgres-pool";
 
 import type { QueueMessage } from "@/src/lib/queue/queue.types";
 import type { FinancialWorkerHandlingResult } from "./financial-worker-handlers";
@@ -38,6 +41,8 @@ type AuthoritativeSettlementEvidence = {
   settlement_request_id: string;
   canonical_settlement_hash: string;
 };
+
+type Queryable = Pick<Pool | PoolClient, "query">;
 
 type OriginalSettlementEvidence = AuthoritativeSettlementEvidence & {
   settlement_input_id: string;
@@ -87,6 +92,12 @@ function hash(value: string) {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
+function transportDate(value: string | undefined, fallback: Date) {
+  if (!value) return fallback;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed;
+}
+
 function canonicalMessageHash(message: QueueMessage) {
   return hash(stableJson({
     aggregateId: message.aggregateId ?? null,
@@ -121,18 +132,63 @@ async function appendProcessingEvidence(
   message: QueueMessage,
   classification: CanonicalSettlementProcessingClassification,
   reason: string,
-  payload?: CanonicalSettlementPayload | null
+  payload?: CanonicalSettlementPayload | null,
+  timing?: {
+    consumedAt: Date;
+    consumerProcessingStartedAt?: Date;
+    processingStartedAt: Date;
+    processingCompletedAt: Date;
+    connectionRequestedAt?: Date;
+    connectionAcquiredAt?: Date;
+    lockAttemptedAt?: Date;
+    lockAcquiredAt?: Date;
+    claimAcquiredAt?: Date;
+    authorityStartedAt?: Date;
+    authorityCompletedAt?: Date;
+    persistenceStartedAt?: Date;
+    persistenceCompletedAt?: Date;
+  }
 ) {
   await client.query(
     `
 insert into game_engine.canonical_settlement_event_processing_evidence (
   processing_evidence_id, event_id, settlement_request_id, outcome_version_id,
-  classification, canonical_message_hash, attempt_number, reason, correlation_id)
+  classification, canonical_message_hash, attempt_number, reason, correlation_id,
+  outbox_created_at, outbox_published_at, consumed_at,
+  processing_started_at, processing_completed_at,
+  connection_requested_at, connection_acquired_at,
+  lock_attempted_at, lock_acquired_at, claim_acquired_at,
+  authority_started_at, authority_completed_at,
+  persistence_started_at, persistence_completed_at,
+  dispatcher_seen_at, publish_started_at, publish_confirmed_at,
+  consumer_received_at, consumer_processing_started_at,
+  consumer_callback_entered_at, execution_slot_requested_at,
+  execution_slot_acquired_at, handler_started_at,
+  consumer_instance_id, consumer_prefetch,
+  consumer_execution_concurrency, active_handlers_at_start,
+  waiting_handlers_at_start)
 select
-  $1::uuid, $2, $3::uuid, $4::uuid, $5, $6,
-  coalesce(max(attempt_number), 0) + 1, $7, $8
+  $1::uuid, $2::text, $3::uuid, $4::uuid, $5, $6,
+  coalesce(max(attempt_number), 0) + 1, $7, $8,
+  (select created_at from public.outbox_events where id = $2::uuid),
+  coalesce(
+    $21::timestamptz,
+    least(
+      (select published_at from public.outbox_events where id = $2::uuid),
+      $9::timestamptz)),
+  $9::timestamptz, $10::timestamptz, $11::timestamptz,
+  $12::timestamptz, $13::timestamptz,
+  $14::timestamptz, $15::timestamptz, $16::timestamptz,
+  $17::timestamptz, $18::timestamptz,
+  $19::timestamptz, $20::timestamptz,
+  $22::timestamptz, $23::timestamptz,
+  (select published_at from public.outbox_events where id = $2::uuid),
+  $24::timestamptz, $25::timestamptz,
+  $26::timestamptz, $27::timestamptz,
+  $28::timestamptz, $29::timestamptz,
+  $30, $31::integer, $32::integer, $33::integer, $34::integer
 from game_engine.canonical_settlement_event_processing_evidence
-where event_id = $2
+where event_id = $2::text
 `,
     [
       randomUUID(),
@@ -143,6 +199,32 @@ where event_id = $2
       canonicalMessageHash(message),
       reason,
       message.correlationId ?? null,
+      timing?.consumedAt ?? null,
+      timing?.processingStartedAt ?? null,
+      timing?.processingCompletedAt ?? null,
+      timing?.connectionRequestedAt ?? null,
+      timing?.connectionAcquiredAt ?? null,
+      timing?.lockAttemptedAt ?? null,
+      timing?.lockAcquiredAt ?? null,
+      timing?.claimAcquiredAt ?? null,
+      timing?.authorityStartedAt ?? null,
+      timing?.authorityCompletedAt ?? null,
+      timing?.persistenceStartedAt ?? null,
+      timing?.persistenceCompletedAt ?? null,
+      message.transportPublishedAt ?? null,
+      message.transportDispatcherSeenAt ?? null,
+      message.transportPublishStartedAt ?? message.transportPublishedAt ?? null,
+      message.transportReceivedAt ?? null,
+      timing?.consumerProcessingStartedAt ?? null,
+      message.transportConsumerCallbackEnteredAt ?? message.transportReceivedAt ?? null,
+      message.transportExecutionSlotRequestedAt ?? null,
+      message.transportExecutionSlotAcquiredAt ?? null,
+      message.transportHandlerStartedAt ?? null,
+      message.transportConsumerInstanceId ?? null,
+      message.transportConsumerPrefetch ?? null,
+      message.transportConsumerExecutionConcurrency ?? null,
+      message.transportActiveHandlersAtStart ?? null,
+      message.transportWaitingHandlersAtStart ?? null,
     ]
   );
 }
@@ -154,7 +236,7 @@ export async function recordCanonicalSettlementFinalClassification(
 ) {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) return;
-  const pool = createResilientPostgresPool("canonical-settlement-classification", {
+  const pool = createWorkerPostgresPool("canonical-settlement-classification", {
     connectionString: databaseUrl,
     connectionTimeoutMillis: 2_000,
     max: 1,
@@ -162,7 +244,7 @@ export async function recordCanonicalSettlementFinalClassification(
   try {
     await appendProcessingEvidence(pool, message, classification, reason, null);
   } finally {
-    await pool.end();
+    await closeWorkerPostgresPool(pool);
   }
 }
 
@@ -226,7 +308,7 @@ function parsePayload(message: QueueMessage): CanonicalSettlementPayload {
 }
 
 async function loadCanonicalEvidence(
-  client: PoolClient,
+  client: Queryable,
   message: QueueMessage,
   payload: CanonicalSettlementPayload
 ) {
@@ -295,7 +377,7 @@ for update of request
 }
 
 async function loadSettlementInvocationContext(
-  client: PoolClient,
+  client: Queryable,
   payload: CanonicalSettlementPayload
 ): Promise<SettlementInvocationContext> {
   const result = await client.query<{
@@ -317,25 +399,38 @@ select
   ticket.tenant_id::text,
   ticket.brand_id::text,
   ticket.ticket_id::text,
-  item.ticket_item_id::text as ticket_line_id,
+  case when aggregate.settlement_input_id is not null
+    then 'aggregate:' || replace(aggregate.draw_id::text, '-', '')
+    else item.ticket_item_id::text end as ticket_line_id,
   ticket.player_account_id::text as player_account_reference,
   ticket.reservation_id::text,
-  item.stake_minor::text as accepted_stake_amount_minor,
+  coalesce(aggregate.total_reserved_stake_minor, item.stake_minor)::text as accepted_stake_amount_minor,
   ticket.currency,
   ticket.accepted_at,
   ticket.acceptance_hash,
   input.math_evaluation_certificate_id::text,
   input.math_evaluation_certificate_hash
 from game_engine.settlement_input_records input
-join ticket_authority.ticket_items item
-  on input.ticket_reference = item.ticket_item_id::text
-  or input.ticket_reference = item.ticket_id::text || ':' || item.ticket_item_id::text
-  or (
-    input.ticket_reference = item.ticket_id::text
-    and 1 = (select count(*) from ticket_authority.ticket_items sibling where sibling.ticket_id = item.ticket_id)
-  )
+left join game_engine.ticket_draw_settlement_aggregates aggregate
+  on aggregate.settlement_input_id = input.settlement_input_id
+left join ticket_authority.ticket_items item
+  on aggregate.settlement_input_id is null
+ and (
+   input.ticket_reference = item.ticket_item_id::text
+   or input.ticket_reference = item.ticket_id::text || ':' || item.ticket_item_id::text
+   or (
+     input.ticket_reference = item.ticket_id::text
+     and 1 = (select count(*) from ticket_authority.ticket_items sibling where sibling.ticket_id = item.ticket_id)
+   )
+ )
 join ticket_authority.tickets ticket
-  on ticket.ticket_id = item.ticket_id
+  on ticket.ticket_id = coalesce(aggregate.ticket_id, item.ticket_id)
+left join game_engine.hot_spot_multi_draw_participations participation
+  on aggregate.settlement_input_id is null
+ and participation.ticket_item_id = item.ticket_item_id
+left join game_engine.hot_spot_multi_draw_participation_events participation_cancellation
+  on participation_cancellation.participation_id = participation.participation_id
+ and participation_cancellation.event_type = 'CANCELLED'
 join public.credit_reservations reservation
   on reservation.id = ticket.reservation_id
  and reservation.ticket_id = ticket.ticket_id::text
@@ -349,7 +444,8 @@ where input.settlement_input_id = $1::uuid
   and input.canonical_payload_hash = $2
   and input.outcome_certificate_id = $3::uuid
   and input.outcome_certificate_hash = $4
-  and ticket.draw_id = $5::uuid
+  and coalesce(aggregate.draw_id, participation.draw_id, ticket.draw_id) = $5::uuid
+  and participation_cancellation.participation_id is null
 order by item.item_index
 limit 2
 `,
@@ -456,7 +552,7 @@ async function invokeAuthoritativeSettlement(
   payload: CanonicalSettlementPayload,
   context: SettlementInvocationContext,
   correlationId: string
-) {
+): Promise<AuthoritativeSettlementEvidence> {
   const idempotencyKey = `canonical-outcome-settlement:${payload.settlementRequestId}`;
   const financialContextReference = `ticket-acceptance:v1:${context.acceptanceHash}`;
   const ingestion = await settlementServiceRequest(
@@ -541,7 +637,24 @@ async function invokeAuthoritativeSettlement(
     );
   }
 
-  return settlementId;
+  const settlementRequestId = typeof settlementRecord?.settlementRequestId === "string"
+    ? settlementRecord.settlementRequestId
+    : null;
+  const canonicalSettlementHash = typeof settlementRecord?.canonicalSettlementHash === "string"
+    ? settlementRecord.canonicalSettlementHash
+    : null;
+  if (!settlementRequestId || !canonicalSettlementHash) {
+    throw new CanonicalSettlementProcessingError(
+      "Settlement Service execution returned incomplete authoritative Settlement evidence.",
+      "TERMINAL_INVALID"
+    );
+  }
+
+  return {
+    settlement_id: settlementId,
+    settlement_request_id: settlementRequestId,
+    canonical_settlement_hash: canonicalSettlementHash,
+  };
 }
 
 async function executeAuthoritativeFinancialInstructions(
@@ -567,7 +680,7 @@ async function executeAuthoritativeFinancialInstructions(
 }
 
 async function loadOriginalSettlementEvidence(
-  client: PoolClient,
+  client: Queryable,
   payload: CanonicalSettlementPayload
 ): Promise<OriginalSettlementEvidence> {
   const result = await client.query<OriginalSettlementEvidence>(
@@ -607,7 +720,7 @@ limit 2
 }
 
 async function invokeAuthoritativeResettlement(
-  client: PoolClient,
+  client: Queryable,
   payload: CanonicalSettlementPayload,
   context: SettlementInvocationContext,
   correlationId: string
@@ -692,7 +805,7 @@ where settlement_id = $1::uuid and canonical_settlement_hash = $2
 }
 
 async function findAuthoritativeSettlement(
-  client: PoolClient,
+  client: Queryable,
   payload: CanonicalSettlementPayload
 ): Promise<AuthoritativeSettlementEvidence[]> {
   const result = await client.query<AuthoritativeSettlementEvidence>(
@@ -721,41 +834,53 @@ limit 2
   return result.rows;
 }
 
-export async function handleCanonicalSettlementRequest(
-  message: QueueMessage
+async function handleCanonicalSettlementRequestCore(
+  message: QueueMessage,
+  payload: CanonicalSettlementPayload
 ): Promise<FinancialWorkerHandlingResult> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
     throw new Error("DATABASE_URL is required for canonical Settlement consumption.");
   }
 
-  let payload: CanonicalSettlementPayload;
-  try {
-    payload = parsePayload(message);
-  } catch (error) {
-    const classified = classifyError(error);
-    await recordCanonicalSettlementFinalClassification(
-      message,
-      "TERMINAL_INVALID",
-      classified.message
-    );
-    throw classified;
-  }
+  const handlerEnteredAt = new Date();
+  const consumedAt = transportDate(message.transportReceivedAt, handlerEnteredAt);
+  const consumerProcessingStartedAt = transportDate(
+    message.transportHandlerStartedAt,
+    handlerEnteredAt
+  );
+  let processingStartedAt = consumedAt;
+
   const eventId = message.id!.trim();
   const messageHash = canonicalMessageHash(message);
-  const pool = createResilientPostgresPool("canonical-settlement-consumer", {
+  const pool = createWorkerPostgresPool("canonical-settlement-consumer", {
     connectionString: databaseUrl,
     connectionTimeoutMillis: 2_000,
     max: 2,
   });
-  const client = await pool.connect();
+  const connectionRequestedAt = new Date();
+  let client: PoolClient | null = await pool.connect();
+  const connectionAcquiredAt = new Date();
+  const lockScope = `canonical-settlement-consumption:${payload.settlementRequestId}`;
+  let transactionOpen = false;
+  let sessionLockHeld = false;
+  const lockAttemptedAt = new Date();
+  let lockAcquiredAt: Date | undefined;
+  let claimAcquiredAt: Date | undefined;
+  let authorityStartedAt: Date | undefined;
+  let authorityCompletedAt: Date | undefined;
+  let persistenceStartedAt: Date | undefined;
+  let persistenceCompletedAt: Date | undefined;
 
   try {
-    await client.query("begin");
     await client.query(
-      "select pg_advisory_xact_lock(hashtextextended($1, 0))",
-      [`canonical-settlement-consumption:${payload.settlementRequestId}`]
+      "select pg_advisory_lock(hashtextextended($1, 0))",
+      [lockScope]
     );
+    sessionLockHeld = true;
+    lockAcquiredAt = new Date();
+    await client.query("begin");
+    transactionOpen = true;
     await loadCanonicalEvidence(client, message, payload);
 
     const existing = await client.query<{
@@ -790,9 +915,16 @@ where settlement_request_id = $1::uuid
           message,
           "IDEMPOTENT_DUPLICATE",
           "Canonical Settlement event was already completed.",
-          payload
+          payload,
+          {
+            consumedAt,
+            consumerProcessingStartedAt,
+            processingStartedAt,
+            processingCompletedAt: new Date(),
+          }
         );
         await client.query("commit");
+        transactionOpen = false;
         return {
           eventId,
           eventType: message.type,
@@ -838,6 +970,8 @@ values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'settlement-worker', $5, $6, $7)
     }
 
     if (payload.requestKind === "Cancelled") {
+      claimAcquiredAt = new Date();
+      processingStartedAt = claimAcquiredAt;
       const completionId = deterministicUuid(
         `completion:${payload.outcomeVersionId}:${payload.settlementRequestId}`
       );
@@ -882,9 +1016,21 @@ on conflict (draw_id, event_type, evidence_reference) do nothing
         message,
         existing.rows[0] ? "IDEMPOTENT_DUPLICATE" : "SUCCESS",
         "Canonical cancellation acknowledged without fabricated financial SettlementInput.",
-        payload
+        payload,
+        {
+          consumedAt,
+          consumerProcessingStartedAt,
+          processingStartedAt,
+          processingCompletedAt: new Date(),
+          connectionRequestedAt,
+          connectionAcquiredAt,
+          lockAttemptedAt,
+          lockAcquiredAt,
+          claimAcquiredAt,
+        }
       );
       await client.query("commit");
+      transactionOpen = false;
       return {
         eventId,
         eventType: message.type,
@@ -902,23 +1048,38 @@ on conflict (draw_id, event_type, evidence_reference) do nothing
       );
     }
 
-    let settlementEvidence = await findAuthoritativeSettlement(client, payload);
+    // Persist the immutable claim before remote authority calls. The canonical
+    // Settlement service idempotency boundary owns duplicate-effect prevention, so
+    // neither a transaction nor a worker connection is held across HTTP.
+    await client.query("commit");
+    transactionOpen = false;
+    claimAcquiredAt = new Date();
+    processingStartedAt = claimAcquiredAt;
+    await client.query(
+      "select pg_advisory_unlock(hashtextextended($1, 0))",
+      [lockScope]
+    );
+    sessionLockHeld = false;
+    client.release();
+    client = null;
+
+    authorityStartedAt = new Date();
+    let settlementEvidence = await findAuthoritativeSettlement(pool, payload);
     if (settlementEvidence.length === 0) {
-      const invocationContext = await loadSettlementInvocationContext(client, payload);
+      const invocationContext = await loadSettlementInvocationContext(pool, payload);
       if (payload.requestKind === "Corrected") {
         settlementEvidence = [await invokeAuthoritativeResettlement(
-          client,
+          pool,
           payload,
           invocationContext,
           message.correlationId ?? payload.settlementRequestId
         )];
       } else {
-        await invokeAuthoritativeSettlement(
+        settlementEvidence = [await invokeAuthoritativeSettlement(
           payload,
           invocationContext,
           message.correlationId ?? payload.settlementRequestId
-        );
-        settlementEvidence = await findAuthoritativeSettlement(client, payload);
+        )];
       }
     }
     if (settlementEvidence.length !== 1) {
@@ -933,6 +1094,7 @@ on conflict (draw_id, event_type, evidence_reference) do nothing
             "TERMINAL_INVALID"
           );
     }
+    authorityCompletedAt = new Date();
 
     const authority = settlementEvidence[0];
     await executeAuthoritativeFinancialInstructions(
@@ -952,6 +1114,10 @@ on conflict (draw_id, event_type, evidence_reference) do nothing
       `${payload.drawId}|${payload.outcomeVersionId}|${payload.settlementRequestId}|${acknowledgementId}|${authority.canonical_settlement_hash}`
     );
 
+    persistenceStartedAt = new Date();
+    client = await pool.connect();
+    await client.query("begin");
+    transactionOpen = true;
     await client.query(
       `
 insert into game_engine.outcome_settlement_acknowledgements (
@@ -1041,14 +1207,31 @@ on conflict (draw_id, event_type, evidence_reference) do nothing
         completionHash,
       ]
     );
+    persistenceCompletedAt = new Date();
     await appendProcessingEvidence(
       client,
       message,
       "SUCCESS",
       "Authoritative Settlement acknowledgement bound.",
-      payload
+      payload,
+      {
+        consumedAt,
+        consumerProcessingStartedAt,
+        processingStartedAt,
+        processingCompletedAt: new Date(),
+        connectionRequestedAt,
+        connectionAcquiredAt,
+        lockAttemptedAt,
+        lockAcquiredAt,
+        claimAcquiredAt,
+        authorityStartedAt,
+        authorityCompletedAt,
+        persistenceStartedAt,
+        persistenceCompletedAt,
+      }
     );
     await client.query("commit");
+    transactionOpen = false;
 
     return {
       eventId,
@@ -1066,23 +1249,63 @@ on conflict (draw_id, event_type, evidence_reference) do nothing
       },
     };
   } catch (error) {
-    await client.query("rollback").catch(() => undefined);
-    const classified = classifyError(error);
-    const evidenceClient = await pool.connect();
-    try {
-      await appendProcessingEvidence(
-        evidenceClient,
-        message,
-        classified.workerClassification,
-        classified.message,
-        payload
-      );
-    } finally {
-      evidenceClient.release();
+    if (transactionOpen && client) {
+      await client.query("rollback").catch(() => undefined);
+      transactionOpen = false;
     }
+    const classified = classifyError(error);
+    await appendProcessingEvidence(
+      pool,
+      message,
+      classified.workerClassification,
+      classified.message,
+      payload,
+      {
+        consumedAt,
+        consumerProcessingStartedAt,
+        processingStartedAt,
+        processingCompletedAt: new Date(),
+        connectionRequestedAt,
+        connectionAcquiredAt,
+        lockAttemptedAt,
+        lockAcquiredAt,
+        claimAcquiredAt,
+        authorityStartedAt,
+        authorityCompletedAt,
+        persistenceStartedAt,
+        persistenceCompletedAt,
+      }
+    );
     throw classified;
   } finally {
-    client.release();
-    await pool.end();
+    if (client) {
+      if (sessionLockHeld) {
+        await client.query(
+          "select pg_advisory_unlock(hashtextextended($1, 0))",
+          [lockScope]
+        ).catch(() => undefined);
+      }
+      client.release();
+    }
+    await closeWorkerPostgresPool(pool);
   }
+}
+
+export async function handleCanonicalSettlementRequest(
+  message: QueueMessage
+): Promise<FinancialWorkerHandlingResult> {
+  let payload: CanonicalSettlementPayload;
+  try {
+    payload = parsePayload(message);
+  } catch (error) {
+    const classified = classifyError(error);
+    await recordCanonicalSettlementFinalClassification(
+      message,
+      "TERMINAL_INVALID",
+      classified.message
+    );
+    throw classified;
+  }
+
+  return handleCanonicalSettlementRequestCore(message, payload);
 }

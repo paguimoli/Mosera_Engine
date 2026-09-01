@@ -10,6 +10,7 @@ namespace CreditWalletService.Infrastructure;
 public sealed class CanonicalWalletOperationRepository(ServiceConfiguration configuration)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private const int MaximumTransientAttempts = 3;
 
     public bool Configured => !string.IsNullOrWhiteSpace(configuration.Database.Url);
 
@@ -20,7 +21,7 @@ public sealed class CanonicalWalletOperationRepository(ServiceConfiguration conf
         Guid operationId,
         string correlationId,
         CancellationToken cancellationToken)
-        => await ExecuteCoreAsync(request, idempotencyKey, canonicalRequestHash, operationId,
+        => await ExecuteWithTransientRetryAsync(request, idempotencyKey, canonicalRequestHash, operationId,
             correlationId, allowIncompleteRecovery: false, cancellationToken);
 
     public async Task<CanonicalWalletOperationResponse> RecoverExistingAsync(
@@ -30,8 +31,47 @@ public sealed class CanonicalWalletOperationRepository(ServiceConfiguration conf
         Guid operationId,
         string correlationId,
         CancellationToken cancellationToken)
-        => await ExecuteCoreAsync(request, idempotencyKey, canonicalRequestHash, operationId,
+        => await ExecuteWithTransientRetryAsync(request, idempotencyKey, canonicalRequestHash, operationId,
             correlationId, allowIncompleteRecovery: true, cancellationToken);
+
+    private async Task<CanonicalWalletOperationResponse> ExecuteWithTransientRetryAsync(
+        CanonicalWalletOperationRequest request,
+        string idempotencyKey,
+        string canonicalRequestHash,
+        Guid operationId,
+        string correlationId,
+        bool allowIncompleteRecovery,
+        CancellationToken cancellationToken)
+    {
+        var transientFailures = new List<TransientDatabaseFailure>();
+        for (var attempt = 1; attempt <= MaximumTransientAttempts; attempt += 1)
+        {
+            try
+            {
+                return await ExecuteCoreAsync(
+                    request,
+                    idempotencyKey,
+                    canonicalRequestHash,
+                    operationId,
+                    correlationId,
+                    allowIncompleteRecovery,
+                    transientFailures,
+                    terminalizeTransientFailure: attempt == MaximumTransientAttempts,
+                    cancellationToken: cancellationToken);
+            }
+            catch (PostgresException error) when (IsTransient(error) && attempt < MaximumTransientAttempts)
+            {
+                transientFailures.Add(new TransientDatabaseFailure(
+                    attempt,
+                    error.SqlState,
+                    error.MessageText,
+                    DateTimeOffset.UtcNow));
+                await Task.Delay(TimeSpan.FromMilliseconds(25 * attempt), cancellationToken);
+            }
+        }
+
+        throw new InvalidOperationException("The bounded wallet database retry loop exited unexpectedly.");
+    }
 
     public async Task<CanonicalWalletOperationResponse> CompleteRecoveredEffectAsync(
         CanonicalWalletOperationRequest request,
@@ -44,6 +84,7 @@ public sealed class CanonicalWalletOperationRepository(ServiceConfiguration conf
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var startedAt = DateTimeOffset.UtcNow;
+        await AcquireWalletLockAsync(connection, transaction, request.WalletId, cancellationToken);
         await AcquireIdempotencyLockAsync(connection, transaction, idempotencyKey, cancellationToken);
         var existing = await FindRequestAsync(connection, transaction, idempotencyKey, cancellationToken)
             ?? throw new CanonicalWalletOperationConflictException("Canonical wallet request is missing.");
@@ -106,12 +147,15 @@ where a.operation_id = @operation_id;
         Guid operationId,
         string correlationId,
         bool allowIncompleteRecovery,
+        IReadOnlyList<TransientDatabaseFailure> transientFailures,
+        bool terminalizeTransientFailure,
         CancellationToken cancellationToken)
     {
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var startedAt = DateTimeOffset.UtcNow;
 
+        await AcquireWalletLockAsync(connection, transaction, request.WalletId, cancellationToken);
         await AcquireIdempotencyLockAsync(connection, transaction, idempotencyKey, cancellationToken);
         var existing = await FindRequestAsync(connection, transaction, idempotencyKey, cancellationToken);
         if (existing is not null)
@@ -135,6 +179,9 @@ where a.operation_id = @operation_id;
             }
             if (terminal is not null)
             {
+                await AppendTransientFailuresAsync(
+                    connection, transaction, existing.OperationId, transientFailures,
+                    request.AuditMetadata, cancellationToken);
                 await AppendAttemptAsync(
                     connection, transaction, existing.OperationId, "REUSED", startedAt,
                     null, null, terminal.ResultHash, request.AuditMetadata, cancellationToken);
@@ -149,11 +196,15 @@ where a.operation_id = @operation_id;
                 connection, transaction, request, idempotencyKey, canonicalRequestHash,
                 operationId, correlationId, cancellationToken);
         }
-        catch (PostgresException error)
+        catch (PostgresException error) when (!IsTransient(error))
         {
             await transaction.RollbackAsync(cancellationToken);
             throw new CanonicalWalletOperationValidationException(error.MessageText);
         }
+
+        await AppendTransientFailuresAsync(
+            connection, transaction, operationId, transientFailures,
+            request.AuditMetadata, cancellationToken);
 
         if (request.Operation is WalletOperationType.ISSUE or WalletOperationType.EXPIRE)
         {
@@ -192,7 +243,7 @@ where a.operation_id = @operation_id;
                 false,
                 correlationId);
         }
-        catch (PostgresException error)
+        catch (PostgresException error) when (!IsTransient(error) || terminalizeTransientFailure)
         {
             await transaction.RollbackAsync("before_wallet_effect", cancellationToken);
             var terminal = await AppendTerminalResultAsync(
@@ -227,6 +278,37 @@ where a.operation_id = @operation_id;
                 request.AuditMetadata, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             throw;
+        }
+    }
+
+    private static bool IsTransient(PostgresException error) =>
+        error.SqlState is PostgresErrorCodes.DeadlockDetected or PostgresErrorCodes.SerializationFailure;
+
+    private static async Task AppendTransientFailuresAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid operationId,
+        IReadOnlyList<TransientDatabaseFailure> failures,
+        IReadOnlyDictionary<string, object?>? auditMetadata,
+        CancellationToken cancellationToken)
+    {
+        foreach (var failure in failures)
+        {
+            var metadata = auditMetadata?.ToDictionary(entry => entry.Key, entry => entry.Value) ?? [];
+            metadata["databaseRetryAttempt"] = failure.Attempt;
+            metadata["sqlState"] = failure.SqlState;
+            metadata["failedAt"] = failure.FailedAt;
+            await AppendAttemptAsync(
+                connection,
+                transaction,
+                operationId,
+                "FAILED",
+                failure.FailedAt,
+                "TRANSIENT_DATABASE_RETRY",
+                failure.Message,
+                null,
+                metadata,
+                cancellationToken);
         }
     }
 
@@ -406,6 +488,20 @@ limit 1;
         command.Transaction = transaction;
         command.CommandText = "select pg_advisory_xact_lock(hashtextextended(@key, 0));";
         command.Parameters.AddWithValue("key", idempotencyKey);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task AcquireWalletLockAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid walletId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            "select pg_advisory_xact_lock(hashtextextended('canonical-wallet:' || @wallet_id::text, 0));";
+        command.Parameters.AddWithValue("wallet_id", walletId);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -843,4 +939,10 @@ values (
         string ReferenceType,
         string ReferenceId,
         IReadOnlyDictionary<string, object?> Payload);
+
+    private sealed record TransientDatabaseFailure(
+        int Attempt,
+        string SqlState,
+        string Message,
+        DateTimeOffset FailedAt);
 }

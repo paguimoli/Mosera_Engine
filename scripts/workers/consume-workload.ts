@@ -10,6 +10,7 @@ import {
   recordCompiledWorkerRuntime,
   startCompiledWorkerHeartbeat,
 } from "@/src/domains/workers/worker-runtime-readiness";
+import { closeSharedWorkerPostgresPool } from "@/src/lib/database/resilient-postgres-pool";
 
 const allowedCategories: QueueWorkloadCategory[] = [
   "CRITICAL_FINANCIAL",
@@ -66,6 +67,7 @@ async function main() {
     await consumer?.close();
     await stopRuntimeHeartbeat?.("STOPPED");
     await closeCompiledWorkerRuntimePool();
+    await closeSharedWorkerPostgresPool();
     process.exit(0);
   }
 

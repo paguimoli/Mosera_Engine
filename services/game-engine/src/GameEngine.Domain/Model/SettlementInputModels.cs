@@ -28,4 +28,38 @@ public sealed record SettlementInput(
     DateTimeOffset IssuedAt,
     IReadOnlyDictionary<string, object?> Provenance,
     string CanonicalPayloadJson,
-    string CanonicalPayloadHash);
+    string CanonicalPayloadHash,
+    string InputKind = "ITEM");
+
+public sealed record TicketDrawSettlementItemEvidence(
+    Guid TicketItemId,
+    int ItemIndex,
+    long StakeMinor,
+    Guid MathEvaluationId,
+    Guid MathEvaluationCertificateId,
+    string MathEvaluationCertificateHash,
+    PrizeOutcome EvaluationOutcome,
+    string PrizeTier,
+    long GrossReturnMinor,
+    long RefundReturnMinor,
+    long LossStakeMinor,
+    string PrizeFactsHash);
+
+public sealed record TicketDrawSettlementAggregateEvidence(
+    Guid SettlementInputId,
+    Guid TicketId,
+    Guid DrawId,
+    Guid ProductVersionId,
+    string ProductVersionHash,
+    string Currency,
+    long TotalReservedStakeMinor,
+    long PreCapGrossReturnMinor,
+    long? EffectiveCapMinor,
+    string CapScope,
+    long PostCapGrossReturnMinor,
+    long CaptureAmountMinor,
+    long ReleaseAmountMinor,
+    long CreditAmountMinor,
+    string ItemEvidenceHash,
+    string CanonicalAggregateHash,
+    IReadOnlyList<TicketDrawSettlementItemEvidence> Items);

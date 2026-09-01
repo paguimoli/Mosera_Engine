@@ -151,6 +151,23 @@ public sealed record HotSpotMultiDrawPlan(
     string CanonicalPlanHash,
     bool Duplicate);
 
+public sealed record HotSpotMultiDrawCancellationRequest(
+    Guid PurchaseId,
+    string IdempotencyKey,
+    string ReasonCode,
+    string RequestedBy,
+    string CorrelationId);
+
+public sealed record HotSpotMultiDrawCancellationResult(
+    Guid CancellationId,
+    Guid PurchaseId,
+    int CancelledParticipationCount,
+    long ReleasedAmountMinor,
+    Guid WalletOperationId,
+    string EvidenceHash,
+    DateTimeOffset CancelledAt,
+    bool Duplicate);
+
 public sealed record DurableSchedulerOperationalStatus(
     bool DurablePersistenceReady,
     bool AdvisoryLockingReady,

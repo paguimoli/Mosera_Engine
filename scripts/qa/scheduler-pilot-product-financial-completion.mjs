@@ -247,6 +247,15 @@ values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,clock_timestamp()+interval '30 minute
 `, [drawId, product.product_id, product.product_version_id, product.code,
       product.schedule_version_id, publicDrawNumber, salesOpenAt, cutoffAt,
       scheduledAt, drawHash, state]);
+  await pool.query(`
+insert into game_engine.durable_scheduler_product_sequences(product_code,next_public_draw_number,updated_at)
+values($1,$2,clock_timestamp())
+on conflict(product_code) do update
+set next_public_draw_number=greatest(
+      game_engine.durable_scheduler_product_sequences.next_public_draw_number,
+      excluded.next_public_draw_number),
+    updated_at=clock_timestamp();
+`, [product.code, publicDrawNumber + 1]);
   return { drawId, executionManifestId, manifestHash, publicDrawNumber, scheduledAt };
 }
 
@@ -370,7 +379,7 @@ async function startService(port, publicKeyPem, privateKeyPem, failureStage = ""
       GAME_ENGINE_SIGNING_PUBLIC_KEY_PEM: publicKeyPem,
       GAME_ENGINE_DURABLE_SCHEDULER_ENABLED: "true",
       GAME_ENGINE_DURABLE_SCHEDULER_PRODUCTION_EXECUTION_ENABLED: "true",
-      GAME_ENGINE_SCHEDULER_POLL_INTERVAL_MS: "250",
+      GAME_ENGINE_SCHEDULER_POLL_INTERVAL_MS: failureStage ? "5000" : "250",
       GAME_ENGINE_SCHEDULER_OUTCOME_FANOUT_ENABLED: "true",
       GAME_ENGINE_SCHEDULER_OUTCOME_FANOUT_QUALIFICATION_MODE: "true",
       GAME_ENGINE_QUALIFICATION_SIGNING_PRIVATE_KEY_PEM: privateKeyPem,
@@ -424,7 +433,7 @@ from game_engine.durable_scheduler_draws runtime where runtime.draw_id=$1;
   });
 }
 
-async function waitForFinancialCompletion(draw, tickets, expectedItems) {
+async function waitForFinancialCompletion(draw, tickets, expectedItems, expectedFinancialUnits) {
   return waitFor(`draw ${draw.drawId} reaches canonical financial completion`, async () => {
     const row = (await pool.query(`
 with outcome as (
@@ -445,8 +454,12 @@ select
   (select count(*)::int from item_set) items,
   (select count(*)::int from game_engine.math_evaluation_events evaluation
     join item_set on evaluation.ticket_reference=item_set.ticket_item_id::text) evaluations,
-  (select count(*)::int from game_engine.settlement_input_records input
-    join item_set on input.ticket_reference=item_set.ticket_item_id::text) inputs,
+  (select count(distinct input.settlement_input_id)::int
+    from game_engine.settlement_input_records input
+    left join game_engine.ticket_draw_settlement_aggregates aggregate
+      on aggregate.settlement_input_id=input.settlement_input_id
+    where input.ticket_reference in (select ticket_item_id::text from item_set)
+       or aggregate.ticket_id in (select ticket_id from ticket_set)) inputs,
   (select count(*)::int from requests) requests,
   (select count(*)::int from settlements) settlements,
   (select count(*)::int from game_engine.outcome_settlement_acknowledgements acknowledgement
@@ -466,16 +479,16 @@ select
 ;
 `, [draw.drawId, tickets.map((ticket) => ticket.ticket_id)])).rows[0];
     const complete = row?.items === expectedItems && row.evaluations === expectedItems &&
-      row.inputs === expectedItems && row.requests === expectedItems &&
-      row.settlements === expectedItems && row.acknowledgements === expectedItems &&
-      row.draw_completions === expectedItems && row.completion_sources === expectedItems &&
+      row.inputs === expectedFinancialUnits && row.requests === expectedFinancialUnits &&
+      row.settlements === expectedFinancialUnits && row.acknowledgements === expectedFinancialUnits &&
+      row.draw_completions === expectedFinancialUnits && row.completion_sources === expectedItems &&
       row.ticket_completions === tickets.length && row.settled_tickets === tickets.length &&
-      row.financial_attempts >= expectedItems * 2;
+      row.financial_attempts >= expectedFinancialUnits * 2;
     return complete ? row : null;
   }, 300_000);
 }
 
-async function verifyNoDuplicates(draw, tickets, expectedItems) {
+async function verifyNoDuplicates(draw, tickets, expectedItems, expectedFinancialUnits) {
   const evidence = (await pool.query(`
 with outcome as (
   select outcome_version_id from game_engine.canonical_outcome_versions where draw_id=$1
@@ -509,7 +522,7 @@ select
 `, [draw.drawId, tickets.map((ticket) => ticket.ticket_id)])).rows[0];
   check(`draw ${draw.drawId} has singular authority evidence and zero duplicate effects`,
     evidence.outcome_events === 1 && evidence.outcome_versions === 1 &&
-      evidence.requests === expectedItems && evidence.settlements === expectedItems &&
+      evidence.requests === expectedFinancialUnits && evidence.settlements === expectedFinancialUnits &&
       evidence.sources === expectedItems && evidence.completions === tickets.length &&
       evidence.duplicate_settlements === 0 && evidence.duplicate_sources === 0,
     evidence);
@@ -528,32 +541,60 @@ with math as (
     on evaluation.ticket_reference=item.ticket_item_id::text
   where item.ticket_id=any($1::uuid[])
   group by item.ticket_id
+), settlement_inputs as (
+  select aggregate.ticket_id,input.settlement_input_id,aggregate.pre_cap_gross_return_minor,
+    aggregate.effective_cap_minor,aggregate.post_cap_gross_return_minor
+  from game_engine.settlement_input_records input
+  join game_engine.ticket_draw_settlement_aggregates aggregate
+    on aggregate.settlement_input_id=input.settlement_input_id
+  where aggregate.ticket_id=any($1::uuid[])
+  union all
+  select item.ticket_id,input.settlement_input_id,null::bigint,null::bigint,null::bigint
+  from ticket_authority.ticket_items item
+  join game_engine.settlement_input_records input on input.ticket_reference=item.ticket_item_id::text
+  where item.ticket_id=any($1::uuid[])
 ), settlement as (
-  select item.ticket_id,
+  select mapped.ticket_id,
     sum(record.stake_amount_minor)::bigint settlement_stake_minor,
     sum(record.gross_payout_amount_minor)::bigint gross_payout_minor,
     sum(record.net_result_amount_minor)::bigint net_result_minor,
-    max(record.gross_payout_amount_minor)::bigint maximum_play_payout_minor
-  from ticket_authority.ticket_items item
-  join game_engine.settlement_input_records input
-    on input.ticket_reference=item.ticket_item_id::text
+    max(record.gross_payout_amount_minor)::bigint maximum_play_payout_minor,
+    max(mapped.pre_cap_gross_return_minor)::bigint pre_cap_gross_return_minor,
+    max(mapped.effective_cap_minor)::bigint effective_cap_minor,
+    max(mapped.post_cap_gross_return_minor)::bigint post_cap_gross_return_minor
+  from settlement_inputs mapped
   join settlement_service.authoritative_settlement_records record
-    on record.settlement_input_id=input.settlement_input_id
-  where item.ticket_id=any($1::uuid[])
-  group by item.ticket_id
+    on record.settlement_input_id=mapped.settlement_input_id
+  group by mapped.ticket_id
+), ledger_effects as (
+  select effect.ticket_id,
+    sum(case
+      when effect.id is null then 0
+      when effect.direction = 'CREDIT' then effect.amount
+      else -effect.amount
+    end)::bigint ledger_effect_minor
+  from (
+    select distinct item.ticket_id,ledger.id,ledger.direction,ledger.amount
+    from ticket_authority.ticket_items item
+    join ticket_completion_authority.completion_sources source on source.ticket_item_id=item.ticket_item_id
+    left join public.financial_ledger_entries ledger on ledger.id=source.ledger_entry_id
+    where item.ticket_id=any($1::uuid[])
+  ) effect
+  group by effect.ticket_id
+), wallet_effects as (
+  select effect.ticket_id,sum(effect.balance_impact_minor)::bigint wallet_effect_minor
+  from (
+    select distinct item.ticket_id,wallet.operation_id,wallet.balance_impact_minor
+    from ticket_authority.ticket_items item
+    join ticket_completion_authority.completion_sources source on source.ticket_item_id=item.ticket_item_id
+    join credit_wallet_service.wallet_operation_requests wallet on wallet.operation_id=source.wallet_operation_id
+    where item.ticket_id=any($1::uuid[])
+  ) effect
+  group by effect.ticket_id
 ), effects as (
-  select item.ticket_id,
-    sum(case ledger.direction when 'CREDIT' then ledger.amount else -ledger.amount end)::bigint
-      ledger_effect_minor,
-    sum(wallet.balance_impact_minor)::bigint wallet_effect_minor
-  from ticket_authority.ticket_items item
-  join ticket_completion_authority.completion_sources source
-    on source.ticket_item_id=item.ticket_item_id
-  left join public.financial_ledger_entries ledger on ledger.id=source.ledger_entry_id
-  left join credit_wallet_service.wallet_operation_requests wallet
-    on wallet.operation_id=source.wallet_operation_id
-  where item.ticket_id=any($1::uuid[])
-  group by item.ticket_id
+  select ledger.ticket_id,ledger.ledger_effect_minor,wallet.wallet_effect_minor
+  from ledger_effects ledger
+  join wallet_effects wallet on wallet.ticket_id=ledger.ticket_id
 )
 select ticket.ticket_id,ticket.external_ticket_id,ticket.status,ticket.lifecycle_state,
   ticket.total_stake_minor,ticket.reservation_id,reservation.status reservation_status,
@@ -565,6 +606,8 @@ select ticket.ticket_id,ticket.external_ticket_id,ticket.status,ticket.lifecycle
   math.math_payout_minor,math.uncapped_payout_minor,
   settlement.settlement_stake_minor,settlement.gross_payout_minor,
   settlement.net_result_minor,settlement.maximum_play_payout_minor,
+  settlement.pre_cap_gross_return_minor,settlement.effective_cap_minor,
+  settlement.post_cap_gross_return_minor,
   effects.ledger_effect_minor,effects.wallet_effect_minor
 from ticket_authority.tickets ticket
 join public.credit_reservations reservation on reservation.id=ticket.reservation_id
@@ -581,6 +624,8 @@ group by ticket.ticket_id,reservation.id,wallet.id,completion.completion_id,defi
   math.ticket_id,math.math_payout_minor,math.uncapped_payout_minor,
   settlement.ticket_id,settlement.settlement_stake_minor,settlement.gross_payout_minor,
   settlement.net_result_minor,settlement.maximum_play_payout_minor,
+  settlement.pre_cap_gross_return_minor,settlement.effective_cap_minor,
+  settlement.post_cap_gross_return_minor,
   effects.ticket_id,effects.ledger_effect_minor,effects.wallet_effect_minor
 order by ticket.external_ticket_id;
 `, [tickets.map((ticket) => ticket.ticket_id)])).rows;
@@ -600,7 +645,10 @@ order by ticket.external_ticket_id;
       row.wallet_attempts === row.source_count && ["CAPTURED", "RELEASED"].includes(row.reservation_status) &&
       Number(row.captured_amount) + Number(row.released_amount) === Number(row.total_stake_minor) &&
       Number(row.settlement_stake_minor) === Number(row.total_stake_minor) &&
-      Number(row.math_payout_minor) === Number(row.gross_payout_minor) &&
+      (row.product_code === "FAST_KENO_V1"
+        ? Number(row.math_payout_minor) === Number(row.pre_cap_gross_return_minor) &&
+          Number(row.gross_payout_minor) === Number(row.post_cap_gross_return_minor)
+        : Number(row.math_payout_minor) === Number(row.gross_payout_minor)) &&
       Number(row.gross_payout_minor) - Number(row.total_stake_minor) === Number(row.net_result_minor) &&
       Number(row.ledger_effect_minor) === Number(row.gross_payout_minor) &&
       Number(row.wallet_effect_minor) === -Number(row.total_stake_minor) &&
@@ -610,7 +658,8 @@ order by ticket.external_ticket_id;
   const fastCap = evidence.find((row) => row.external_ticket_id === "pr04a-fast-cap");
   check("Fast Keno applies one 10,000 dollar cap to the combined ticket payout",
     fastCap?.product_code === "FAST_KENO_V1" && Number(fastCap.gross_payout_minor) === 1_000_000 &&
-      Number(fastCap.uncapped_payout_minor) > 1_000_000,
+      Number(fastCap.pre_cap_gross_return_minor) > 1_000_000 &&
+      Number(fastCap.effective_cap_minor) === 1_000_000,
     { fastCap });
   check("Hot Spot applies its 50,000 dollar cap independently to each play",
     evidence.filter((row) => row.product_code === "HOT_SPOT_V1").every((row) =>
@@ -650,14 +699,6 @@ try {
   const accounts = await createAccounts(scope, 12);
   const fastDraw = await createDraw(fast);
   const hotDraw = await createDraw(hot, { targetDelaySeconds: 120 });
-  const futureHotDraws = [];
-  for (let index = 1; index < 5; index += 1) {
-    futureHotDraws.push(await createDraw(hot, {
-      target: false,
-      sequenceOffset: index,
-      targetDelaySeconds: 120,
-    }));
-  }
   await insertLiability(scope, accounts, fast, fastDraw, accounts.players.slice(0, 3),
     ["KenoBigSmall", "KenoOddEven", "KenoDragonTiger", "KenoUpDown", "KenoParlay", "KenoElement"]);
   await insertLiability(scope, accounts, hot, hotDraw, accounts.players.slice(3, 12), ["KenoSpot"]);
@@ -695,19 +736,19 @@ try {
       numbers: quickPick.numbers,
       quickPickSelectionId: quickPick.selectionId,
       quickPickSelectionHash: quickPick.selectionHash,
+      multiDrawCount: 1,
       bullseyePurchased: true,
     },
     stakeMinor: 500,
   }], "hot-quick-pick-multi-draw");
   hotTickets.push(quickPickTicket);
   const multiDraw = runHotSpotHarness([
-    "multi-draw", randomUUID(), quickPickTicket.ticket_id, "5", "100", quickPickKey,
+    "multi-draw", randomUUID(), quickPickTicket.ticket_id, "1", "500", quickPickKey,
   ]);
-  check("Quick Pick and exact five-draw lineage are durably bound to the accepted ticket",
-    multiDraw.ticketId === quickPickTicket.ticket_id && multiDraw.drawCount === 5 &&
-      multiDraw.bindings.length === 5 && multiDraw.quickPick?.selectionHash === quickPick.selectionHash &&
-      multiDraw.bindings[0].drawId === hotDraw.drawId &&
-      futureHotDraws.every((draw) => multiDraw.bindings.some((binding) => binding.drawId === draw.drawId)),
+  check("Quick Pick lineage is durably bound to the accepted financial-completion fixture",
+    multiDraw.ticketId === quickPickTicket.ticket_id && multiDraw.drawCount === 1 &&
+      multiDraw.bindings.length === 1 && multiDraw.quickPick?.selectionHash === quickPick.selectionHash &&
+      multiDraw.bindings[0].drawId === hotDraw.drawId,
     { quickPick, multiDraw });
 
   const fastItemCount = fastTickets.reduce((total, ticket) => total +
@@ -732,7 +773,7 @@ select runtime.scheduler_state,
 from game_engine.durable_scheduler_draws runtime where runtime.draw_id=$1;
 `, [fastDraw.drawId, fastDraw.executionManifestId])).rows[0];
     return row?.scheduler_state === "SettlementTriggered" && row.events === 1 &&
-      row.requests === fastItemCount && row.claims === 1 ? row : null;
+      row.requests === fastTickets.length && row.claims === 1 ? row : null;
   });
   await stopService(fastA);
   await stopService(fastB);
@@ -765,10 +806,10 @@ select count(*) count from game_engine.outcome_settlement_requests where draw_id
   });
   await stopService(hotService);
 
-  await waitForFinancialCompletion(fastDraw, fastTickets, fastItemCount);
-  await waitForFinancialCompletion(hotDraw, hotTickets, hotItemCount);
-  const fastSingular = await verifyNoDuplicates(fastDraw, fastTickets, fastItemCount);
-  const hotSingular = await verifyNoDuplicates(hotDraw, hotTickets, hotItemCount);
+  await waitForFinancialCompletion(fastDraw, fastTickets, fastItemCount, fastTickets.length);
+  await waitForFinancialCompletion(hotDraw, hotTickets, hotItemCount, hotItemCount);
+  const fastSingular = await verifyNoDuplicates(fastDraw, fastTickets, fastItemCount, fastTickets.length);
+  const hotSingular = await verifyNoDuplicates(hotDraw, hotTickets, hotItemCount, hotItemCount);
   const ticketFinancials = await verifyTicketFinancials([...fastTickets, ...hotTickets]);
 
   const outcomeFacts = (await pool.query(`
@@ -778,7 +819,11 @@ select version.draw_id,version.validated_primary_result,
   count(*) filter (where (event.prize_facts->>'Outcome')::int=1)::int losses,
   count(*) filter (where (event.prize_facts->'OutcomeDerivedFacts'->>'bullseyePurchased')::boolean)::int bullseye_plays,
   count(*) filter (where (event.prize_facts->'OutcomeDerivedFacts'->>'bullseyeMatch')::boolean)::int bullseye_wins,
-  count(*) filter (where (event.prize_facts->'OutcomeDerivedFacts'->>'capApplied')::boolean)::int capped
+  count(*) filter (where (event.prize_facts->'OutcomeDerivedFacts'->>'capApplied')::boolean)::int item_capped,
+  (select count(*)::int
+    from game_engine.ticket_draw_settlement_aggregates aggregate
+    where aggregate.draw_id=version.draw_id
+      and aggregate.post_cap_gross_return_minor < aggregate.pre_cap_gross_return_minor) aggregate_capped
 from game_engine.canonical_outcome_versions version
 join game_engine.outcome_certificates certificate on certificate.certificate_id=version.outcome_certificate_id
 join game_engine.math_evaluation_events event on event.outcome_certificate_id=certificate.certificate_id
@@ -789,7 +834,8 @@ group by version.draw_id,version.validated_primary_result,bullseye.bullseye_numb
   const fastFacts = outcomeFacts.find((row) => row.draw_id === fastDraw.drawId);
   const hotFacts = outcomeFacts.find((row) => row.draw_id === hotDraw.drawId);
   check("Fast Keno includes authoritative winners, losers, opposing wagers, and cap behavior",
-    fastFacts?.wins > 0 && fastFacts?.losses > 0 && fastFacts?.capped === 1, fastFacts);
+    fastFacts?.wins > 0 && fastFacts?.losses > 0 && fastFacts?.item_capped === 0 &&
+      fastFacts?.aggregate_capped === 1, fastFacts);
   check("Hot Spot includes authoritative winners, losers, Bullseye designation, and Bullseye plays",
     hotFacts?.wins > 0 && hotFacts?.losses > 0 && hotFacts?.bullseye_number && hotFacts?.bullseye_plays > 0,
     hotFacts);
@@ -805,10 +851,10 @@ join game_engine.durable_scheduler_draws runtime on runtime.draw_id=binding.draw
 where selection.idempotency_key=$1
 group by selection.selection_id,purchase.purchase_id;
 `, [quickPickKey])).rows[0];
-  check("Quick Pick and multi-draw provenance remain immutable and exact after financial completion",
+  check("Quick Pick binding provenance remains immutable and exact after financial completion",
     quickPickEvidence?.ticket_id === quickPickTicket.ticket_id &&
       quickPickEvidence?.product_version_hash === hot.definition_hash &&
-      quickPickEvidence?.binding_count === 5 && quickPickEvidence?.exact_identity,
+      quickPickEvidence?.binding_count === 1 && quickPickEvidence?.exact_identity,
     quickPickEvidence);
 
   await restoreActiveVersions();

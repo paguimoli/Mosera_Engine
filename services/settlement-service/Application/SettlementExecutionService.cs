@@ -75,20 +75,26 @@ public sealed class SettlementExecutionService(SettlementExecutionRepository rep
     public static SettlementComputation ComputeSettlement(SettlementRequestExecutionContext request)
     {
         var outcome = NormalizeOutcome(request.StoredSettlementInput.EvaluationOutcome);
-        var grossPayout = outcome switch
+        var aggregateGross = request.StoredSettlementInput.InputKind == "TICKET_DRAW_AGGREGATE"
+            ? request.StoredSettlementInput.AggregatePostCapGrossReturnMinor
+                ?? throw new SettlementExecutionValidationException(["Aggregate SettlementInput is missing post-cap gross return."])
+            : (long?)null;
+        var grossPayout = aggregateGross ?? (outcome switch
         {
             "WIN" => ComputeWinPayout(request.AcceptedStakeAmountMinor, request.StoredSettlementInput.PayoutUnits, request.StoredSettlementInput.Multiplier),
             "LOSS" => 0,
-            "PUSH" when request.StoredSettlementInput.PrizeTier == "PAYOUT_CAP_EXHAUSTED" => 0,
-            "PUSH" when request.StoredSettlementInput.Multiplier > 0m => ComputeWinPayout(
-                request.AcceptedStakeAmountMinor,
-                request.StoredSettlementInput.PayoutUnits,
-                request.StoredSettlementInput.Multiplier),
             "PUSH" => request.AcceptedStakeAmountMinor,
             "VOID" => request.AcceptedStakeAmountMinor,
             "REJECTED" => 0,
             _ => throw new SettlementExecutionValidationException([$"Unsupported SettlementInput outcome {request.StoredSettlementInput.EvaluationOutcome}."])
-        };
+        });
+        if (request.StoredSettlementInput.InputKind == "TICKET_DRAW_AGGREGATE" &&
+            (request.StoredSettlementInput.AggregateStakeAmountMinor != request.AcceptedStakeAmountMinor ||
+             request.StoredSettlementInput.AggregateCaptureAmountMinor != request.AcceptedStakeAmountMinor ||
+             request.StoredSettlementInput.AggregateCreditAmountMinor != grossPayout))
+        {
+            throw new SettlementExecutionValidationException(["Aggregate SettlementInput does not match authoritative stake/capture/credit evidence."]);
+        }
         var netResult = grossPayout - request.AcceptedStakeAmountMinor;
         var settlementId = CreateDeterministicGuid($"{request.SettlementRequestId:N}:{request.CanonicalRequestHash}:{outcome}");
         var provenance = new SortedDictionary<string, object?>(StringComparer.Ordinal)
@@ -103,6 +109,8 @@ public sealed class SettlementExecutionService(SettlementExecutionRepository rep
             ["scopeHash"] = request.ScopeHash,
             ["policyVersion"] = request.SettlementPolicyVersion,
             ["prizeFactsHash"] = request.StoredSettlementInput.PrizeFactsHash,
+            ["settlementInputKind"] = request.StoredSettlementInput.InputKind,
+            ["aggregateItemEvidenceHash"] = request.StoredSettlementInput.AggregateItemEvidenceHash,
             ["settlementInputHash"] = request.SettlementInputHash,
             ["settlementRequestHash"] = request.CanonicalRequestHash
         };

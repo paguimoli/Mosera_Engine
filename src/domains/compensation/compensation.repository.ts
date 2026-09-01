@@ -1,4 +1,8 @@
-import { Pool, type QueryResultRow } from "pg";
+import { type Pool, type QueryResultRow } from "pg";
+import {
+  closeApplicationPostgresPool,
+  createApplicationPostgresPool,
+} from "@/src/lib/database/resilient-postgres-pool";
 
 import type {
   CompensationConfiguration,
@@ -25,7 +29,7 @@ function databasePool() {
       "Compensation Authority requires DATABASE_URL."
     );
   }
-  pool ??= new Pool({
+  pool ??= createApplicationPostgresPool("compensation-repository", {
     connectionString: databaseUrl,
     max: 6,
     idleTimeoutMillis: 5_000,
@@ -499,6 +503,6 @@ export async function compensationPersistenceReadiness() {
 }
 
 export async function closeCompensationPool() {
-  if (pool) await pool.end();
+  await closeApplicationPostgresPool(pool);
   pool = null;
 }

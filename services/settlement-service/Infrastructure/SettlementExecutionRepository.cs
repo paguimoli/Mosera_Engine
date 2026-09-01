@@ -84,10 +84,25 @@ select
   input.prize_facts_hash,
   input.payout_units,
   input.multiplier,
-  input.canonical_payload_hash
+  input.canonical_payload_hash,
+  input.input_kind,
+  aggregate.ticket_id aggregate_ticket_id,
+  aggregate.draw_id aggregate_draw_id,
+  aggregate.item_count,
+  aggregate.total_reserved_stake_minor,
+  aggregate.pre_cap_gross_return_minor,
+  aggregate.effective_cap_minor,
+  aggregate.cap_scope,
+  aggregate.post_cap_gross_return_minor,
+  aggregate.capture_amount_minor,
+  aggregate.release_amount_minor,
+  aggregate.credit_amount_minor,
+  aggregate.item_evidence_hash
 from settlement_service.settlement_requests request
 join game_engine.settlement_input_records input
   on input.settlement_input_id = request.settlement_input_id
+left join game_engine.ticket_draw_settlement_aggregates aggregate
+  on aggregate.settlement_input_id = input.settlement_input_id
 where request.settlement_request_id = @settlement_request_id;
 """;
         command.Parameters.AddWithValue("settlement_request_id", settlementRequestId);
@@ -666,7 +681,20 @@ where settlement_request_id = @settlement_request_id;
             reader.GetString(reader.GetOrdinal("prize_facts_hash")),
             reader.GetDecimal(reader.GetOrdinal("payout_units")),
             reader.GetDecimal(reader.GetOrdinal("multiplier")),
-            reader.GetString(reader.GetOrdinal("canonical_payload_hash")));
+            reader.GetString(reader.GetOrdinal("canonical_payload_hash")),
+            reader.GetString(reader.GetOrdinal("input_kind")),
+            ReadNullableGuid(reader, "aggregate_ticket_id"),
+            ReadNullableGuid(reader, "aggregate_draw_id"),
+            ReadNullableInt32(reader, "item_count"),
+            ReadNullableInt64(reader, "total_reserved_stake_minor"),
+            ReadNullableInt64(reader, "pre_cap_gross_return_minor"),
+            ReadNullableInt64(reader, "effective_cap_minor"),
+            ReadNullableString(reader, "cap_scope"),
+            ReadNullableInt64(reader, "post_cap_gross_return_minor"),
+            ReadNullableInt64(reader, "capture_amount_minor"),
+            ReadNullableInt64(reader, "release_amount_minor"),
+            ReadNullableInt64(reader, "credit_amount_minor"),
+            ReadNullableString(reader, "item_evidence_hash"));
 
         return new SettlementRequestExecutionContext(
             reader.GetGuid(reader.GetOrdinal("settlement_request_id")),
@@ -692,6 +720,18 @@ where settlement_request_id = @settlement_request_id;
             reader.GetString(reader.GetOrdinal("settlement_policy_version")),
             storedInput);
     }
+
+    private static Guid? ReadNullableGuid(NpgsqlDataReader reader, string name) =>
+        reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetGuid(reader.GetOrdinal(name));
+
+    private static int? ReadNullableInt32(NpgsqlDataReader reader, string name) =>
+        reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetInt32(reader.GetOrdinal(name));
+
+    private static long? ReadNullableInt64(NpgsqlDataReader reader, string name) =>
+        reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetInt64(reader.GetOrdinal(name));
+
+    private static string? ReadNullableString(NpgsqlDataReader reader, string name) =>
+        reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetString(reader.GetOrdinal(name));
 
     private static SettlementRecordResponse MapRecord(NpgsqlDataReader reader)
     {

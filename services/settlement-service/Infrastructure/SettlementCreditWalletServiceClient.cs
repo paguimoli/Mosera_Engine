@@ -134,7 +134,7 @@ public sealed class SettlementCreditWalletServiceClient
         }
     }
 
-    public async Task<(SettlementExternalReferenceDto Reference, string ResponseHash)> ExecuteFinancialInstructionAsync(
+    public async Task<SettlementTargetExecutionResult> ExecuteFinancialInstructionAsync(
         FinancialInstructionExecutionContext context,
         Guid playerId,
         Guid reservationId,
@@ -149,14 +149,14 @@ public sealed class SettlementCreditWalletServiceClient
 
         if (context.Instruction.InstructionType == FinancialInstructionType.CREDIT_NOOP)
         {
-            return (new SettlementExternalReferenceDto(
+            return new SettlementTargetExecutionResult(new SettlementExternalReferenceDto(
                 context.SettlementRecord.SettlementId.ToString(),
                 context.SettlementRecord.TicketId,
                 context.SettlementRecord.TicketLineId,
                 "credit_noop",
                 "SKIPPED",
                 targetIdempotencyKey,
-                "SKIPPED"), "sha256:noop");
+                "SKIPPED"), "sha256:noop", null);
         }
 
         return context.Instruction.InstructionType switch
@@ -169,7 +169,7 @@ public sealed class SettlementCreditWalletServiceClient
         };
     }
 
-    private async Task<(SettlementExternalReferenceDto Reference, string ResponseHash)> SettleFinancialInstructionAsync(
+    private async Task<SettlementTargetExecutionResult> SettleFinancialInstructionAsync(
         FinancialInstructionExecutionContext context,
         Guid playerId,
         Guid reservationId,
@@ -255,8 +255,10 @@ public sealed class SettlementCreditWalletServiceClient
             }
         }, options: JsonOptions);
 
+        var requestStartedAt = DateTimeOffset.UtcNow;
         using var response = await client.SendAsync(request, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        var responseReceivedAt = DateTimeOffset.UtcNow;
         if (!response.IsSuccessStatusCode)
         {
             throw new SettlementIntegrationException(
@@ -273,17 +275,21 @@ public sealed class SettlementCreditWalletServiceClient
         var operationId = document.RootElement.GetProperty("operationId").GetString()
             ?? throw new SettlementIntegrationException("Credit Wallet Service response did not include operationId.");
 
-        return (new SettlementExternalReferenceDto(
+        return new SettlementTargetExecutionResult(new SettlementExternalReferenceDto(
             record.SettlementId.ToString(),
             record.TicketId,
             record.TicketLineId,
             "wallet_operation_request",
             operationId,
             targetIdempotencyKey,
-            "POSTED"), FinancialInstructionService.HashCanonical(body));
+            "POSTED"), FinancialInstructionService.HashCanonical(body), new SettlementTargetExecutionTiming(
+                requestStartedAt,
+                ReadTimestampHeader(response, "X-Mosera-Service-Received-At"),
+                ReadTimestampHeader(response, "X-Mosera-Service-Completed-At"),
+                responseReceivedAt));
     }
 
-    private async Task<(SettlementExternalReferenceDto Reference, string ResponseHash)> ReleaseFinancialInstructionAsync(
+    private async Task<SettlementTargetExecutionResult> ReleaseFinancialInstructionAsync(
         FinancialInstructionExecutionContext context,
         Guid playerId,
         Guid reservationId,
@@ -330,8 +336,10 @@ public sealed class SettlementCreditWalletServiceClient
             }
         }, options: JsonOptions);
 
+        var requestStartedAt = DateTimeOffset.UtcNow;
         using var response = await client.SendAsync(request, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        var responseReceivedAt = DateTimeOffset.UtcNow;
         if (!response.IsSuccessStatusCode)
         {
             throw new SettlementIntegrationException(
@@ -348,14 +356,26 @@ public sealed class SettlementCreditWalletServiceClient
         var reservationReference = document.RootElement.GetProperty("effectReferenceId").GetString()
             ?? reservationId.ToString();
 
-        return (new SettlementExternalReferenceDto(
+        return new SettlementTargetExecutionResult(new SettlementExternalReferenceDto(
             record.SettlementId.ToString(),
             record.TicketId,
             record.TicketLineId,
             "credit_reservation_release",
             reservationReference,
             targetIdempotencyKey,
-            "POSTED"), FinancialInstructionService.HashCanonical(body));
+            "POSTED"), FinancialInstructionService.HashCanonical(body), new SettlementTargetExecutionTiming(
+                requestStartedAt,
+                ReadTimestampHeader(response, "X-Mosera-Service-Received-At"),
+                ReadTimestampHeader(response, "X-Mosera-Service-Completed-At"),
+                responseReceivedAt));
+    }
+
+    private static DateTimeOffset? ReadTimestampHeader(HttpResponseMessage response, string name)
+    {
+        return response.Headers.TryGetValues(name, out var values) &&
+            DateTimeOffset.TryParse(values.FirstOrDefault(), out var timestamp)
+                ? timestamp
+                : null;
     }
 
     public async Task<SettlementExternalReferenceDto> ApplySettlementAsync(

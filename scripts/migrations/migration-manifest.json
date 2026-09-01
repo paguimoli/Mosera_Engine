@@ -1274,6 +1274,165 @@
       "reason": "Makes deterministic retry evidence idempotent across existing uniqueness rules and returns concurrent active-lease duplicate/unavailable results before expired-lease validation."
     },
     {
+      "id": "136_repair_scheduler_public_draw_sequence",
+      "path": "scripts/migrations/local/136_repair_scheduler_public_draw_sequence.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Bootstraps and repairs product-scoped scheduler sequences strictly after retained authoritative public draw history so restart and qualification materialization cannot reuse a public number."
+    },
+    {
+      "id": "137_enforce_pilot_product_ticket_limits",
+      "path": "scripts/migrations/local/137_enforce_pilot_product_ticket_limits.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ticket_authority",
+        "game_engine"
+      ],
+      "reason": "Makes canonical ticket acceptance enforce the wager-count, play-count, stake, market, and number-selection limits from each immutable active pilot product version before reservation or liability effects."
+    },
+    {
+      "id": "138_preserve_non_pilot_ticket_lifecycle_compatibility",
+      "path": "scripts/migrations/local/138_preserve_non_pilot_ticket_lifecycle_compatibility.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ticket_authority",
+        "game_engine"
+      ],
+      "reason": "Keeps pilot product limit validation bound to the exact active immutable version without imposing pilot-only lifecycle states on existing non-pilot canonical ticket fixtures."
+    },
+    {
+      "id": "139_add_hot_spot_multi_draw_participations",
+      "path": "scripts/migrations/local/139_add_hot_spot_multi_draw_participations.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine",
+        "ticket_authority",
+        "ticket_completion_authority",
+        "credit_wallet_service"
+      ],
+      "reason": "Binds accepted Hot Spot multi-draw tickets to immutable per-draw participation lines, full upfront reservation allocation, future-only cancellation evidence, and aggregate completion gating."
+    },
+    {
+      "id": "140_harden_financial_completion_ordering",
+      "path": "scripts/migrations/local/140_harden_financial_completion_ordering.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "ticket_completion_authority",
+        "settlement_service",
+        "ledger_service",
+        "credit_wallet_service"
+      ],
+      "reason": "Keeps financial completion causally Ledger-before-Wallet while preventing false rejection of explicit Ledger no-op evidence based only on cross-transaction wall-clock timestamps."
+    },
+    {
+      "id": "141_add_downstream_processing_timing_evidence",
+      "path": "scripts/migrations/local/141_add_downstream_processing_timing_evidence.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds immutable outbox, queue-consumption, and processing timestamps to canonical Settlement attempt evidence for downstream latency qualification."
+    },
+    {
+      "id": "142_add_ticket_draw_aggregate_settlement",
+      "path": "scripts/migrations/local/142_add_ticket_draw_aggregate_settlement.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine",
+        "settlement_service",
+        "ticket_completion_authority"
+      ],
+      "reason": "Preserves item-level Math certificates while establishing one immutable, conflict-safe financial SettlementInput and one Ledger/Wallet application per Fast Keno ticket and authoritative draw."
+    },
+    {
+      "id": "143_bind_aggregate_completion_source_lineage",
+      "path": "scripts/migrations/local/143_bind_aggregate_completion_source_lineage.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine",
+        "settlement_service",
+        "ticket_completion_authority"
+      ],
+      "reason": "Extends the canonical completion-source referential-integrity trigger to accept exact immutable item attribution beneath one ticket/draw aggregate Settlement record."
+    },
+    {
+      "id": "144_align_funding_wallet_lock_order",
+      "path": "scripts/migrations/local/144_align_funding_wallet_lock_order.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "funding_authority",
+        "credit_wallet_service"
+      ],
+      "reason": "Acquires the canonical per-wallet advisory lock before Funding Instrument evidence inserts wallet foreign-key references, eliminating the ticket-acceptance versus settlement lock-upgrade cycle."
+    },
+    {
+      "id": "145_add_pr05e_latency_stage_evidence",
+      "path": "scripts/migrations/local/145_add_pr05e_latency_stage_evidence.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds append-only Math stage evidence and detailed Settlement connection, lock, claim, authority, and persistence timestamps for PR-05E latency attribution."
+    },
+    {
+      "id": "146_add_bounded_math_admission_evidence",
+      "path": "scripts/migrations/local/146_add_bounded_math_admission_evidence.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Separates database-assigned durable Math admission evidence from bounded evaluation execution and adds deterministic queue lookup without changing Math authority semantics."
+    },
+    {
+      "id": "147_normalize_cross_clock_math_admission",
+      "path": "scripts/migrations/local/147_normalize_cross_clock_math_admission.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Preserves strict timestamp ordering by normalizing database admission time against the immutable application-created request time before constraint validation."
+    },
+    {
+      "id": "148_add_settlement_transport_timing_evidence",
+      "path": "scripts/migrations/local/148_add_settlement_transport_timing_evidence.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Separates Settlement dispatcher selection, RabbitMQ publish/confirm, broker delivery, and bounded consumer-admission timing without changing authority or financial semantics."
+    },
+    {
+      "id": "149_optimize_settlement_dispatch_completion_tail",
+      "path": "scripts/migrations/local/149_optimize_settlement_dispatch_completion_tail.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "public",
+        "game_engine",
+        "settlement_service"
+      ],
+      "reason": "Adds the canonical outbox claim-order and exact Completion-lineage indexes required by PR-05M without changing financial or authority semantics."
+    },
+    {
+      "id": "150_add_settlement_consumer_admission_evidence",
+      "path": "scripts/migrations/local/150_add_settlement_consumer_admission_evidence.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "game_engine"
+      ],
+      "reason": "Adds immutable Settlement callback, bounded execution-admission, handler-capacity, and worker-instance evidence for PR-05N without changing financial authority semantics."
+    },
+    {
+      "id": "151_add_financial_target_latency_evidence",
+      "path": "scripts/migrations/local/151_add_financial_target_latency_evidence.sql",
+      "classification": "apply_local",
+      "schemas": [
+        "settlement_service"
+      ],
+      "reason": "Adds immutable client/target boundary timestamps for PR-05O Ledger and Wallet latency decomposition without changing financial authority or ordering."
+    },
+    {
       "id": "game_engine_schema_draft",
       "path": "services/game-engine/database/001_game_engine_schema_draft.sql",
       "classification": "draft_only",

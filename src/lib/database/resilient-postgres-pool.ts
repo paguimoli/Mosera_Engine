@@ -9,6 +9,12 @@ import {
 
 import { logger } from "@/src/lib/observability/logger";
 
+let sharedWorkerPool: Pool | null = null;
+let sharedWorkerDatabaseUrl: string | null = null;
+let sharedApplicationPool: Pool | null = null;
+let sharedApplicationDatabaseUrl: string | null = null;
+const sharedPools = new WeakSet<Pool>();
+
 const RETRYABLE_CODES = new Set([
   "08000",
   "08001",
@@ -62,6 +68,98 @@ export function createResilientPostgresPool(
   });
 
   return pool;
+}
+
+export function getBoundedPoolSize(
+  environmentName: string,
+  fallback: number,
+  maximum = 32
+) {
+  const configured = Number(process.env[environmentName]);
+  if (!Number.isInteger(configured) || configured < 1) {
+    return fallback;
+  }
+  return Math.min(configured, maximum);
+}
+
+export function createWorkerPostgresPool(
+  componentName: string,
+  config: PoolConfig
+) {
+  if (process.env.WORKER_SHARED_POSTGRES_POOL !== "true") {
+    return createResilientPostgresPool(componentName, config);
+  }
+
+  const databaseUrl = String(config.connectionString ?? "");
+  if (!databaseUrl) {
+    throw new Error("A connection string is required for the shared worker PostgreSQL pool.");
+  }
+  if (sharedWorkerPool && sharedWorkerDatabaseUrl !== databaseUrl) {
+    throw new Error("One worker process cannot share PostgreSQL pools across database URLs.");
+  }
+
+  if (!sharedWorkerPool) {
+    sharedWorkerDatabaseUrl = databaseUrl;
+    sharedWorkerPool = createResilientPostgresPool("shared-worker-runtime", {
+      ...config,
+      application_name:
+        process.env.DATABASE_APPLICATION_NAME?.trim() ||
+        process.env.SERVICE_NAME?.trim() ||
+        "mosera-worker",
+      max: getBoundedPoolSize("WORKER_DATABASE_POOL_MAX", 2, 24),
+    });
+    sharedPools.add(sharedWorkerPool);
+  }
+
+  return sharedWorkerPool;
+}
+
+export async function closeWorkerPostgresPool(pool: Pool | null | undefined) {
+  if (pool && !sharedPools.has(pool)) {
+    await pool.end();
+  }
+}
+
+export async function closeSharedWorkerPostgresPool() {
+  const pool = sharedWorkerPool;
+  sharedWorkerPool = null;
+  sharedWorkerDatabaseUrl = null;
+  if (pool) {
+    sharedPools.delete(pool);
+    await pool.end();
+  }
+}
+
+export function createApplicationPostgresPool(
+  componentName: string,
+  config: PoolConfig
+) {
+  const databaseUrl = String(config.connectionString ?? "");
+  if (!databaseUrl) {
+    throw new Error("A connection string is required for the shared application PostgreSQL pool.");
+  }
+  if (sharedApplicationPool && sharedApplicationDatabaseUrl !== databaseUrl) {
+    throw new Error("One application process cannot share PostgreSQL pools across database URLs.");
+  }
+
+  if (!sharedApplicationPool) {
+    sharedApplicationDatabaseUrl = databaseUrl;
+    sharedApplicationPool = createResilientPostgresPool("shared-application-runtime", {
+      ...config,
+      application_name:
+        process.env.DATABASE_APPLICATION_NAME?.trim() || "mosera-application",
+      max: getBoundedPoolSize("APPLICATION_DATABASE_POOL_MAX", 6, 16),
+    });
+    sharedPools.add(sharedApplicationPool);
+  }
+
+  return sharedApplicationPool;
+}
+
+export async function closeApplicationPostgresPool(pool: Pool | null | undefined) {
+  if (pool && !sharedPools.has(pool)) {
+    await pool.end();
+  }
 }
 
 export async function queryWithBoundedReconnect<

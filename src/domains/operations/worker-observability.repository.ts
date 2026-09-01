@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 
-import type { QueryResultRow } from "pg";
+import type { Pool, QueryResultRow } from "pg";
 
 import {
-  createResilientPostgresPool,
+  closeWorkerPostgresPool,
+  createWorkerPostgresPool,
   queryWithBoundedReconnect,
 } from "@/src/lib/database/resilient-postgres-pool";
 import type {
@@ -75,7 +76,7 @@ export type OutboxObservabilitySnapshot = {
   rows: OutboxObservabilityRow[];
 };
 
-let pool: ReturnType<typeof createResilientPostgresPool> | null = null;
+let pool: Pool | null = null;
 
 export class WorkerObservabilityRepositoryError extends Error {
   constructor(message = "Worker observability persistence operation failed.") {
@@ -97,7 +98,7 @@ function databasePool() {
     );
   }
 
-  pool ??= createResilientPostgresPool("worker-observability", {
+  pool ??= createWorkerPostgresPool("worker-observability", {
     connectionString: databaseUrl,
     connectionTimeoutMillis: 2_000,
     idleTimeoutMillis: 10_000,
@@ -375,5 +376,5 @@ limit 1000
 export async function closeWorkerObservabilityPool() {
   const activePool = pool;
   pool = null;
-  await activePool?.end();
+  await closeWorkerPostgresPool(activePool);
 }

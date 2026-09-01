@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { Pool, type QueryResultRow } from "pg";
+import { type Pool, type QueryResultRow } from "pg";
+import {
+  closeApplicationPostgresPool,
+  createApplicationPostgresPool,
+} from "@/src/lib/database/resilient-postgres-pool";
 
 import type { AuthContext } from "@/src/domains/auth/auth-context.types";
 import { canonicalHash } from "@/src/domains/operational-governance/operational-governance.repository";
@@ -14,7 +18,7 @@ let pool: Pool | null = null;
 function database() {
   const connectionString = process.env.DATABASE_URL?.trim();
   if (!connectionString) throw new Error("Operational Security persistence is unavailable.");
-  pool ??= new Pool({ connectionString });
+  pool ??= createApplicationPostgresPool("operational-security-repository", { connectionString });
   return pool;
 }
 
@@ -253,6 +257,6 @@ export async function checkOperationalSecurityReadiness() {
 
 export async function closeOperationalSecurityPool() {
   if (!pool) return;
-  await pool.end();
+  await closeApplicationPostgresPool(pool);
   pool = null;
 }

@@ -1948,6 +1948,38 @@ where n.nspname = 'game_engine'
 `) === "t"
 );
 addCheck(
+  "scheduler_public_draw_sequence_is_ahead_of_authoritative_history",
+  queryScalar(`
+select not exists (
+  select 1
+  from game_engine.durable_scheduler_product_sequences sequence
+  join lateral (
+    select max(draw.public_draw_number) maximum_public_draw_number
+    from game_engine.durable_scheduler_draws draw
+    where draw.product_code = sequence.product_code
+  ) observed on true
+  where sequence.next_public_draw_number <= observed.maximum_public_draw_number
+);
+`) === "t"
+);
+addCheck(
+  "canonical_ticket_acceptance_enforces_immutable_pilot_product_limits",
+  queryScalar(`
+select position('FAST KENO TICKET EXCEEDS MAXIMUM WAGERS PER TICKET'
+    in upper(pg_get_functiondef(p.oid))) > 0
+  and position('FAST KENO WAGER EXCEEDS THE PRODUCT MARKET MAXIMUM STAKE'
+    in upper(pg_get_functiondef(p.oid))) > 0
+  and position('HOT SPOT TICKET EXCEEDS MAXIMUM PLAYS PER TICKET'
+    in upper(pg_get_functiondef(p.oid))) > 0
+  and position('HOT SPOT PLAY NUMBERS MUST BE UNIQUE INTEGERS FROM 1 THROUGH 80'
+    in upper(pg_get_functiondef(p.oid))) > 0
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'ticket_authority'
+  and p.proname = 'accept_ticket';
+`) === "t"
+);
+addCheck(
   "pilot_products_remain_inactive_unassigned_after_scheduler_migration",
   queryScalar(`
 select count(*)
@@ -1959,6 +1991,216 @@ where definition.code in ('FAST_KENO_V1', 'HOT_SPOT_V1')
   and version.assignment_state = 'UNASSIGNED';
 `) === "2"
 );
+for (const table of [
+  "hot_spot_multi_draw_participations",
+  "hot_spot_multi_draw_participation_events",
+  "hot_spot_multi_draw_cancellations",
+]) {
+  addCheck(`hot_spot_multi_draw_table:${table}`, existsRegclass(`game_engine.${table}`));
+}
+addCheck(
+  "hot_spot_multi_draw_participations_are_append_only",
+  triggerExists("game_engine", "hot_spot_multi_draw_participations", "trg_hot_spot_multi_draw_participations_immutable") &&
+    triggerExists("game_engine", "hot_spot_multi_draw_participation_events", "trg_hot_spot_multi_draw_participation_events_immutable") &&
+    triggerExists("game_engine", "hot_spot_multi_draw_cancellations", "trg_hot_spot_multi_draw_cancellations_immutable")
+);
+addCheck(
+  "hot_spot_multi_draw_future_cancellation_authority_exists",
+  functionExists("game_engine", "cancel_hot_spot_future_participations")
+);
+addCheck(
+  "hot_spot_multi_draw_acceptance_reserves_full_purchase",
+  queryScalar(`
+select position('MULTIDRAWCOUNT' in upper(pg_get_functiondef(p.oid))) > 0
+  and position('V_MULTI_DRAW_COUNT' in upper(pg_get_functiondef(p.oid))) > 0
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'ticket_authority' and p.proname = 'accept_ticket';
+`) === "t"
+);
+addCheck(
+  "financial_completion_orders_posted_ledger_before_wallet_without_noop_timestamp_dependency",
+  queryScalar(`
+select position('V_LEDGER_ATTEMPT.STATUS = ''POSTED'''
+    in upper(pg_get_functiondef(p.oid))) > 0
+  and position('V_LEDGER_ATTEMPT.CREATED_AT > V_WALLET_ATTEMPT.CREATED_AT'
+    in upper(pg_get_functiondef(p.oid))) = 0
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'ticket_completion_authority'
+  and p.proname = 'complete_ticket';
+`) === "t"
+);
+for (const column of [
+  "outbox_created_at",
+  "outbox_published_at",
+  "consumed_at",
+  "processing_started_at",
+  "processing_completed_at",
+]) {
+  addCheck(
+    `canonical_settlement_processing_timing_column:${column}`,
+    columnExists("game_engine", "canonical_settlement_event_processing_evidence", column)
+  );
+}
+for (const column of [
+  "connection_requested_at",
+  "connection_acquired_at",
+  "lock_attempted_at",
+  "lock_acquired_at",
+  "claim_acquired_at",
+  "authority_started_at",
+  "authority_completed_at",
+  "persistence_started_at",
+  "persistence_completed_at",
+]) {
+  addCheck(
+    `canonical_settlement_detailed_timing_column:${column}`,
+    columnExists("game_engine", "canonical_settlement_event_processing_evidence", column)
+  );
+}
+for (const column of [
+  "dispatcher_seen_at",
+  "publish_started_at",
+  "publish_confirmed_at",
+  "consumer_received_at",
+  "consumer_processing_started_at",
+]) {
+  addCheck(
+    `canonical_settlement_transport_timing_column:${column}`,
+    columnExists("game_engine", "canonical_settlement_event_processing_evidence", column)
+  );
+}
+for (const column of [
+  "consumer_callback_entered_at",
+  "execution_slot_requested_at",
+  "execution_slot_acquired_at",
+  "handler_started_at",
+  "consumer_instance_id",
+  "consumer_prefetch",
+  "consumer_execution_concurrency",
+  "active_handlers_at_start",
+  "waiting_handlers_at_start",
+]) {
+  addCheck(
+    `canonical_settlement_consumer_admission_column:${column}`,
+    columnExists("game_engine", "canonical_settlement_event_processing_evidence", column)
+  );
+}
+addCheck(
+  "math_evaluation_processing_evidence_exists",
+  existsRegclass("game_engine.math_evaluation_processing_evidence")
+);
+addCheck(
+  "math_evaluation_processing_evidence_is_append_only",
+  triggerExists(
+    "game_engine",
+    "math_evaluation_processing_evidence",
+    "trg_math_evaluation_processing_evidence_immutable"
+  )
+);
+addCheck(
+  "math_evaluation_requests_have_immutable_admission_evidence",
+  columnExists("game_engine", "math_evaluation_requests", "admitted_at") &&
+    queryScalar(`
+select position('ADMISSION TIMESTAMP IS IMMUTABLE' in upper(pg_get_functiondef(p.oid))) > 0
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'game_engine' and p.proname = 'validate_math_evaluation_request';
+`) === "t"
+);
+for (const table of [
+  "ticket_draw_settlement_aggregates",
+  "ticket_draw_settlement_aggregate_items",
+]) {
+  addCheck(`ticket_draw_aggregate_table:${table}`, existsRegclass(`game_engine.${table}`));
+}
+addCheck(
+  "ticket_draw_aggregate_settlement_is_append_only",
+  triggerExists("game_engine", "ticket_draw_settlement_aggregates", "trg_ticket_draw_settlement_aggregates_immutable") &&
+    triggerExists("game_engine", "ticket_draw_settlement_aggregate_items", "trg_ticket_draw_settlement_aggregate_items_immutable")
+);
+addCheck(
+  "settlement_input_supports_item_and_ticket_draw_aggregate_kinds",
+  columnExists("game_engine", "settlement_input_records", "input_kind") &&
+    queryScalar(`
+select position('TICKET_DRAW_AGGREGATE' in upper(pg_get_functiondef(p.oid))) > 0
+from pg_proc p
+join pg_namespace n on n.oid=p.pronamespace
+where n.nspname='game_engine' and p.proname='validate_settlement_input_record';
+`) === "t"
+);
+addCheck(
+  "completion_authority_validates_aggregate_item_attribution",
+  queryScalar(`
+select position('TICKET_DRAW_SETTLEMENT_AGGREGATE_ITEMS' in upper(pg_get_functiondef(p.oid))) > 0
+from pg_proc p
+join pg_namespace n on n.oid=p.pronamespace
+where n.nspname='ticket_completion_authority' and p.proname='complete_ticket';
+`) === "t"
+);
+addCheck(
+  "completion_source_trigger_validates_aggregate_item_attribution",
+  queryScalar(`
+select position('TICKET_DRAW_SETTLEMENT_AGGREGATE_ITEMS' in upper(pg_get_functiondef(p.oid))) > 0
+from pg_proc p
+join pg_namespace n on n.oid=p.pronamespace
+where n.nspname='ticket_completion_authority'
+  and p.proname='validate_completion_source_lineage';
+`) === "t"
+);
+addCheck(
+  "funding_resolution_uses_canonical_wallet_lock_before_evidence_insert",
+  queryScalar(`
+with definition as (
+  select lower(pg_get_functiondef(p.oid)) value
+  from pg_proc p
+  join pg_namespace n on n.oid=p.pronamespace
+  where n.nspname='funding_authority'
+    and p.proname='resolve_funding_instrument'
+)
+select position('canonical-wallet:' in value) > 0
+  and position('canonical-wallet:' in value) <
+      position('insert into funding_authority.resolution_events' in value)
+from definition;
+`) === "t"
+);
+for (const [schema, table, index] of [
+  ["public", "outbox_events", "idx_outbox_events_dispatch_claim"],
+  ["game_engine", "ticket_draw_settlement_aggregate_items", "idx_ticket_draw_settlement_items_ticket"],
+  ["settlement_service", "authoritative_settlement_records", "idx_authoritative_settlement_completion_ticket"],
+]) {
+  addCheck(
+    `pr05m_index:${schema}.${index}`,
+    queryScalar(`
+select exists (
+  select 1
+  from pg_indexes
+  where schemaname = '${schema}'
+    and tablename = '${table}'
+    and indexname = '${index}'
+);
+`) === "t"
+  );
+}
+for (const column of [
+  "target_request_started_at",
+  "target_service_received_at",
+  "target_service_completed_at",
+  "target_response_received_at",
+]) {
+  addCheck(
+    `pr05o_financial_target_timing:${column}`,
+    queryScalar(`
+select exists (
+  select 1 from information_schema.columns
+  where table_schema='settlement_service'
+    and table_name='financial_instruction_execution_attempts'
+    and column_name='${column}'
+);
+`) === "t"
+  );
+}
 addCheck("game_engine_duplicate_create_conflict_resolved_or_blocked", true, {
   resolution: manifest.knownConflicts?.find((conflict) => conflict.id === "game_engine_evaluation_table_duplicate_create")?.resolution,
 });
@@ -1972,7 +2214,9 @@ const report = {
   checks,
 };
 
-printJson(report);
+printJson(process.env.MIGRATION_VALIDATION_SUMMARY_ONLY === "true"
+  ? { ...report, checks: failed }
+  : report);
 
 if (failed.length > 0) {
   process.exitCode = 1;

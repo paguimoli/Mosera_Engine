@@ -14,6 +14,7 @@ import type {
   MarkOutboxEventDeadLetterInput,
   MarkOutboxEventFailedInput,
   MarkOutboxEventPublishedInput,
+  MarkOutboxEventsPublishedInput,
   OutboxEvent,
 } from "./outbox.types";
 import {
@@ -24,6 +25,8 @@ import {
   markPostgresOutboxEventDeadLetter,
   markPostgresOutboxEventFailed,
   markPostgresOutboxEventPublished,
+  markPostgresOutboxEventsPublished,
+  wakeFailedSettlementOutboxEvents,
 } from "./outbox.postgres.repository";
 
 function shouldUseDurablePostgresOutbox() {
@@ -72,6 +75,19 @@ export async function markOutboxEventPublished(
   return markOutboxEventRecordPublished(input);
 }
 
+export async function markOutboxEventsPublished(
+  input: MarkOutboxEventsPublishedInput
+): Promise<number> {
+  if (shouldUseDurablePostgresOutbox()) {
+    return markPostgresOutboxEventsPublished(input);
+  }
+  await Promise.all(input.ids.map((id) => markOutboxEventRecordPublished({
+    id,
+    publishedAt: input.publishedAt,
+  })));
+  return input.ids.length;
+}
+
 export async function markOutboxEventFailed(
   input: MarkOutboxEventFailedInput
 ): Promise<OutboxEvent> {
@@ -88,4 +104,11 @@ export async function markOutboxEventDeadLetter(
     return markPostgresOutboxEventDeadLetter(input);
   }
   return markOutboxEventRecordDeadLetter(input);
+}
+
+export async function wakeSettlementOutboxAfterBrokerRecovery(
+  now: Date = new Date()
+): Promise<number> {
+  if (!shouldUseDurablePostgresOutbox()) return 0;
+  return wakeFailedSettlementOutboxEvents(now);
 }

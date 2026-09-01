@@ -70,6 +70,8 @@ public static class CanonicalWalletOperationEndpoints
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
+            var serviceReceivedAt = DateTimeOffset.UtcNow;
+            context.Response.Headers["X-Mosera-Service-Received-At"] = serviceReceivedAt.ToString("O");
             if (!authorizer.IsAuthorized(context)) return Results.Unauthorized();
             if (!repository.Configured)
             {
@@ -84,10 +86,12 @@ public static class CanonicalWalletOperationEndpoints
                 .FirstOrDefault()?.Trim() ?? string.Empty;
             try
             {
-                return Results.Ok(await service.ExecuteAsync(
+                var result = await service.ExecuteAsync(
                     request, idempotencyKey,
                     InternalServiceAuthorizer.GetCaller(context) ?? string.Empty,
-                    context.GetCorrelationId(), cancellationToken));
+                    context.GetCorrelationId(), cancellationToken);
+                context.Response.Headers["X-Mosera-Service-Completed-At"] = DateTimeOffset.UtcNow.ToString("O");
+                return Results.Ok(result);
             }
             catch (CanonicalWalletOperationConflictException error)
             {

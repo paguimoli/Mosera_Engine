@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { Pool, type PoolClient } from "pg";
+import { type Pool, type PoolClient } from "pg";
+import { createApplicationPostgresPool } from "@/src/lib/database/resilient-postgres-pool";
 
 import type {
   Account,
@@ -118,7 +119,7 @@ function databasePool() {
     throw new AccountRepositoryError("Account database is not configured.");
   }
 
-  pool ??= new Pool({
+  pool ??= createApplicationPostgresPool("account-repository", {
     connectionString: databaseUrl,
     max: 4,
     idleTimeoutMillis: 5_000,

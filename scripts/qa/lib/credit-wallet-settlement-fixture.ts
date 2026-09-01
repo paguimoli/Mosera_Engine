@@ -22,6 +22,7 @@ export async function seedSettlementFixture(
     brandId: string;
     reservationId: string;
     ticketId: string;
+    playerAccountReference?: string;
     amountMinor: number;
     balanceImpactMinor: number;
     currency?: string;
@@ -98,7 +99,8 @@ export async function seedSettlementFixture(
     [settlementRequestId, `qa-settlement-request:${suffix}`,
       sha256(`settlement-request:${suffix}`), settlementInputId, inputHash,
       mathCertificateId, mathHash, outcomeCertificateId, outcomeHash,
-      input.ticketId, ticketLineId, `qa-player:${suffix}`, `qa-context:${suffix}`,
+      input.ticketId, ticketLineId, input.playerAccountReference ?? `qa-player:${suffix}`,
+      `qa-context:${suffix}`,
       input.amountMinor, input.reservationId, settlementVersion, input.tenantId,
       input.brandId, gameReference, drawOutcomeReference, scopeHash, currency]
   );
@@ -117,7 +119,8 @@ export async function seedSettlementFixture(
        $20,$21,$22,$23,$24)`,
     [settlementId, settlementRequestId, settlementInputId, inputHash,
       mathCertificateId, mathHash, outcomeCertificateId, outcomeHash,
-      input.ticketId, ticketLineId, `qa-player:${suffix}`, input.amountMinor,
+      input.ticketId, ticketLineId, input.playerAccountReference ?? `qa-player:${suffix}`,
+      input.amountMinor,
       Math.max(0, input.amountMinor + input.balanceImpactMinor),
       input.balanceImpactMinor, outcome, settlementVersion, settlementHash,
       `qa-settlement:${suffix}`, JSON.stringify(input.provenance ?? {}),

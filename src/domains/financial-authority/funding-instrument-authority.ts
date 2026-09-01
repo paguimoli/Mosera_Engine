@@ -1,4 +1,5 @@
-import { Pool } from "pg";
+import type { Pool } from "pg";
+import { createApplicationPostgresPool } from "@/src/lib/database/resilient-postgres-pool";
 
 export type LaunchFundingInstrument = "CREDIT" | "FREE_PLAY";
 export type FundingReservationType =
@@ -34,7 +35,7 @@ function database() {
       "Funding Instrument Authority requires DATABASE_URL."
     );
   }
-  pool ??= new Pool({
+  pool ??= createApplicationPostgresPool("funding-instrument-authority", {
     connectionString: databaseUrl,
     max: 8,
     connectionTimeoutMillis: 5_000,

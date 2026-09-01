@@ -25,6 +25,7 @@ internal static class Pr04AHotSpotEvidenceHarness
         {
             "quick-pick" => await GenerateQuickPickAsync(repository, args[(marker + 2)..]),
             "multi-draw" => await BindMultiDrawAsync(repository, args[(marker + 2)..]),
+            "cancel-future" => await CancelFutureAsync(repository, args[(marker + 2)..]),
             _ => throw new ArgumentException($"Unsupported PR-04A Hot Spot evidence command '{command}'.")
         };
 
@@ -82,6 +83,22 @@ internal static class Pr04AHotSpotEvidenceHarness
             int.Parse(args[2]),
             long.Parse(args[3]),
             quickPick,
+            CancellationToken.None);
+    }
+
+    private static Task<HotSpotMultiDrawCancellationResult> CancelFutureAsync(
+        PostgresDurableSchedulerRepository repository,
+        string[] args)
+    {
+        if (args.Length != 5)
+        {
+            throw new ArgumentException(
+                "cancel-future requires purchase ID, idempotency key, reason code, actor reference, and correlation ID.");
+        }
+
+        return new HotSpotMultiDrawAuthority(repository, new SystemClock()).CancelFutureAsync(
+            new HotSpotMultiDrawCancellationRequest(
+                Guid.Parse(args[0]), args[1], args[2], args[3], args[4]),
             CancellationToken.None);
     }
 }

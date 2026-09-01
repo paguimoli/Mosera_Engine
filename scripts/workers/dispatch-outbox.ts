@@ -4,6 +4,7 @@ import {
   safeRecordWorkerHeartbeat,
 } from "@/src/domains/operations/worker-observability.service";
 import { dispatchPendingOutboxEvents } from "@/src/domains/workers/outbox-dispatcher.service";
+import { wakeSettlementOutboxAfterBrokerRecovery } from "@/src/domains/outbox/outbox.service";
 import { createCorrelationId } from "@/src/lib/observability/correlation";
 import { logger } from "@/src/lib/observability/logger";
 import { createQueuePublisher } from "@/src/lib/queue/queue.publisher-factory";
@@ -12,6 +13,7 @@ import {
   recordCompiledWorkerRuntime,
   startCompiledWorkerHeartbeat,
 } from "@/src/domains/workers/worker-runtime-readiness";
+import { closeSharedWorkerPostgresPool } from "@/src/lib/database/resilient-postgres-pool";
 
 const workerName = "outbox_dispatcher";
 const workloadCategory = "REPORTING_LOW_PRIORITY" as const;
@@ -23,14 +25,18 @@ function getPositiveNumberEnv(name: string, fallback: number) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
-const batchSize = getPositiveNumberEnv("OUTBOX_DISPATCH_BATCH_SIZE", 50);
+const batchSize = getPositiveNumberEnv("OUTBOX_DISPATCH_BATCH_SIZE", 250);
+const dispatchConcurrency = Math.min(
+  32,
+  getPositiveNumberEnv("OUTBOX_DISPATCH_CONCURRENCY", 16)
+);
 const idleIntervalMs = getPositiveNumberEnv(
   "OUTBOX_DISPATCH_IDLE_INTERVAL_MS",
-  5000
+  250
 );
 const backlogIntervalMs = getPositiveNumberEnv(
   "OUTBOX_DISPATCH_BACKLOG_INTERVAL_MS",
-  250
+  10
 );
 const heartbeatIntervalMs = getPositiveNumberEnv(
   "WORKER_HEARTBEAT_INTERVAL_MS",
@@ -56,6 +62,7 @@ async function recordHeartbeat(metadata: Record<string, unknown> = {}) {
     metadata: {
       mode: "continuous",
       batchSize,
+      dispatchConcurrency,
       idleIntervalMs,
       backlogIntervalMs,
       ...metadata,
@@ -89,6 +96,7 @@ async function main() {
     message: "Continuous outbox dispatcher starting.",
     metadata: {
       batchSize,
+      dispatchConcurrency,
       idleIntervalMs,
       backlogIntervalMs,
       heartbeatIntervalMs,
@@ -106,9 +114,43 @@ async function main() {
       const correlationId = createCorrelationId();
 
       try {
+        const readiness = await publisher.probeReadiness?.([
+          "settlement.requested",
+        ]);
+        if (readiness && !readiness.ready) {
+          await safeRecordWorkerHeartbeat({
+            workerName,
+            workloadCategory: "SETTLEMENT",
+            instanceId,
+            status: "DEGRADED",
+            metadata: {
+              lifecycle: "broker-unavailable",
+              unavailableSince: readiness.unavailableSince,
+              consecutiveFailures: readiness.consecutiveFailures,
+              retryAfterMs: readiness.retryAfterMs,
+              error: readiness.error,
+            },
+          });
+          await sleep(Math.max(idleIntervalMs, readiness.retryAfterMs));
+          continue;
+        }
+        if (readiness?.recovered) {
+          const recoveredAt = new Date();
+          const wokenSettlementEvents =
+            await wakeSettlementOutboxAfterBrokerRecovery(recoveredAt);
+          logger.info({
+            message: "RabbitMQ Settlement transport recovered.",
+            correlationId,
+            metadata: {
+              recoveredAt: recoveredAt.toISOString(),
+              wokenSettlementEvents,
+            },
+          });
+        }
         const startedAt = Date.now();
         const result = await dispatchPendingOutboxEvents({
           limit: batchSize,
+          concurrency: dispatchConcurrency,
           correlationId,
           publisher,
         });
@@ -126,7 +168,9 @@ async function main() {
           ...result,
         });
 
-        await sleep(result.processed > 0 ? backlogIntervalMs : idleIntervalMs);
+        if (result.processed < batchSize) {
+          await sleep(result.processed > 0 ? backlogIntervalMs : idleIntervalMs);
+        }
       } catch (error) {
         const errorMessage = getErrorMessage(error);
 
@@ -145,6 +189,7 @@ async function main() {
           metadata: {
             mode: "continuous",
             batchSize,
+            dispatchConcurrency,
           },
         });
         await safeRecordWorkerHeartbeat({
@@ -175,6 +220,7 @@ async function main() {
     await publisher.close?.();
     await stopRuntimeHeartbeat();
     await closeCompiledWorkerRuntimePool();
+    await closeSharedWorkerPostgresPool();
     await safeRecordWorkerHeartbeat({
       workerName,
       workloadCategory,

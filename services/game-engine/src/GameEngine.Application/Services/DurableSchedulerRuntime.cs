@@ -157,6 +157,7 @@ public interface IHotSpotRuntimeEvidenceRepository
         CancellationToken cancellationToken);
 
     Task<IReadOnlyCollection<DurableScheduledDraw>> ListNextAcceptingHotSpotDrawsAsync(
+        Guid ticketId,
         DateTimeOffset after,
         int count,
         CancellationToken cancellationToken);
@@ -167,6 +168,11 @@ public interface IHotSpotRuntimeEvidenceRepository
 
     Task<HotSpotMultiDrawPlan> PersistMultiDrawPlanAsync(
         HotSpotMultiDrawPlan plan,
+        CancellationToken cancellationToken);
+
+    Task<HotSpotMultiDrawCancellationResult> CancelFutureParticipationsAsync(
+        HotSpotMultiDrawCancellationRequest request,
+        DateTimeOffset cancelledAt,
         CancellationToken cancellationToken);
 }
 
@@ -218,7 +224,7 @@ public sealed class DurableSchedulerRuntime(
                 : options.HotSpotHorizon;
             var slots = calculator.MaterializeWindow(
                 definition,
-                startedAt.Subtract(options.RecoveryWindow),
+                startedAt,
                 startedAt.Add(horizon));
             materializedCount += (await repository.MaterializeAsync(
                 definition,
@@ -534,7 +540,7 @@ public sealed class HotSpotMultiDrawAuthority(
         }
 
         var now = clock.UtcNow;
-        var draws = await repository.ListNextAcceptingHotSpotDrawsAsync(now, drawCount, cancellationToken);
+        var draws = await repository.ListNextAcceptingHotSpotDrawsAsync(ticketId, now, drawCount, cancellationToken);
         if (draws.Count != drawCount)
         {
             throw new InvalidOperationException("The exact next valid Hot Spot draw sequence is unavailable.");
@@ -574,6 +580,22 @@ public sealed class HotSpotMultiDrawAuthority(
                 planHash,
                 Duplicate: false),
             cancellationToken);
+    }
+
+    public Task<HotSpotMultiDrawCancellationResult> CancelFutureAsync(
+        HotSpotMultiDrawCancellationRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.PurchaseId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(request.IdempotencyKey) ||
+            string.IsNullOrWhiteSpace(request.ReasonCode) ||
+            string.IsNullOrWhiteSpace(request.RequestedBy) ||
+            string.IsNullOrWhiteSpace(request.CorrelationId))
+        {
+            throw new ArgumentException("Hot Spot future cancellation request is invalid.", nameof(request));
+        }
+
+        return repository.CancelFutureParticipationsAsync(request, clock.UtcNow, cancellationToken);
     }
 
     private static Guid StableGuid(string value) => AuthoritativeScheduleCalculator.StableGuid(value);

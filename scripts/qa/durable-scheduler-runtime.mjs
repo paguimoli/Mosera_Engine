@@ -146,10 +146,19 @@ try {
       and version.activation_state = 'INACTIVE'
       and version.assignment_state = 'UNASSIGNED'
       and product.active_version_id is null`));
-  check("inactive pilot products have no materialized draws", await trueScalar(`
-    select count(*) = 0 value
-    from game_engine.durable_scheduler_draws
-    where product_code in ('FAST_KENO_V1', 'HOT_SPOT_V1')`));
+  check("retained qualification draws preserve exact immutable product lineage", await trueScalar(`
+    select not exists (
+      select 1
+      from game_engine.durable_scheduler_draws draw
+      left join game_engine.game_definition_versions version
+        on version.id = draw.product_version_id
+       and version.game_definition_id = draw.product_id
+      left join game_engine.game_definitions product
+        on product.id = draw.product_id
+       and product.code = draw.product_code
+      where draw.product_code in ('FAST_KENO_V1', 'HOT_SPOT_V1')
+        and (version.id is null or product.id is null)
+    ) value`));
   check("approved schedules remain unchanged", await trueScalar(`
     select count(*) = 2 value
     from game_engine.game_definition_versions version

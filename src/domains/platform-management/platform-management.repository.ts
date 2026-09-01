@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { Pool, type QueryResultRow } from "pg";
+import { type Pool, type QueryResultRow } from "pg";
+import { createApplicationPostgresPool } from "@/src/lib/database/resilient-postgres-pool";
 import {
   CanonicalHierarchyError,
   resolveBrandHierarchy,
@@ -461,7 +462,7 @@ function databasePool() {
     throw new PlatformManagementDatabaseUnavailableError();
   }
 
-  pool ??= new Pool({
+  pool ??= createApplicationPostgresPool("platform-management-repository", {
     connectionString: databaseUrl,
     max: 4,
     idleTimeoutMillis: 5_000,

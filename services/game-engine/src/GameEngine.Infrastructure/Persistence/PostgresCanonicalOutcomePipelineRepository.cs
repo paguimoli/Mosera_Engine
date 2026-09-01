@@ -302,7 +302,11 @@ values (
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
-        await AcquireLockAsync(connection, transaction, $"outcome-settlement:{command.OutcomeVersionId:N}", cancellationToken);
+        await AcquireLockAsync(
+            connection,
+            transaction,
+            $"outcome-settlement-request:{command.IdempotencyKey}",
+            cancellationToken);
 
         var existing = await FindSettlementRequestByIdempotencyAsync(
             connection,

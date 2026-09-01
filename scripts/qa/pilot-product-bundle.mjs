@@ -106,11 +106,19 @@ from platform.game_availability
 where game_code in ('FAST_KENO_V1', 'HOT_SPOT_V1');
 `));
 
-check("products have no generated runtime draws", isTrue(`
-select count(*) = 0
-from game_engine.draw_schedules draw
-join game_engine.game_definitions product on product.id = draw.game_definition_id
-where product.code in ('FAST_KENO_V1', 'HOT_SPOT_V1');
+check("retained qualification draws preserve exact pilot product lineage", isTrue(`
+select not exists (
+  select 1
+  from game_engine.durable_scheduler_draws draw
+  left join game_engine.game_definition_versions version
+    on version.id = draw.product_version_id
+   and version.game_definition_id = draw.product_id
+  left join game_engine.game_definitions product
+    on product.id = draw.product_id
+   and product.code = draw.product_code
+  where draw.product_code in ('FAST_KENO_V1', 'HOT_SPOT_V1')
+    and (version.id is null or product.id is null)
+);
 `));
 
 check("Fast Keno is exact derived-only configuration", isTrue(`

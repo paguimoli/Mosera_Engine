@@ -48,12 +48,37 @@ public sealed record DurableMathEvaluationRequestRecord(
     string? FailureReason = null,
     Guid? MathEvaluationId = null,
     Guid? CertificateId = null,
-    string? CertificateHash = null);
+    string? CertificateHash = null,
+    DateTimeOffset? AdmittedAt = null);
 
 public sealed record DurableMathEvaluationClaim(
     DurableMathEvaluationRequestRecord Request,
     bool Created,
     bool Duplicate);
+
+public sealed record DurableMathEvaluationStartedClaim(
+    DurableMathEvaluationClaim Claim,
+    int AttemptNumber,
+    DateTimeOffset ConnectionRequestedAt,
+    DateTimeOffset ConnectionAcquiredAt,
+    DateTimeOffset ClaimAcquiredAt);
+
+public sealed record AdmittedMathEvaluationWork(
+    MathCertificateEvaluationRequest Evaluation,
+    DurableMathEvaluationClaim Admission);
+
+public sealed record MathEvaluationProcessingTiming(
+    DateTimeOffset WorkerReceivedAt,
+    DateTimeOffset WorkCreatedAt,
+    DateTimeOffset WorkPublishedAt,
+    DateTimeOffset ClaimAttemptedAt,
+    DateTimeOffset ConnectionRequestedAt,
+    DateTimeOffset ConnectionAcquiredAt,
+    DateTimeOffset ClaimAcquiredAt,
+    DateTimeOffset ProcessingStartedAt,
+    DateTimeOffset MathStartedAt,
+    DateTimeOffset MathCompletedAt,
+    DateTimeOffset PersistenceStartedAt);
 
 public sealed record MathEvaluationAttemptRecord(
     Guid AttemptId,
@@ -84,6 +109,24 @@ public sealed record MathEvaluationReplayResult(
 
 public interface IMathEvaluationDurableRepository
 {
+    Task<IReadOnlyCollection<DurableMathEvaluationClaim>> ClaimRequestsAsync(
+        IReadOnlyCollection<DurableMathEvaluationRequestRecord> requests,
+        CancellationToken cancellationToken);
+
+    Task<DurableMathEvaluationStartedClaim> ClaimAndStartRequestAsync(
+        DurableMathEvaluationRequestRecord request,
+        DateTimeOffset workerReceivedAt,
+        DateTimeOffset claimAttemptedAt,
+        string canonicalAttemptHash,
+        CancellationToken cancellationToken);
+
+    Task<DurableMathEvaluationStartedClaim> StartClaimedRequestAsync(
+        DurableMathEvaluationRequestRecord request,
+        DateTimeOffset workerReceivedAt,
+        DateTimeOffset claimAttemptedAt,
+        string canonicalAttemptHash,
+        CancellationToken cancellationToken);
+
     Task<DurableMathEvaluationClaim> ClaimRequestAsync(
         DurableMathEvaluationRequestRecord request,
         CancellationToken cancellationToken);
@@ -102,6 +145,15 @@ public interface IMathEvaluationDurableRepository
         DurableMathEvaluationRequestRecord request,
         MathEvaluationResult result,
         IReadOnlyDictionary<string, object?> wagerPayload,
+        CancellationToken cancellationToken);
+
+    Task<MathEvaluationResult> CompleteEvaluationWithEvidenceAsync(
+        DurableMathEvaluationRequestRecord request,
+        int attemptNumber,
+        MathEvaluationResult result,
+        IReadOnlyDictionary<string, object?> wagerPayload,
+        MathEvaluationProcessingTiming timing,
+        string canonicalAttemptHash,
         CancellationToken cancellationToken);
 
     Task<DurableMathEvaluationRequestRecord> FailRequestAsync(
@@ -142,6 +194,43 @@ public sealed class DurableMathEvaluationService(
     MathCertificateEvaluationService certificateService,
     IMathEvaluationDurableRepository repository)
 {
+    internal PrizeFacts EvaluatePrizeFactsForTicketCap(
+        MathCertificateEvaluationRequest request)
+    {
+        return certificateService.Evaluate(request).PrizeFacts;
+    }
+
+    public async Task<IReadOnlyCollection<AdmittedMathEvaluationWork>> AdmitBatchAsync(
+        IReadOnlyCollection<MathCertificateEvaluationRequest> requests,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (requests.Count == 0)
+        {
+            return [];
+        }
+
+        var prepared = requests.Select(request =>
+        {
+            var evaluator = registry.Resolve(request.Manifest.GameFamily, request.WagerSchema);
+            return new AdmittedMathEvaluationWork(
+                request,
+                new DurableMathEvaluationClaim(
+                    BuildDurableRequest(request, evaluator),
+                    Created: false,
+                    Duplicate: false));
+        }).ToArray();
+        var claims = (await repository.ClaimRequestsAsync(
+            prepared.Select(item => item.Admission.Request).ToArray(),
+            cancellationToken)).ToArray();
+        if (claims.Length != prepared.Length)
+        {
+            throw new InvalidOperationException("Math Evaluation admission did not return one durable claim per requested item.");
+        }
+
+        return prepared.Select((item, index) => item with { Admission = claims[index] }).ToArray();
+    }
+
     public async Task<MathEvaluationResult> EvaluateAsync(
         MathCertificateEvaluationRequest request,
         CancellationToken cancellationToken)
@@ -149,41 +238,89 @@ public sealed class DurableMathEvaluationService(
         cancellationToken.ThrowIfCancellationRequested();
         var evaluator = registry.Resolve(request.Manifest.GameFamily, request.WagerSchema);
         var durableRequest = BuildDurableRequest(request, evaluator);
-        var claim = await repository.ClaimRequestAsync(durableRequest, cancellationToken);
+        var workerReceivedAt = DateTimeOffset.UtcNow;
+        var claimAttemptedAt = DateTimeOffset.UtcNow;
+        var started = await repository.ClaimAndStartRequestAsync(
+            durableRequest,
+            workerReceivedAt,
+            claimAttemptedAt,
+            HashCanonical($"{durableRequest.CanonicalRequestHash}|attempt|started|{claimAttemptedAt:O}"),
+            cancellationToken);
+
+        return await ExecuteStartedAsync(
+            request,
+            durableRequest,
+            started,
+            workerReceivedAt,
+            claimAttemptedAt,
+            cancellationToken);
+    }
+
+    public async Task<MathEvaluationResult> EvaluateAdmittedAsync(
+        AdmittedMathEvaluationWork admitted,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var durableRequest = admitted.Admission.Request;
+        var workerReceivedAt = DateTimeOffset.UtcNow;
+        var claimAttemptedAt = DateTimeOffset.UtcNow;
+        var started = await repository.StartClaimedRequestAsync(
+            durableRequest,
+            workerReceivedAt,
+            claimAttemptedAt,
+            HashCanonical($"{durableRequest.CanonicalRequestHash}|attempt|started|{claimAttemptedAt:O}"),
+            cancellationToken);
+
+        return await ExecuteStartedAsync(
+            admitted.Evaluation,
+            durableRequest,
+            started,
+            workerReceivedAt,
+            claimAttemptedAt,
+            cancellationToken);
+    }
+
+    private async Task<MathEvaluationResult> ExecuteStartedAsync(
+        MathCertificateEvaluationRequest request,
+        DurableMathEvaluationRequestRecord durableRequest,
+        DurableMathEvaluationStartedClaim started,
+        DateTimeOffset workerReceivedAt,
+        DateTimeOffset claimAttemptedAt,
+        CancellationToken cancellationToken)
+    {
+        var claim = started.Claim;
 
         if (claim.Request.Status == DurableMathEvaluationStatus.Completed)
         {
             return await ReadCompletedResultAsync(claim.Request, cancellationToken);
         }
 
-        var startedAt = DateTimeOffset.UtcNow;
-        await repository.AppendAttemptAsync(
-            claim.Request.EvaluationRequestId,
-            MathEvaluationAttemptStatus.Started,
-            null,
-            null,
-            HashCanonical($"{claim.Request.CanonicalRequestHash}|attempt|started|{startedAt:O}"),
-            startedAt,
-            null,
-            cancellationToken);
+        var processingStartedAt = DateTimeOffset.UtcNow;
 
         try
         {
+            var mathStartedAt = DateTimeOffset.UtcNow;
             var result = certificateService.Evaluate(request);
-            var completed = await repository.CompleteEvaluationAsync(
+            var mathCompletedAt = DateTimeOffset.UtcNow;
+            var persistenceStartedAt = DateTimeOffset.UtcNow;
+            var completed = await repository.CompleteEvaluationWithEvidenceAsync(
                 claim.Request,
+                started.AttemptNumber,
                 result,
                 request.WagerPayload,
-                cancellationToken);
-            var completedAt = DateTimeOffset.UtcNow;
-            await repository.AppendAttemptAsync(
-                claim.Request.EvaluationRequestId,
-                MathEvaluationAttemptStatus.Completed,
-                null,
-                null,
-                HashCanonical($"{claim.Request.CanonicalRequestHash}|attempt|completed|{completed.Certificate.CertificateId}|{completed.CanonicalPrizeFactsHash}"),
-                startedAt,
-                completedAt,
+                new MathEvaluationProcessingTiming(
+                    workerReceivedAt,
+                    durableRequest.CreatedAt,
+                    claim.Request.AdmittedAt ?? durableRequest.CreatedAt,
+                    claimAttemptedAt,
+                    started.ConnectionRequestedAt,
+                    started.ConnectionAcquiredAt,
+                    started.ClaimAcquiredAt,
+                    processingStartedAt,
+                    mathStartedAt,
+                    mathCompletedAt,
+                    persistenceStartedAt),
+                HashCanonical($"{claim.Request.CanonicalRequestHash}|attempt|completed|{result.Certificate.CertificateId}|{result.CanonicalPrizeFactsHash}"),
                 cancellationToken);
 
             return completed;
@@ -198,7 +335,7 @@ public sealed class DurableMathEvaluationService(
                 failureCode,
                 error.Message,
                 HashCanonical($"{claim.Request.CanonicalRequestHash}|attempt|failed|{error.Message}"),
-                startedAt,
+                processingStartedAt,
                 completedAt,
                 cancellationToken);
             await repository.FailRequestAsync(claim.Request, failureCode, error.Message, cancellationToken);
@@ -335,6 +472,90 @@ public sealed class InMemoryMathEvaluationDurableRepository : IMathEvaluationDur
 
     public IReadOnlyCollection<MathEvaluationAttemptRecord> Attempts => attempts;
 
+    public async Task<IReadOnlyCollection<DurableMathEvaluationClaim>> ClaimRequestsAsync(
+        IReadOnlyCollection<DurableMathEvaluationRequestRecord> batch,
+        CancellationToken cancellationToken)
+    {
+        var claims = new List<DurableMathEvaluationClaim>(batch.Count);
+        foreach (var request in batch)
+        {
+            claims.Add(await ClaimRequestAsync(request, cancellationToken));
+        }
+        return claims;
+    }
+
+    public async Task<DurableMathEvaluationStartedClaim> ClaimAndStartRequestAsync(
+        DurableMathEvaluationRequestRecord request,
+        DateTimeOffset workerReceivedAt,
+        DateTimeOffset claimAttemptedAt,
+        string canonicalAttemptHash,
+        CancellationToken cancellationToken)
+    {
+        var claim = await ClaimRequestAsync(request, cancellationToken);
+        var acquiredAt = DateTimeOffset.UtcNow;
+        if (claim.Request.Status == DurableMathEvaluationStatus.Completed)
+        {
+            return new DurableMathEvaluationStartedClaim(
+                claim,
+                0,
+                claimAttemptedAt,
+                acquiredAt,
+                acquiredAt);
+        }
+
+        var attempt = await AppendAttemptAsync(
+            claim.Request.EvaluationRequestId,
+            MathEvaluationAttemptStatus.Started,
+            null,
+            null,
+            canonicalAttemptHash,
+            claimAttemptedAt,
+            null,
+            cancellationToken);
+        return new DurableMathEvaluationStartedClaim(
+            claim,
+            attempt.AttemptNumber,
+            claimAttemptedAt,
+            acquiredAt,
+            DateTimeOffset.UtcNow);
+    }
+
+    public async Task<DurableMathEvaluationStartedClaim> StartClaimedRequestAsync(
+        DurableMathEvaluationRequestRecord request,
+        DateTimeOffset workerReceivedAt,
+        DateTimeOffset claimAttemptedAt,
+        string canonicalAttemptHash,
+        CancellationToken cancellationToken)
+    {
+        var existing = requests.LastOrDefault(item => item.IdempotencyKey == request.IdempotencyKey)
+            ?? throw new InvalidOperationException("Admitted Math Evaluation request was not found.");
+        if (!string.Equals(existing.CanonicalRequestHash, request.CanonicalRequestHash, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Conflicting payload for the same Math Evaluation idempotency key.");
+        }
+        var claim = new DurableMathEvaluationClaim(existing, Created: false, Duplicate: true);
+        var acquiredAt = DateTimeOffset.UtcNow;
+        if (existing.Status == DurableMathEvaluationStatus.Completed)
+        {
+            return new DurableMathEvaluationStartedClaim(claim, 0, claimAttemptedAt, acquiredAt, acquiredAt);
+        }
+        var attempt = await AppendAttemptAsync(
+            existing.EvaluationRequestId,
+            MathEvaluationAttemptStatus.Started,
+            null,
+            null,
+            canonicalAttemptHash,
+            claimAttemptedAt,
+            null,
+            cancellationToken);
+        return new DurableMathEvaluationStartedClaim(
+            claim,
+            attempt.AttemptNumber,
+            claimAttemptedAt,
+            acquiredAt,
+            DateTimeOffset.UtcNow);
+    }
+
     public Task<DurableMathEvaluationClaim> ClaimRequestAsync(
         DurableMathEvaluationRequestRecord request,
         CancellationToken cancellationToken)
@@ -351,8 +572,9 @@ public sealed class InMemoryMathEvaluationDurableRepository : IMathEvaluationDur
             return Task.FromResult(new DurableMathEvaluationClaim(existing, Created: false, Duplicate: true));
         }
 
-        requests.Add(request);
-        return Task.FromResult(new DurableMathEvaluationClaim(request, Created: true, Duplicate: false));
+        var admitted = request with { AdmittedAt = DateTimeOffset.UtcNow };
+        requests.Add(admitted);
+        return Task.FromResult(new DurableMathEvaluationClaim(admitted, Created: true, Duplicate: false));
     }
 
     public Task<MathEvaluationAttemptRecord> AppendAttemptAsync(
@@ -402,6 +624,28 @@ public sealed class InMemoryMathEvaluationDurableRepository : IMathEvaluationDur
             CertificateHash = result.CanonicalPrizeFactsHash
         });
         return Task.FromResult(result);
+    }
+
+    public async Task<MathEvaluationResult> CompleteEvaluationWithEvidenceAsync(
+        DurableMathEvaluationRequestRecord request,
+        int attemptNumber,
+        MathEvaluationResult result,
+        IReadOnlyDictionary<string, object?> wagerPayload,
+        MathEvaluationProcessingTiming timing,
+        string canonicalAttemptHash,
+        CancellationToken cancellationToken)
+    {
+        var completed = await CompleteEvaluationAsync(request, result, wagerPayload, cancellationToken);
+        await AppendAttemptAsync(
+            request.EvaluationRequestId,
+            MathEvaluationAttemptStatus.Completed,
+            null,
+            null,
+            canonicalAttemptHash,
+            timing.ProcessingStartedAt,
+            DateTimeOffset.UtcNow,
+            cancellationToken);
+        return completed;
     }
 
     public Task<DurableMathEvaluationRequestRecord> FailRequestAsync(

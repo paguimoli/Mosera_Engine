@@ -3,13 +3,34 @@ using GameEngine.Application.Interfaces;
 using GameEngine.Domain.Model;
 using GameEngine.Domain.Randomness;
 using GameEngine.Infrastructure.Persistence;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
+if (args.Contains("pr05f-math-admission", StringComparer.Ordinal))
+{
+    await RunPostgresBoundedMathAdmissionTests();
+    Console.WriteLine("PR05F bounded Math admission PASS");
+    return;
+}
+
+if (args.Contains("pr05e-math-benchmark", StringComparer.Ordinal))
+{
+    RunPr05EMathBenchmark();
+    return;
+}
+
 if (args.Contains("pr04a-hot-spot-evidence", StringComparer.Ordinal))
 {
     await Pr04AHotSpotEvidenceHarness.RunAsync(args);
+    return;
+}
+
+if (args.Contains("pr05h-aggregate-readiness", StringComparer.Ordinal))
+{
+    await RunSettlementInputAdapterTests();
+    Console.WriteLine("PR05H aggregate readiness PASS");
     return;
 }
 
@@ -3585,6 +3606,7 @@ RunMathEvaluatorContractTests();
 RunKenoMathEvaluatorTests();
 RunMathCertificateEvaluationTests();
 await RunDurableMathEvaluationTests();
+await RunBoundedMathAdmissionTests();
 await RunMathEvaluationBatchTests();
 await RunSettlementInputAdapterTests();
 
@@ -4175,6 +4197,172 @@ static async Task RunDurableMathEvaluationTests()
     }
 }
 
+static async Task RunBoundedMathAdmissionTests()
+{
+    foreach (var itemCount in new[] { 1, 20, 100, 500, 2_000 })
+    {
+        var repository = new InMemoryMathEvaluationDurableRepository();
+        var registry = new MathEvaluatorRegistry([new KenoMathEvaluator()]);
+        var service = new DurableMathEvaluationService(
+            registry,
+            new MathCertificateEvaluationService(registry),
+            repository);
+        var requests = Enumerable.Range(0, itemCount).Select(index => DurableMathEvalRequest(
+            $"math-admission:{itemCount}:{index}",
+            $"ticket:math-admission:{itemCount}:{index}",
+            new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4, 5 } }) with
+        {
+            RequestId = new Guid(SHA256.HashData(
+                Encoding.UTF8.GetBytes($"math-admission:{itemCount}:{index}")).AsSpan(0, 16))
+        }).ToArray();
+        var admitted = new List<AdmittedMathEvaluationWork>(itemCount);
+        foreach (var batch in requests.Chunk(100))
+        {
+            admitted.AddRange(await service.AdmitBatchAsync(batch, CancellationToken.None));
+        }
+        if (admitted.Count != itemCount ||
+            repository.Requests.Count != itemCount ||
+            repository.Requests.Any(item => item.AdmittedAt is null) ||
+            repository.Requests.Zip(requests).Any(pair =>
+                pair.First.TicketReference != pair.Second.TicketReference ||
+                pair.First.OutcomeCertificateHash != pair.Second.OutcomeCertificate.CanonicalOutcomeHash ||
+                pair.First.MathModelHash != pair.Second.MathModel.ContentHash ||
+                pair.First.PaytableHash != pair.Second.Paytable.ContentHash))
+        {
+            throw new InvalidOperationException($"Bounded Math admission did not preserve exact lineage for {itemCount} items.");
+        }
+
+        var duplicates = new List<AdmittedMathEvaluationWork>(itemCount);
+        foreach (var batch in requests.Chunk(100))
+        {
+            duplicates.AddRange(await service.AdmitBatchAsync(batch, CancellationToken.None));
+        }
+        if (duplicates.Any(item => !item.Admission.Duplicate) || repository.Requests.Count != itemCount)
+        {
+            throw new InvalidOperationException($"Bounded Math admission was not idempotent for {itemCount} items.");
+        }
+
+        foreach (var work in admitted)
+        {
+            await service.EvaluateAdmittedAsync(work, CancellationToken.None);
+        }
+        if (repository.Requests.Count(item => item.Status == DurableMathEvaluationStatus.Completed) != itemCount)
+        {
+            throw new InvalidOperationException($"All {itemCount} admitted Math evaluations must eventually complete.");
+        }
+
+        if (itemCount == 20)
+        {
+            var restartedService = new DurableMathEvaluationService(
+                registry,
+                new MathCertificateEvaluationService(registry),
+                repository);
+            var replayed = await restartedService.EvaluateAdmittedAsync(admitted[0], CancellationToken.None);
+            if (replayed.Certificate.CertificateId == Guid.Empty || repository.Requests.Count != itemCount)
+            {
+                throw new InvalidOperationException("Restarted Math execution must return existing admitted evidence.");
+            }
+            var conflictRejected = false;
+            try
+            {
+                await restartedService.AdmitBatchAsync(
+                    [requests[0] with
+                    {
+                        WagerPayload = new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4 } }
+                    }],
+                    CancellationToken.None);
+            }
+            catch (InvalidOperationException)
+            {
+                conflictRejected = true;
+            }
+            if (!conflictRejected)
+            {
+                throw new InvalidOperationException("Conflicting bounded Math admission must fail closed.");
+            }
+        }
+    }
+}
+
+static async Task RunPostgresBoundedMathAdmissionTests()
+{
+    var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
+    if (string.IsNullOrWhiteSpace(databaseUrl))
+    {
+        throw new InvalidOperationException("DATABASE_URL is required for PR-05F durable admission QA.");
+    }
+
+    var repository = new PostgresMathEvaluationDurableRepository(databaseUrl);
+    var registry = new MathEvaluatorRegistry([new KenoMathEvaluator()]);
+    var service = new DurableMathEvaluationService(
+        registry,
+        new MathCertificateEvaluationService(registry),
+        repository);
+    var campaign = $"pr05f-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}";
+
+    foreach (var itemCount in new[] { 1, 20, 100, 500, 2_000 })
+    {
+        var requests = Enumerable.Range(0, itemCount).Select(index => DurableMathEvalRequest(
+            $"{campaign}:admission:{itemCount}:{index}",
+            $"{campaign}:ticket:{itemCount}:{index}",
+            new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4, 5 } }) with
+        {
+            RequestId = new Guid(SHA256.HashData(
+                Encoding.UTF8.GetBytes($"{campaign}:admission:{itemCount}:{index}")).AsSpan(0, 16))
+        }).ToArray();
+        var admitted = new List<AdmittedMathEvaluationWork>(itemCount);
+        foreach (var batch in requests.Chunk(100))
+        {
+            admitted.AddRange(await service.AdmitBatchAsync(batch, CancellationToken.None));
+        }
+        if (admitted.Count != itemCount || admitted.Any(item => item.Admission.Request.AdmittedAt is null))
+        {
+            throw new InvalidOperationException($"PostgreSQL did not durably admit exactly {itemCount} Math items.");
+        }
+
+        var duplicateCount = 0;
+        foreach (var batch in requests.Chunk(100))
+        {
+            duplicateCount += (await service.AdmitBatchAsync(batch, CancellationToken.None))
+                .Count(item => item.Admission.Duplicate);
+        }
+        if (duplicateCount != itemCount)
+        {
+            throw new InvalidOperationException($"PostgreSQL duplicate admission count was not exact for {itemCount} Math items.");
+        }
+
+        var firstLookup = await repository.FindByTicketReferenceAsync(
+            requests[0].TicketReference,
+            CancellationToken.None);
+        if (firstLookup.Count != 1 || firstLookup.Single().Status != DurableMathEvaluationStatus.Claimed)
+        {
+            throw new InvalidOperationException($"PostgreSQL admitted Math work was not durably queued for {itemCount} items.");
+        }
+
+        if (itemCount == 20)
+        {
+            var conflictRejected = false;
+            try
+            {
+                await service.AdmitBatchAsync(
+                    [requests[0] with
+                    {
+                        WagerPayload = new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4 } }
+                    }],
+                    CancellationToken.None);
+            }
+            catch (InvalidOperationException)
+            {
+                conflictRejected = true;
+            }
+            if (!conflictRejected)
+            {
+                throw new InvalidOperationException("PostgreSQL conflicting Math admission must fail closed.");
+            }
+        }
+    }
+}
+
 static async Task RunMathEvaluationBatchTests()
 {
     var registry = new MathEvaluatorRegistry([new KenoMathEvaluator()]);
@@ -4499,6 +4687,185 @@ static async Task RunSettlementInputAdapterTests()
         throw new InvalidOperationException("SettlementInput canonical payload must not contain financial, wallet, ledger, commission, tax, or cashier fields.");
     }
 
+    MathEvaluationResult AggregateResult(
+        int itemIndex,
+        PrizeOutcome outcome,
+        decimal multiplier,
+        decimal payoutUnits = 0m)
+    {
+        var facts = new PrizeFacts(
+            outcome,
+            $"AGGREGATE_TEST_{outcome}_{itemIndex}",
+            multiplier,
+            payoutUnits,
+            new SortedDictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["itemIndex"] = itemIndex,
+                ["result"] = outcome.ToString()
+            },
+            EvaluationReasonCode: "PR05B_AGGREGATE_TEST");
+        var factsJson = MathEvaluationCanonicalizer.CanonicalizePrizeFacts(facts);
+        var factsHash = MathEvaluationCanonicalizer.HashJson(factsJson);
+        var evaluationId = Guid.NewGuid();
+        return mathResult with
+        {
+            MathEvaluationId = evaluationId,
+            RequestId = Guid.NewGuid(),
+            IdempotencyKey = $"settlement-input:aggregate:{itemIndex}:{evaluationId:N}",
+            PrizeFacts = facts,
+            CanonicalPrizeFactsJson = factsJson,
+            CanonicalPrizeFactsHash = factsHash,
+            Certificate = mathResult.Certificate with
+            {
+                CertificateId = Guid.NewGuid(),
+                MathEvaluationId = evaluationId,
+                TicketReference = $"aggregate-item:{itemIndex}:{evaluationId:N}",
+                CanonicalPrizeFactsHash = factsHash
+            }
+        };
+    }
+
+    async Task<(SettlementInput Input, TicketDrawSettlementAggregateEvidence Evidence)> AggregateAsync(
+        IReadOnlyList<(PrizeOutcome Outcome, decimal Multiplier)> outcomes,
+        long? capMinor)
+    {
+        var aggregateRepository = new InMemorySettlementInputRepository();
+        var aggregateAdapter = new SettlementInputAdapter(aggregateRepository);
+        var ticketId = Guid.NewGuid();
+        var drawId = Guid.NewGuid();
+        var productVersionId = Guid.NewGuid();
+        var aggregateItems = outcomes.Select((item, index) =>
+        {
+            var result = AggregateResult(index, item.Outcome, item.Multiplier);
+            return (Guid.Parse(result.Certificate.TicketReference.Split(':')[2]), index, 100L, result);
+        }).ToArray();
+        var input = await aggregateAdapter.ConvertTicketDrawAggregateAsync(
+            ticketId,
+            drawId,
+            productVersionId,
+            $"sha256:{new string('a', 64)}",
+            "USD",
+            aggregateItems,
+            capMinor,
+            CancellationToken.None);
+        return (input, aggregateRepository.Aggregates.Single());
+    }
+
+    var belowCap = await AggregateAsync(
+        [(PrizeOutcome.Win, 30m), (PrizeOutcome.Loss, 0m), (PrizeOutcome.Push, 1m)],
+        10_000);
+    if (belowCap.Input.InputKind != "TICKET_DRAW_AGGREGATE" ||
+        belowCap.Evidence.TotalReservedStakeMinor != 300 ||
+        belowCap.Evidence.PreCapGrossReturnMinor != 3_100 ||
+        belowCap.Evidence.PostCapGrossReturnMinor != 3_100 ||
+        belowCap.Evidence.CaptureAmountMinor != 300 ||
+        belowCap.Evidence.ReleaseAmountMinor != 0 ||
+        belowCap.Evidence.CreditAmountMinor != 3_100 ||
+        belowCap.Evidence.Items.Count != 3 ||
+        belowCap.Evidence.Items.Sum(item => item.RefundReturnMinor) != 100 ||
+        belowCap.Evidence.Items.Sum(item => item.LossStakeMinor) != 100)
+    {
+        throw new InvalidOperationException("Fast Keno aggregate must preserve exact win/loss/push arithmetic below the configured cap.");
+    }
+
+    var exactCap = await AggregateAsync([(PrizeOutcome.Win, 100m)], 10_000);
+    var aboveCap = await AggregateAsync(
+        [(PrizeOutcome.Win, 60m), (PrizeOutcome.Win, 60m)],
+        10_000);
+    var alternateCap = await AggregateAsync(
+        [(PrizeOutcome.Win, 60m), (PrizeOutcome.Win, 60m)],
+        7_777);
+    if (exactCap.Evidence.PreCapGrossReturnMinor != 10_000 ||
+        exactCap.Evidence.PostCapGrossReturnMinor != 10_000 ||
+        aboveCap.Evidence.PreCapGrossReturnMinor != 12_000 ||
+        aboveCap.Evidence.PostCapGrossReturnMinor != 10_000 ||
+        alternateCap.Evidence.PostCapGrossReturnMinor != 7_777)
+    {
+        throw new InvalidOperationException("Fast Keno aggregate must apply the supplied immutable ticket cap exactly once.");
+    }
+
+    foreach (var itemCount in new[] { 1, 5, 10, 20 })
+    {
+        var aggregateRepository = new InMemorySettlementInputRepository();
+        var aggregateAdapter = new SettlementInputAdapter(aggregateRepository);
+        var ticketId = Guid.NewGuid();
+        var drawId = Guid.NewGuid();
+        var productVersionId = Guid.NewGuid();
+        var aggregateItems = Enumerable.Range(0, itemCount).Select(index =>
+        {
+            var result = AggregateResult(index, (index % 3) switch
+            {
+                0 => PrizeOutcome.Win,
+                1 => PrizeOutcome.Loss,
+                _ => PrizeOutcome.Push
+            }, index % 3 == 0 ? 2m : index % 3 == 2 ? 1m : 0m);
+            return (Guid.NewGuid(), index, 100L, result);
+        }).ToArray();
+        var requests = Enumerable.Range(0, 8).Select(_ =>
+            aggregateAdapter.ConvertTicketDrawAggregateAsync(
+                ticketId, drawId, productVersionId, $"sha256:{new string('b', 64)}", "USD",
+                aggregateItems, 10_000, CancellationToken.None)).ToArray();
+        var concurrent = await Task.WhenAll(requests);
+        if (concurrent.Select(item => item.SettlementInputId).Distinct().Count() != 1 ||
+            aggregateRepository.Inputs.Count != 1 ||
+            aggregateRepository.Aggregates.Single().Items.Count != itemCount)
+        {
+            throw new InvalidOperationException($"{itemCount}-item concurrent aggregate delivery must finalize one immutable SettlementInput.");
+        }
+
+        var aggregateReplay = await aggregateAdapter.ConvertTicketDrawAggregateAsync(
+            ticketId, drawId, productVersionId, $"sha256:{new string('b', 64)}", "USD",
+            aggregateItems.Reverse().ToArray(), 10_000, CancellationToken.None);
+        if (aggregateReplay.CanonicalPayloadHash != concurrent[0].CanonicalPayloadHash)
+        {
+            throw new InvalidOperationException("Aggregate replay must be order-independent and reuse the canonical result.");
+        }
+
+        AssertThrows(
+            () => aggregateAdapter.ConvertTicketDrawAggregateAsync(
+                ticketId, drawId, productVersionId, $"sha256:{new string('b', 64)}", "USD",
+                aggregateItems, 9_999, CancellationToken.None).GetAwaiter().GetResult(),
+            "Conflicting aggregate payload for the same ticket/draw must fail closed.");
+    }
+
+    foreach (var groupCount in new[] { 1, 20, 100, 500, 2_000 })
+    {
+        var readinessRepository = new InMemorySettlementInputRepository();
+        var readinessAdapter = new SettlementInputAdapter(readinessRepository);
+        if (readinessRepository.Aggregates.Count != 0)
+        {
+            throw new InvalidOperationException("A partial evaluation set must not create an aggregate before readiness.");
+        }
+
+        var groups = Enumerable.Range(0, groupCount).Select(index =>
+        {
+            var ticketId = Guid.NewGuid();
+            var drawId = Guid.NewGuid();
+            var result = AggregateResult(index, PrizeOutcome.Win, 2m);
+            var item = (Guid.NewGuid(), 0, 100L, result);
+            return (ticketId, drawId, item);
+        }).ToArray();
+        var claims = groups.SelectMany(group => Enumerable.Range(0, 2).Select(_ =>
+            readinessAdapter.ConvertTicketDrawAggregateAsync(
+                group.ticketId,
+                group.drawId,
+                Guid.Parse("00000000-0000-4000-8000-000000000001"),
+                $"sha256:{new string('c', 64)}",
+                "USD",
+                [group.item],
+                10_000,
+                CancellationToken.None))).ToArray();
+        var resolved = await Task.WhenAll(claims);
+        if (readinessRepository.Aggregates.Count != groupCount ||
+            readinessRepository.Inputs.Count != groupCount ||
+            resolved.GroupBy(input => input.TicketReference).Any(group =>
+                group.Select(input => input.SettlementInputId).Distinct().Count() != 1))
+        {
+            throw new InvalidOperationException(
+                $"{groupCount} ready ticket/draw groups must each create exactly one deterministic aggregate.");
+        }
+    }
+
     var readiness = await repository.CheckReadinessAsync(CancellationToken.None);
     if (!readiness.SettlementHandoffReady ||
         !readiness.AdapterReady ||
@@ -4543,6 +4910,66 @@ static MathCertificateEvaluationRequest DurableMathEvalRequest(
         wagerSchema,
         wagerPayload,
         outcomePayload);
+}
+
+static void RunPr05EMathBenchmark()
+{
+    var registry = new MathEvaluatorRegistry([new KenoMathEvaluator()]);
+    var service = new MathCertificateEvaluationService(registry);
+    var baseRequest = DurableMathEvalRequest(
+        "pr05e:math-benchmark",
+        "ticket:pr05e:math-benchmark",
+        new Dictionary<string, object?> { ["numbers"] = new[] { 1, 2, 3, 4, 5 } });
+    var results = new List<object>();
+
+    foreach (var wagerCount in new[] { 1, 5, 10, 20 })
+    {
+        for (var warmup = 0; warmup < 20; warmup++)
+        {
+            _ = service.Evaluate(baseRequest with
+            {
+                RequestId = Guid.NewGuid(),
+                IdempotencyKey = $"pr05e:warmup:{wagerCount}:{warmup}",
+                TicketReference = $"ticket:pr05e:warmup:{wagerCount}:{warmup}"
+            });
+        }
+
+        var samples = new double[250];
+        for (var iteration = 0; iteration < samples.Length; iteration++)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            for (var wager = 0; wager < wagerCount; wager++)
+            {
+                _ = service.Evaluate(baseRequest with
+                {
+                    RequestId = Guid.NewGuid(),
+                    IdempotencyKey = $"pr05e:benchmark:{wagerCount}:{iteration}:{wager}",
+                    TicketReference = $"ticket:pr05e:benchmark:{wagerCount}:{iteration}:{wager}"
+                });
+            }
+            stopwatch.Stop();
+            samples[iteration] = stopwatch.Elapsed.TotalMilliseconds;
+        }
+
+        Array.Sort(samples);
+        results.Add(new
+        {
+            wagerCount,
+            iterations = samples.Length,
+            p50Ms = Percentile(samples, 0.50),
+            p95Ms = Percentile(samples, 0.95),
+            p99Ms = Percentile(samples, 0.99),
+            maxMs = samples[^1]
+        });
+    }
+
+    Console.WriteLine($"PR05E_MATH_BENCHMARK {JsonSerializer.Serialize(results)}");
+}
+
+static double Percentile(double[] ordered, double percentile)
+{
+    var index = Math.Clamp((int)Math.Ceiling(ordered.Length * percentile) - 1, 0, ordered.Length - 1);
+    return Math.Round(ordered[index], 6);
 }
 
 static MathEvaluationBatchRequest DurableMathEvalBatchRequest(

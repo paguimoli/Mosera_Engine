@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Pool, QueryResultRow } from "pg";
 
 import {
-  createResilientPostgresPool,
+  createWorkerPostgresPool,
   queryWithBoundedReconnect,
 } from "@/src/lib/database/resilient-postgres-pool";
 import { logger } from "@/src/lib/observability/logger";
@@ -408,7 +408,7 @@ export async function createFinancialWorkerEventRepository({
   }
 
   const promise = (async () => {
-    const pool = createResilientPostgresPool("financial-worker-evidence", {
+    const pool = createWorkerPostgresPool("financial-worker-evidence", {
       connectionString: databaseUrl,
       connectionTimeoutMillis: 1_000,
       idleTimeoutMillis: 10_000,

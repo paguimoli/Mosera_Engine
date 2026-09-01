@@ -118,7 +118,20 @@ public sealed record StoredSettlementInputDto(
     string PrizeFactsHash,
     decimal PayoutUnits,
     decimal Multiplier,
-    string CanonicalPayloadHash);
+    string CanonicalPayloadHash,
+    string InputKind = "ITEM",
+    Guid? AggregateTicketId = null,
+    Guid? AggregateDrawId = null,
+    int? AggregateItemCount = null,
+    long? AggregateStakeAmountMinor = null,
+    long? AggregatePreCapGrossReturnMinor = null,
+    long? AggregateEffectiveCapMinor = null,
+    string? AggregateCapScope = null,
+    long? AggregatePostCapGrossReturnMinor = null,
+    long? AggregateCaptureAmountMinor = null,
+    long? AggregateReleaseAmountMinor = null,
+    long? AggregateCreditAmountMinor = null,
+    string? AggregateItemEvidenceHash = null);
 
 public sealed record SettlementIngestionReadiness(
     bool Configured,

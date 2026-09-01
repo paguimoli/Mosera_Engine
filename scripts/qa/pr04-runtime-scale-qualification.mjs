@@ -6,7 +6,7 @@ import process from "node:process";
 import pg from "pg";
 
 const { Pool } = pg;
-const expectedCommit = "29d09920d077fd7b45d66891a74f0d72f2c2c644";
+const expectedCommit = "8a474adcceda180377f9889ae269835d1b6aac95";
 const expectedCsprngHash = "2f766c198298a8c1038cde1c50e49e34bf89c3645af8fc0ef16221789be9cb6c";
 const expectedMigrationHash = "f5c29b8e0280f83b3a901f8d0ac3a2aa5183438f5f5187ad79997c069efc61c5";
 const databaseUrl = process.env.DATABASE_URL ??

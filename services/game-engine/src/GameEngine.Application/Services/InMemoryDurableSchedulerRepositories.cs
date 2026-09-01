@@ -15,6 +15,7 @@ public sealed class InMemoryDurableSchedulerRepository(
     private readonly Dictionary<string, HotSpotQuickPickSelection> quickPicks = new(StringComparer.Ordinal);
     private readonly Dictionary<Guid, HotSpotBullseyeEvidence> bullseyes = [];
     private readonly Dictionary<Guid, HotSpotMultiDrawPlan> multiDrawPlans = [];
+    private readonly Dictionary<string, HotSpotMultiDrawCancellationResult> multiDrawCancellations = new(StringComparer.Ordinal);
 
     public bool Ready { get; set; } = true;
 
@@ -266,6 +267,7 @@ public sealed class InMemoryDurableSchedulerRepository(
     }
 
     public Task<IReadOnlyCollection<DurableScheduledDraw>> ListNextAcceptingHotSpotDrawsAsync(
+        Guid ticketId,
         DateTimeOffset after,
         int count,
         CancellationToken cancellationToken)
@@ -304,6 +306,44 @@ public sealed class InMemoryDurableSchedulerRepository(
             }
             multiDrawPlans.Add(plan.PurchaseId, plan);
             return Task.FromResult(plan);
+        }
+    }
+
+    public Task<HotSpotMultiDrawCancellationResult> CancelFutureParticipationsAsync(
+        HotSpotMultiDrawCancellationRequest request,
+        DateTimeOffset cancelledAt,
+        CancellationToken cancellationToken)
+    {
+        lock (sync)
+        {
+            if (multiDrawCancellations.TryGetValue(request.IdempotencyKey, out var existing))
+            {
+                if (existing.PurchaseId != request.PurchaseId)
+                {
+                    throw new InvalidOperationException("Multi-draw cancellation idempotency payload conflict.");
+                }
+                return Task.FromResult(existing with { Duplicate = true });
+            }
+            if (!multiDrawPlans.TryGetValue(request.PurchaseId, out var plan))
+            {
+                throw new InvalidOperationException("Hot Spot multi-draw plan was not found.");
+            }
+            var count = plan.Bindings.Count(binding => binding.DrawId != plan.Bindings.First().DrawId);
+            if (count == 0)
+            {
+                throw new InvalidOperationException("No undrawn Hot Spot participations are available for cancellation.");
+            }
+            var result = new HotSpotMultiDrawCancellationResult(
+                AuthoritativeScheduleCalculator.StableGuid($"multi-draw-cancel|{request.IdempotencyKey}"),
+                request.PurchaseId,
+                count,
+                checked(plan.StakePerDrawMinor * count),
+                AuthoritativeScheduleCalculator.StableGuid($"multi-draw-wallet-release|{request.IdempotencyKey}"),
+                AuthoritativeScheduleCalculator.Hash($"multi-draw-cancel|{request.PurchaseId:N}|{count}|{request.ReasonCode}"),
+                cancelledAt,
+                Duplicate: false);
+            multiDrawCancellations.Add(request.IdempotencyKey, result);
+            return Task.FromResult(result);
         }
     }
 }

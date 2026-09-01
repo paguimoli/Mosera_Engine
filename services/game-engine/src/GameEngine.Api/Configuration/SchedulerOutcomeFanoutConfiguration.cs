@@ -9,6 +9,10 @@ public sealed record SchedulerOutcomeFanoutConfiguration(
     string SigningPrivateKeyPem,
     int PageSize,
     int MaxDegreeOfParallelism,
+    int AdmissionBatchSize,
+    int AdmissionConcurrency,
+    int MaxBufferedEvaluations,
+    int SettlementPreparationConcurrency,
     string QualificationFailureStage,
     int QualificationFailureAfterPages)
 {
@@ -29,7 +33,11 @@ public sealed record SchedulerOutcomeFanoutConfiguration(
             Environment.GetEnvironmentVariable("DEPLOYMENT_ENVIRONMENT") ?? "local",
             NormalizePem(Environment.GetEnvironmentVariable("GAME_ENGINE_QUALIFICATION_SIGNING_PRIVATE_KEY_PEM")),
             ReadBoundedInt("GAME_ENGINE_SCHEDULER_OUTCOME_FANOUT_PAGE_SIZE", 100, 1, 500),
-            ReadBoundedInt("GAME_ENGINE_SCHEDULER_OUTCOME_FANOUT_CONCURRENCY", 4, 1, 8),
+            ReadBoundedInt("GAME_ENGINE_SCHEDULER_OUTCOME_FANOUT_CONCURRENCY", 12, 1, 32),
+            ReadBoundedInt("GAME_ENGINE_MATH_ADMISSION_BATCH_SIZE", 100, 1, 500),
+            ReadBoundedInt("GAME_ENGINE_MATH_ADMISSION_CONCURRENCY", 2, 1, 8),
+            ReadBoundedInt("GAME_ENGINE_MATH_ADMISSION_BUFFER_LIMIT", 5_000, 100, 20_000),
+            ReadBoundedInt("GAME_ENGINE_SETTLEMENT_PREPARATION_CONCURRENCY", 6, 1, 16),
             Environment.GetEnvironmentVariable("GAME_ENGINE_SCHEDULER_OUTCOME_FANOUT_FAILURE_STAGE")?.Trim() ?? "",
             ReadBoundedInt("GAME_ENGINE_SCHEDULER_OUTCOME_FANOUT_FAILURE_AFTER_PAGES", 1, 1, 500));
 
@@ -72,7 +80,13 @@ public sealed record SchedulerOutcomeFanoutConfiguration(
         PageSize,
         MaxDegreeOfParallelism,
         QualificationFailureStage,
-        QualificationFailureAfterPages);
+        QualificationFailureAfterPages)
+    {
+        AdmissionBatchSize = AdmissionBatchSize,
+        AdmissionConcurrency = AdmissionConcurrency,
+        MaxBufferedEvaluations = MaxBufferedEvaluations,
+        SettlementPreparationConcurrency = SettlementPreparationConcurrency
+    };
 
     private static bool IsTrue(string name) => string.Equals(
         Environment.GetEnvironmentVariable(name),

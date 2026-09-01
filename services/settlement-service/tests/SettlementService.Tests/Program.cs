@@ -1,9 +1,16 @@
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
+using System.Diagnostics;
 using SettlementService.Application;
 using SettlementService.Configuration;
 using SettlementService.Contracts;
 using SettlementService.Infrastructure;
+
+if (args.Contains("pr05e-settlement-benchmark", StringComparer.Ordinal))
+{
+    RunPr05ESettlementBenchmark();
+    return;
+}
 
 var tenantId = Guid.NewGuid();
 var brandId = Guid.NewGuid();
@@ -54,7 +61,7 @@ var conflictingScopeHash = SettlementInputIngestionService.BuildCanonicalRequest
     scope with { BrandId = Guid.NewGuid(), ScopeHash = Hash("different-scope") });
 Assert(originalHash != conflictingScopeHash, "Canonical request hash must bind tenant/brand scope.");
 
-var cappedPush = SettlementExecutionService.ComputeSettlement(BuildExecutionContext(
+var itemPush = SettlementExecutionService.ComputeSettlement(BuildExecutionContext(
     input with
     {
         EvaluationOutcome = "Push",
@@ -64,34 +71,39 @@ var cappedPush = SettlementExecutionService.ComputeSettlement(BuildExecutionCont
     },
     scope,
     1_000));
-Assert(cappedPush.GrossPayoutAmountMinor == 500 && cappedPush.NetResultAmountMinor == -500,
-    "A push refund constrained by a combined ticket cap must use its allocated multiplier.");
+Assert(itemPush.GrossPayoutAmountMinor == 1_000 && itemPush.NetResultAmountMinor == 0,
+    "Item PUSH inputs must retain full refund behavior; ticket-level caps are applied by aggregate evidence.");
 
-var exhaustedPush = SettlementExecutionService.ComputeSettlement(BuildExecutionContext(
-    input with
-    {
-        EvaluationOutcome = "Push",
-        PrizeTier = "PAYOUT_CAP_EXHAUSTED",
-        PayoutUnits = 0m,
-        Multiplier = 0m
-    },
-    scope,
-    1_000));
-Assert(exhaustedPush.GrossPayoutAmountMinor == 0 && exhaustedPush.NetResultAmountMinor == -1_000,
-    "An exhausted combined ticket cap must not be circumvented by push settlement semantics.");
-
-var legacyPush = SettlementExecutionService.ComputeSettlement(BuildExecutionContext(
-    input with
-    {
-        EvaluationOutcome = "Push",
-        PrizeTier = "KENO_DERIVED_PUSH",
-        PayoutUnits = 0m,
-        Multiplier = 0m
-    },
-    scope,
-    1_000));
-Assert(legacyPush.GrossPayoutAmountMinor == 1_000 && legacyPush.NetResultAmountMinor == 0,
-    "Existing uncapped push inputs without an explicit multiplier must retain full refund behavior.");
+var aggregateInput = input with
+{
+    EvaluationOutcome = "Win",
+    PrizeTier = "TICKET_DRAW_AGGREGATE",
+    PayoutUnits = 0m,
+    Multiplier = 0m,
+    InputKind = "TICKET_DRAW_AGGREGATE",
+    AggregateTicketId = Guid.NewGuid(),
+    AggregateDrawId = Guid.NewGuid(),
+    AggregateItemCount = 20,
+    AggregateStakeAmountMinor = 2_000,
+    AggregatePreCapGrossReturnMinor = 12_500,
+    AggregateEffectiveCapMinor = 10_000,
+    AggregateCapScope = "TICKET_DRAW",
+    AggregatePostCapGrossReturnMinor = 10_000,
+    AggregateCaptureAmountMinor = 2_000,
+    AggregateReleaseAmountMinor = 0,
+    AggregateCreditAmountMinor = 10_000,
+    AggregateItemEvidenceHash = Hash("aggregate-items")
+};
+var aggregateSettlement = SettlementExecutionService.ComputeSettlement(
+    BuildExecutionContext(aggregateInput, scope, 2_000));
+Assert(
+    aggregateSettlement.GrossPayoutAmountMinor == 10_000 &&
+    aggregateSettlement.NetResultAmountMinor == 8_000 &&
+    Equals(aggregateSettlement.Provenance["aggregateItemEvidenceHash"], Hash("aggregate-items")),
+    "Aggregate Settlement must consume one authoritative post-cap ticket/draw result and retain item attribution hash.");
+AssertThrows<SettlementExecutionValidationException>(
+    () => SettlementExecutionService.ComputeSettlement(BuildExecutionContext(aggregateInput, scope, 1_900)),
+    "Aggregate Settlement must reject stake/capture evidence mismatch.");
 
 var winningInstructions = FinancialInstructionService.BuildInstructions(BuildSettlementRecord(scope));
 var winningCredit = winningInstructions.Single(instruction =>
@@ -156,6 +168,58 @@ static StoredSettlementInputDto BuildInput()
         2,
         2,
         Hash("canonical-payload"));
+}
+
+static void RunPr05ESettlementBenchmark()
+{
+    var scope = new CanonicalSettlementScopeDto(
+        Guid.NewGuid(),
+        Guid.NewGuid(),
+        Guid.NewGuid(),
+        Guid.NewGuid(),
+        "ticket-pr05e-benchmark",
+        "manifest:1.0.0",
+        "outcome:certificate",
+        Hash("pr05e-benchmark-scope"));
+    var context = BuildExecutionContext(BuildInput(), scope, 1_000);
+
+    for (var warmup = 0; warmup < 100; warmup++)
+    {
+        _ = SettlementExecutionService.ComputeSettlement(context with
+        {
+            SettlementRequestId = Guid.NewGuid(),
+            IdempotencyKey = $"pr05e:settlement:warmup:{warmup}"
+        });
+    }
+
+    var samples = new double[2_000];
+    for (var iteration = 0; iteration < samples.Length; iteration++)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        _ = SettlementExecutionService.ComputeSettlement(context with
+        {
+            SettlementRequestId = Guid.NewGuid(),
+            IdempotencyKey = $"pr05e:settlement:benchmark:{iteration}"
+        });
+        stopwatch.Stop();
+        samples[iteration] = stopwatch.Elapsed.TotalMilliseconds;
+    }
+
+    Array.Sort(samples);
+    Console.WriteLine($"PR05E_SETTLEMENT_BENCHMARK {System.Text.Json.JsonSerializer.Serialize(new
+    {
+        iterations = samples.Length,
+        p50Ms = Percentile(samples, 0.50),
+        p95Ms = Percentile(samples, 0.95),
+        p99Ms = Percentile(samples, 0.99),
+        maxMs = samples[^1]
+    })}");
+}
+
+static double Percentile(double[] ordered, double percentile)
+{
+    var index = Math.Clamp((int)Math.Ceiling(ordered.Length * percentile) - 1, 0, ordered.Length - 1);
+    return Math.Round(ordered[index], 6);
 }
 
 static SettlementInputIngestionRequest BuildRequest(
@@ -283,7 +347,7 @@ static ServiceConfiguration BuildConfiguration(string environment)
         environment,
         new DatabaseConfiguration(string.Empty),
         new ServiceIntegrationConfiguration(string.Empty, string.Empty, string.Empty),
-        new SettlementRuntimeConfiguration(true),
+        new SettlementRuntimeConfiguration(true, true, 1_000, 100, 4, 20, 2_500),
         new RabbitMqConfiguration(string.Empty, "lottery.events"),
         new RedisConfiguration(string.Empty),
         new SupabaseConfiguration(string.Empty, string.Empty));

@@ -36,6 +36,22 @@ public static class HealthEndpoints
             });
         });
 
+        app.MapGet("/health/automatic-financial-recovery", (
+            HttpContext context,
+            AutomaticFinancialRecoveryState recoveryState) =>
+        {
+            var snapshot = recoveryState.Snapshot();
+            var response = new
+            {
+                status = snapshot.Enabled && snapshot.Healthy ? "ok" : "error",
+                recovery = snapshot,
+                correlationId = context.GetCorrelationId()
+            };
+            return snapshot.Enabled && snapshot.Healthy
+                ? Results.Ok(response)
+                : Results.Json(response, statusCode: 503);
+        });
+
         app.MapGet("/health/ready", async (
             HttpContext context,
             ServiceConfiguration configuration,
@@ -44,6 +60,7 @@ public static class HealthEndpoints
             SettlementExecutionService settlementExecutionService,
             FinancialInstructionService financialInstructionService,
             SettlementRecoveryService settlementRecoveryService,
+            AutomaticFinancialRecoveryState automaticRecoveryState,
             ResettlementService resettlementService,
             SettlementAuthorityService settlementAuthorityService,
             CancellationToken cancellationToken) =>
@@ -59,6 +76,7 @@ public static class HealthEndpoints
             var settlementExecutionReady = await settlementExecutionService.CheckReadinessAsync(cancellationToken);
             var financialInstructionsReady = await financialInstructionService.CheckReadinessAsync(cancellationToken);
             var settlementRecoveryReady = await settlementRecoveryService.CheckReadinessAsync(cancellationToken);
+            var automaticRecovery = automaticRecoveryState.Snapshot();
             var resettlementReady = await resettlementService.CheckReadinessAsync(cancellationToken);
             var settlementAuthorityReady = await settlementAuthorityService.BuildReadinessReportAsync(null, cancellationToken);
             var dependencies = new Dictionary<string, string>
@@ -68,6 +86,9 @@ public static class HealthEndpoints
                 ["settlementExecution"] = settlementExecutionReady.RepositoryReachable ? "ready" : "not_ready",
                 ["financialInstructions"] = financialInstructionsReady.RepositoryReachable ? "ready" : "not_ready",
                 ["settlementRecovery"] = settlementRecoveryReady.RepositoryReachable ? "ready" : "not_ready",
+                ["automaticFinancialRecovery"] = automaticRecovery.Enabled && automaticRecovery.Healthy
+                    ? "ready"
+                    : automaticRecovery.Enabled ? "not_ready" : "disabled",
                 ["resettlement"] = resettlementReady.RepositoryReachable ? "ready" : "not_ready",
                 ["settlementMigrations"] = settlementExecutionReady.MigrationReady ? "ready" : "not_ready",
                 ["settlementOutbox"] = settlementExecutionReady.OutboxReady ? "ready" : "not_ready",
@@ -96,6 +117,8 @@ public static class HealthEndpoints
                 settlementExecutionReady.OutboxReady &&
                 financialInstructionsReady.RepositoryReachable &&
                 settlementRecoveryReady.RepositoryReachable &&
+                automaticRecovery.Enabled &&
+                automaticRecovery.Healthy &&
                 resettlementReady.RepositoryReachable &&
                 authorityModeReady;
 
@@ -136,6 +159,7 @@ public static class HealthEndpoints
                             "settlement-resume",
                             "instruction-reconciliation",
                             "unknown-result-recovery",
+                            "automatic-financial-recovery",
                             "resettlement-request",
                             "resettlement-reversal",
                             "resettlement-correction",

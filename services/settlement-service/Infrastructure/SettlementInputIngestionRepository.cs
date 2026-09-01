@@ -21,30 +21,45 @@ public sealed class SettlementInputIngestionRepository(ServiceConfiguration conf
         await using var command = connection.CreateCommand();
         command.CommandText = """
 select
-  settlement_input_id,
-  canonical_payload_hash,
-  math_evaluation_certificate_id,
-  math_evaluation_certificate_hash,
-  outcome_certificate_id,
-  outcome_certificate_hash,
-  ticket_reference,
-  game_manifest_id,
-  game_manifest_version,
-  game_manifest_hash,
-  math_model_id,
-  math_model_version,
-  math_model_hash,
-  paytable_id,
-  paytable_version,
-  paytable_hash,
-  evaluator_version,
-  evaluation_outcome,
-  prize_tier,
-  prize_facts_hash,
-  payout_units,
-  multiplier
-from game_engine.settlement_input_records
-where settlement_input_id = @settlement_input_id;
+  input.settlement_input_id,
+  input.canonical_payload_hash,
+  input.math_evaluation_certificate_id,
+  input.math_evaluation_certificate_hash,
+  input.outcome_certificate_id,
+  input.outcome_certificate_hash,
+  input.ticket_reference,
+  input.game_manifest_id,
+  input.game_manifest_version,
+  input.game_manifest_hash,
+  input.math_model_id,
+  input.math_model_version,
+  input.math_model_hash,
+  input.paytable_id,
+  input.paytable_version,
+  input.paytable_hash,
+  input.evaluator_version,
+  input.evaluation_outcome,
+  input.prize_tier,
+  input.prize_facts_hash,
+  input.payout_units,
+  input.multiplier,
+  input.input_kind,
+  aggregate.ticket_id,
+  aggregate.draw_id,
+  aggregate.item_count,
+  aggregate.total_reserved_stake_minor,
+  aggregate.pre_cap_gross_return_minor,
+  aggregate.effective_cap_minor,
+  aggregate.cap_scope,
+  aggregate.post_cap_gross_return_minor,
+  aggregate.capture_amount_minor,
+  aggregate.release_amount_minor,
+  aggregate.credit_amount_minor,
+  aggregate.item_evidence_hash
+from game_engine.settlement_input_records input
+left join game_engine.ticket_draw_settlement_aggregates aggregate
+  on aggregate.settlement_input_id = input.settlement_input_id
+where input.settlement_input_id = @settlement_input_id;
 """;
         command.Parameters.AddWithValue("settlement_input_id", settlementInputId);
 
@@ -482,8 +497,33 @@ where settlement_request_id = @settlement_request_id;
             reader.GetString(reader.GetOrdinal("prize_facts_hash")),
             reader.GetDecimal(reader.GetOrdinal("payout_units")),
             reader.GetDecimal(reader.GetOrdinal("multiplier")),
-            reader.GetString(reader.GetOrdinal("canonical_payload_hash")));
+            reader.GetString(reader.GetOrdinal("canonical_payload_hash")),
+            reader.GetString(reader.GetOrdinal("input_kind")),
+            ReadNullableGuid(reader, "ticket_id"),
+            ReadNullableGuid(reader, "draw_id"),
+            ReadNullableInt32(reader, "item_count"),
+            ReadNullableInt64(reader, "total_reserved_stake_minor"),
+            ReadNullableInt64(reader, "pre_cap_gross_return_minor"),
+            ReadNullableInt64(reader, "effective_cap_minor"),
+            ReadNullableString(reader, "cap_scope"),
+            ReadNullableInt64(reader, "post_cap_gross_return_minor"),
+            ReadNullableInt64(reader, "capture_amount_minor"),
+            ReadNullableInt64(reader, "release_amount_minor"),
+            ReadNullableInt64(reader, "credit_amount_minor"),
+            ReadNullableString(reader, "item_evidence_hash"));
     }
+
+    private static Guid? ReadNullableGuid(NpgsqlDataReader reader, string name) =>
+        reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetGuid(reader.GetOrdinal(name));
+
+    private static int? ReadNullableInt32(NpgsqlDataReader reader, string name) =>
+        reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetInt32(reader.GetOrdinal(name));
+
+    private static long? ReadNullableInt64(NpgsqlDataReader reader, string name) =>
+        reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetInt64(reader.GetOrdinal(name));
+
+    private static string? ReadNullableString(NpgsqlDataReader reader, string name) =>
+        reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetString(reader.GetOrdinal(name));
 
     private static Guid CreateDeterministicGuid(string value)
     {

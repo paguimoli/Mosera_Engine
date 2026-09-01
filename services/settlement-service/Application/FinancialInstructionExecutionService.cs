@@ -93,7 +93,9 @@ public sealed class FinancialInstructionExecutionService(
     {
         var instruction = context.Instruction;
         ValidateInstruction(context);
-        var attempts = await repository.ListExecutionAttemptsAsync(instruction.InstructionId, cancellationToken);
+        var attempts = context.HasExecutionAttempts
+            ? await repository.ListExecutionAttemptsAsync(instruction.InstructionId, cancellationToken)
+            : [];
         var terminal = attempts.LastOrDefault(attempt =>
             attempt.Status is FinancialInstructionExecutionAttemptStatus.Posted or FinancialInstructionExecutionAttemptStatus.Skipped);
         if (terminal is not null)
@@ -119,13 +121,14 @@ public sealed class FinancialInstructionExecutionService(
                 "sha256:noop",
                 null,
                 null,
+                null,
                 cancellationToken);
             return new FinancialInstructionExecutionResult("Skipped", false, instruction, skipped, correlationId);
         }
 
         try
         {
-            var (reference, responseHash) = instruction.TargetService switch
+            var targetResult = instruction.TargetService switch
             {
                 "ledger-service" => await ExecuteLedgerAsync(context, targetIdempotencyKey, correlationId, cancellationToken),
                 "credit-wallet-service" => await ExecuteCreditAsync(context, targetIdempotencyKey, correlationId, cancellationToken),
@@ -136,11 +139,12 @@ public sealed class FinancialInstructionExecutionService(
                 instruction,
                 FinancialInstructionExecutionAttemptStatus.Posted,
                 targetIdempotencyKey,
-                reference.ReferenceType,
-                reference.ReferenceId,
-                responseHash,
+                targetResult.Reference.ReferenceType,
+                targetResult.Reference.ReferenceId,
+                targetResult.ResponseHash,
                 null,
                 null,
+                targetResult.Timing,
                 cancellationToken);
             return new FinancialInstructionExecutionResult("Posted", false, instruction, posted, correlationId);
         }
@@ -155,12 +159,13 @@ public sealed class FinancialInstructionExecutionService(
                 null,
                 error.GetType().Name,
                 error.Message,
+                null,
                 cancellationToken);
             return new FinancialInstructionExecutionResult("Failed", false, instruction, failed, correlationId);
         }
     }
 
-    private async Task<(SettlementExternalReferenceDto Reference, string ResponseHash)> ExecuteLedgerAsync(
+    private async Task<SettlementTargetExecutionResult> ExecuteLedgerAsync(
         FinancialInstructionExecutionContext context,
         string targetIdempotencyKey,
         string correlationId,
@@ -191,7 +196,7 @@ public sealed class FinancialInstructionExecutionService(
             cancellationToken);
     }
 
-    private async Task<(SettlementExternalReferenceDto Reference, string ResponseHash)> ExecuteCreditAsync(
+    private async Task<SettlementTargetExecutionResult> ExecuteCreditAsync(
         FinancialInstructionExecutionContext context,
         string targetIdempotencyKey,
         string correlationId,

@@ -181,6 +181,20 @@ public sealed class SettlementInputIngestionService(SettlementInputIngestionRepo
             errors.Add("Math Evaluation Certificate reference/hash mismatch.");
         }
 
+        if (storedInput.InputKind == "TICKET_DRAW_AGGREGATE")
+        {
+            if (storedInput.AggregateTicketId?.ToString() != request.TicketId ||
+                storedInput.AggregateItemCount is null or <= 0 ||
+                storedInput.AggregateStakeAmountMinor != request.AcceptedStakeAmountMinor ||
+                storedInput.AggregateCaptureAmountMinor != request.AcceptedStakeAmountMinor ||
+                storedInput.AggregateReleaseAmountMinor != 0 ||
+                storedInput.AggregateCreditAmountMinor != storedInput.AggregatePostCapGrossReturnMinor ||
+                string.IsNullOrWhiteSpace(storedInput.AggregateItemEvidenceHash))
+            {
+                errors.Add("Aggregate SettlementInput financial context is incomplete or inconsistent.");
+            }
+        }
+
         if (storedInput.OutcomeCertificateId != request.OutcomeCertificateId ||
             !string.Equals(storedInput.OutcomeCertificateHash, request.OutcomeCertificateHash, StringComparison.Ordinal))
         {

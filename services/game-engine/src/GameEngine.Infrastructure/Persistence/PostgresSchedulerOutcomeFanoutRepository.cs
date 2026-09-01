@@ -386,7 +386,7 @@ where event.outcome_id = @outcome_id
         command.CommandText = """
 select
   ticket.ticket_id, item.ticket_item_id, item.item_index,
-  ticket.execution_manifest_id, ticket.execution_manifest_hash,
+  @execution_manifest_id::uuid, @execution_manifest_hash,
   ticket.product_version_id, ticket.game_configuration_hash,
   ticket.currency, item.stake_minor, item.wager_type,
   item.normalized_selections::text,
@@ -418,6 +418,11 @@ select
   paytable.certification_binding_state
 from ticket_authority.tickets ticket
 join ticket_authority.ticket_items item on item.ticket_id = ticket.ticket_id
+left join game_engine.hot_spot_multi_draw_participations participation
+  on participation.ticket_item_id = item.ticket_item_id
+left join game_engine.hot_spot_multi_draw_participation_events participation_cancellation
+  on participation_cancellation.participation_id = participation.participation_id
+ and participation_cancellation.event_type = 'CANCELLED'
 join public.credit_reservations reservation
   on reservation.id = ticket.reservation_id
  and reservation.ticket_id = ticket.ticket_id::text
@@ -447,9 +452,15 @@ join game_engine.paytable_definitions paytable
  and paytable.version = ticket.paytable_version
  and paytable.content_hash = ticket.paytable_hash
  and paytable.content_hash = version.paytable_hash
-where ticket.draw_id = @draw_id
-  and ticket.execution_manifest_id = @execution_manifest_id
-  and ticket.execution_manifest_hash = @execution_manifest_hash
+where coalesce(participation.draw_id, ticket.draw_id) = @draw_id
+  and participation_cancellation.participation_id is null
+  and (
+    participation.participation_id is not null
+    or (
+      ticket.execution_manifest_id = @execution_manifest_id
+      and ticket.execution_manifest_hash = @execution_manifest_hash
+    )
+  )
   and ticket.product_version_id = @product_version_id
   and ticket.game_configuration_hash = @product_version_hash
   and ticket.lineage_model = 'CANONICAL_V1'
@@ -457,16 +468,34 @@ where ticket.draw_id = @draw_id
   and ticket.lifecycle_state in (
     'ACCEPTED','RESERVATION_CREATED','SETTLEMENT_REQUESTED',
     'SETTLEMENT_EXECUTED','LEDGER_POSTED','WALLET_APPLIED')
-  and reservation.status in ('RESERVED','PARTIALLY_SETTLED')
+  and reservation.status in ('RESERVED','PARTIALLY_CAPTURED')
   and ticket.ticket_id in (
     select candidate.ticket_id
     from ticket_authority.tickets candidate
     join public.credit_reservations candidate_reservation
       on candidate_reservation.id = candidate.reservation_id
      and candidate_reservation.ticket_id = candidate.ticket_id::text
-    where candidate.draw_id = @draw_id
-      and candidate.execution_manifest_id = @execution_manifest_id
-      and candidate.execution_manifest_hash = @execution_manifest_hash
+    where (
+        (
+          candidate.draw_id = @draw_id
+          and candidate.execution_manifest_id = @execution_manifest_id
+          and candidate.execution_manifest_hash = @execution_manifest_hash
+          and not exists (
+            select 1 from game_engine.hot_spot_multi_draw_participations mapped
+            where mapped.ticket_id = candidate.ticket_id
+          )
+        )
+        or exists (
+          select 1
+          from game_engine.hot_spot_multi_draw_participations mapped
+          left join game_engine.hot_spot_multi_draw_participation_events cancelled
+            on cancelled.participation_id = mapped.participation_id
+           and cancelled.event_type = 'CANCELLED'
+          where mapped.ticket_id = candidate.ticket_id
+            and mapped.draw_id = @draw_id
+            and cancelled.participation_id is null
+        )
+      )
       and candidate.product_version_id = @product_version_id
       and candidate.game_configuration_hash = @product_version_hash
       and candidate.lineage_model = 'CANONICAL_V1'
@@ -474,7 +503,7 @@ where ticket.draw_id = @draw_id
       and candidate.lifecycle_state in (
         'ACCEPTED','RESERVATION_CREATED','SETTLEMENT_REQUESTED',
         'SETTLEMENT_EXECUTED','LEDGER_POSTED','WALLET_APPLIED')
-      and candidate_reservation.status in ('RESERVED','PARTIALLY_SETTLED')
+      and candidate_reservation.status in ('RESERVED','PARTIALLY_CAPTURED')
       and (@after_ticket_id is null or candidate.ticket_id > @after_ticket_id)
     order by candidate.ticket_id
     limit @limit

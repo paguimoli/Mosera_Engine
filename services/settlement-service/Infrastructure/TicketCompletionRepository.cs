@@ -17,6 +17,12 @@ public sealed record TicketCompletionResult(
     Guid? TicketId,
     string? CompletionEvidence);
 
+public sealed class TicketCompletionEvidenceConflictException(string message)
+    : InvalidOperationException(message);
+
+public sealed class TicketCompletionValidationException(string message, Exception innerException)
+    : InvalidOperationException(message, innerException);
+
 public sealed class TicketCompletionRepository(ServiceConfiguration configuration)
 {
     private sealed record CompletionSource(
@@ -79,7 +85,19 @@ select ticket_completion_authority.complete_ticket(
         command.Parameters.Add("correlation_id", NpgsqlDbType.Text).Value = correlationId;
         command.Parameters.Add("causation_id", NpgsqlDbType.Text).Value = settlementId.ToString("D");
 
-        var evidence = (string?)await command.ExecuteScalarAsync(cancellationToken)
+        string? evidence;
+        try
+        {
+            evidence = (string?)await command.ExecuteScalarAsync(cancellationToken);
+        }
+        catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.RaiseException)
+        {
+            throw new TicketCompletionValidationException(
+                $"Ticket Completion Authority rejected financial evidence: {error.MessageText}",
+                error);
+        }
+
+        evidence = evidence
             ?? throw new InvalidOperationException("Ticket Completion Authority returned no evidence.");
         return new TicketCompletionResult(TicketCompletionStatus.Completed, ticketId, evidence);
     }
@@ -129,6 +147,7 @@ select
   item.ticket_item_id,
   settlement.source_count settlement_count,
   settlement.settlement_id,
+  settlement.canonical settlement_canonical,
   ledger_attempt.source_count ledger_count,
   ledger_attempt.attempt_id ledger_attempt_id,
   ledger_request.id posting_request_id,
@@ -136,12 +155,55 @@ select
   wallet_attempt.attempt_id wallet_attempt_id,
   wallet_operation.operation_id
 from ticket_authority.ticket_items item
+join ticket_authority.tickets ticket
+  on ticket.ticket_id = item.ticket_id
+left join game_engine.hot_spot_multi_draw_participations participation
+  on participation.ticket_item_id = item.ticket_item_id
+left join game_engine.hot_spot_multi_draw_participation_events participation_cancellation
+  on participation_cancellation.participation_id = participation.participation_id
+ and participation_cancellation.event_type = 'CANCELLED'
 left join lateral (
+  with candidates as (
+    select
+      record.settlement_id,
+      record.issued_at,
+      version.outcome_version_id is not null as canonical
+    from settlement_service.authoritative_settlement_records record
+    left join game_engine.outcome_settlement_requests outcome_request
+      on outcome_request.settlement_request_id = record.settlement_request_id
+    left join game_engine.canonical_outcome_versions version
+      on version.outcome_version_id = outcome_request.outcome_version_id
+     and version.outcome_certificate_id = record.outcome_certificate_id
+     and version.outcome_certificate_hash = record.outcome_certificate_hash
+     and version.draw_id = coalesce(participation.draw_id, ticket.draw_id)
+     and not exists (
+       select 1
+       from game_engine.canonical_outcome_versions successor
+       where successor.previous_outcome_version_id = version.outcome_version_id
+     )
+    where record.ticket_id = item.ticket_id::text
+      and (
+        record.ticket_line_id = item.ticket_item_id::text
+        or exists (
+          select 1
+          from game_engine.ticket_draw_settlement_aggregate_items aggregate_item
+          join game_engine.ticket_draw_settlement_aggregates aggregate
+            on aggregate.settlement_input_id = aggregate_item.settlement_input_id
+          where aggregate_item.settlement_input_id = record.settlement_input_id
+            and aggregate_item.ticket_item_id = item.ticket_item_id
+            and aggregate.ticket_id = item.ticket_id
+            and aggregate.draw_id = coalesce(participation.draw_id, ticket.draw_id)
+        )
+      )
+  ), ranked as (
+    select candidates.*, bool_or(canonical) over () has_canonical
+    from candidates
+  )
   select count(*)::integer source_count,
-         (array_agg(record.settlement_id order by record.issued_at))[1] settlement_id
-  from settlement_service.authoritative_settlement_records record
-  where record.ticket_id = item.ticket_id::text
-    and record.ticket_line_id = item.ticket_item_id::text
+         (array_agg(settlement_id order by issued_at, settlement_id))[1] settlement_id,
+         coalesce(bool_and(canonical), false) canonical
+  from ranked
+  where canonical or not has_canonical
 ) settlement on true
 left join lateral (
   select count(*)::integer source_count,
@@ -172,11 +234,15 @@ left join credit_wallet_service.wallet_operation_requests wallet_operation
        then wallet_attempt.external_reference_id::uuid
      end
 where item.ticket_id = @ticket_id
+  and participation_cancellation.participation_id is null
 order by item.ticket_item_id;
 """;
         command.Parameters.Add("ticket_id", NpgsqlDbType.Uuid).Value = ticketId;
 
         var sources = new List<CompletionSource>();
+        var hasCanonicalSettlement = false;
+        var hasLegacySettlement = false;
+        var hasIncompleteSource = false;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
@@ -185,13 +251,26 @@ order by item.ticket_item_id;
             var walletCount = reader.GetInt32(reader.GetOrdinal("wallet_count"));
             if (settlementCount > 1 || ledgerCount > 1 || walletCount > 1)
             {
-                throw new InvalidOperationException(
+                throw new TicketCompletionEvidenceConflictException(
                     "Ticket Completion Authority found ambiguous financial evidence for a ticket item.");
+            }
+
+            if (settlementCount > 0)
+            {
+                if (reader.GetBoolean(reader.GetOrdinal("settlement_canonical")))
+                {
+                    hasCanonicalSettlement = true;
+                }
+                else
+                {
+                    hasLegacySettlement = true;
+                }
             }
 
             if (settlementCount == 0 || ledgerCount == 0 || walletCount == 0)
             {
-                return null;
+                hasIncompleteSource = true;
+                continue;
             }
 
             sources.Add(new CompletionSource(
@@ -207,7 +286,13 @@ order by item.ticket_item_id;
                     : reader.GetGuid(reader.GetOrdinal("operation_id"))));
         }
 
-        return sources.Count == 0 ? null : sources;
+        if (hasCanonicalSettlement && hasLegacySettlement)
+        {
+            throw new TicketCompletionEvidenceConflictException(
+                "Ticket Completion Authority found mixed canonical and legacy settlement evidence for one ticket.");
+        }
+
+        return hasIncompleteSource || sources.Count == 0 ? null : sources;
     }
 
     private async Task<NpgsqlConnection> OpenConnectionAsync(CancellationToken cancellationToken)

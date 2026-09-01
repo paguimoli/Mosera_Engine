@@ -34,8 +34,10 @@ builder.Services.AddSingleton<SettlementExecutionService>();
 builder.Services.AddSingleton<FinancialInstructionService>();
 builder.Services.AddSingleton<FinancialInstructionExecutionService>();
 builder.Services.AddSingleton<SettlementRecoveryService>();
+builder.Services.AddSingleton<AutomaticFinancialRecoveryState>();
 builder.Services.AddSingleton<ResettlementService>();
 builder.Services.AddSingleton<SettlementAuthorityService>();
+builder.Services.AddHostedService<AutomaticFinancialRecoveryHostedService>();
 
 var app = builder.Build();
 

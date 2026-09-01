@@ -34,7 +34,14 @@ public sealed record ServiceConfiguration(
                 GetEnvironmentValue("LEDGER_SERVICE_URL", string.Empty),
                 GetEnvironmentValue("CREDIT_SERVICE_URL", string.Empty),
                 GetEnvironmentValue("CREDIT_WALLET_INTERNAL_API_KEY", string.Empty)),
-            new SettlementRuntimeConfiguration(legacyMutationRoutesEnabled),
+            new SettlementRuntimeConfiguration(
+                legacyMutationRoutesEnabled,
+                GetBooleanEnvironmentValue("SETTLEMENT_AUTOMATIC_RECOVERY_ENABLED", true),
+                GetIntegerEnvironmentValue("SETTLEMENT_AUTOMATIC_RECOVERY_INTERVAL_MS", 1_000, 100, 60_000),
+                GetIntegerEnvironmentValue("SETTLEMENT_AUTOMATIC_RECOVERY_BATCH_SIZE", 100, 1, 1_000),
+                GetIntegerEnvironmentValue("SETTLEMENT_AUTOMATIC_RECOVERY_CONCURRENCY", 4, 1, 16),
+                GetIntegerEnvironmentValue("SETTLEMENT_AUTOMATIC_RECOVERY_MAX_ATTEMPTS", 20, 1, 100),
+                GetIntegerEnvironmentValue("SETTLEMENT_AUTOMATIC_RECOVERY_GRACE_MS", 2_500, 0, 60_000)),
             new RabbitMqConfiguration(
                 GetEnvironmentValue("RABBITMQ_URL", string.Empty),
                 GetEnvironmentValue("RABBITMQ_EXCHANGE_NAME", "lottery.events")),
@@ -60,6 +67,24 @@ public sealed record ServiceConfiguration(
                 ? parsed
                 : throw new InvalidOperationException($"{name} must be true or false.");
     }
+
+    private static int GetIntegerEnvironmentValue(
+        string name,
+        int fallback,
+        int minimum,
+        int maximum)
+    {
+        var value = System.Environment.GetEnvironmentVariable(name);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return fallback;
+        }
+
+        return int.TryParse(value, out var parsed) && parsed >= minimum && parsed <= maximum
+            ? parsed
+            : throw new InvalidOperationException(
+                $"{name} must be an integer between {minimum} and {maximum}.");
+    }
 }
 
 public sealed record RabbitMqConfiguration(string Url, string ExchangeName);
@@ -71,7 +96,14 @@ public sealed record ServiceIntegrationConfiguration(
     string CreditServiceUrl,
     string CreditWalletInternalApiKey);
 
-public sealed record SettlementRuntimeConfiguration(bool LegacyMutationRoutesEnabled);
+public sealed record SettlementRuntimeConfiguration(
+    bool LegacyMutationRoutesEnabled,
+    bool AutomaticRecoveryEnabled,
+    int AutomaticRecoveryIntervalMs,
+    int AutomaticRecoveryBatchSize,
+    int AutomaticRecoveryConcurrency,
+    int AutomaticRecoveryMaxAttempts,
+    int AutomaticRecoveryGraceMs);
 
 public sealed record RedisConfiguration(string Url);
 

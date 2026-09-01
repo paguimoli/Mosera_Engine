@@ -8,6 +8,17 @@ using SettlementService.Contracts;
 
 namespace SettlementService.Infrastructure;
 
+public sealed record SettlementTargetExecutionTiming(
+    DateTimeOffset RequestStartedAt,
+    DateTimeOffset? ServiceReceivedAt,
+    DateTimeOffset? ServiceCompletedAt,
+    DateTimeOffset ResponseReceivedAt);
+
+public sealed record SettlementTargetExecutionResult(
+    SettlementExternalReferenceDto Reference,
+    string ResponseHash,
+    SettlementTargetExecutionTiming? Timing);
+
 public sealed class SettlementLedgerServiceClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -105,7 +116,7 @@ public sealed class SettlementLedgerServiceClient
         }
     }
 
-    public async Task<(SettlementExternalReferenceDto Reference, string ResponseHash)> PostFinancialInstructionAsync(
+    public async Task<SettlementTargetExecutionResult> PostFinancialInstructionAsync(
         FinancialInstructionExecutionContext context,
         Guid walletId,
         Guid ledgerAccountId,
@@ -122,14 +133,14 @@ public sealed class SettlementLedgerServiceClient
         var instruction = context.Instruction;
         if (instruction.InstructionType == FinancialInstructionType.LEDGER_NOOP)
         {
-            return (new SettlementExternalReferenceDto(
+            return new SettlementTargetExecutionResult(new SettlementExternalReferenceDto(
                 context.SettlementRecord.SettlementId.ToString(),
                 context.SettlementRecord.TicketId,
                 context.SettlementRecord.TicketLineId,
                 "ledger_noop",
                 "SKIPPED",
                 targetIdempotencyKey,
-                "SKIPPED"), "sha256:noop");
+                "SKIPPED"), "sha256:noop", null);
         }
 
         if (fundingInstrument is not ("CREDIT" or "FREE_PLAY"))
@@ -154,14 +165,14 @@ public sealed class SettlementLedgerServiceClient
 
         if (amount <= 0)
         {
-            return (new SettlementExternalReferenceDto(
+            return new SettlementTargetExecutionResult(new SettlementExternalReferenceDto(
                 context.SettlementRecord.SettlementId.ToString(),
                 context.SettlementRecord.TicketId,
                 context.SettlementRecord.TicketLineId,
                 "ledger_noop",
                 "SKIPPED",
                 targetIdempotencyKey,
-                "SKIPPED"), "sha256:noop");
+                "SKIPPED"), "sha256:noop", null);
         }
 
         var effectiveAt = instruction.CreatedAt.ToUniversalTime();
@@ -246,8 +257,10 @@ public sealed class SettlementLedgerServiceClient
             }
         }, options: JsonOptions);
 
+        var requestStartedAt = DateTimeOffset.UtcNow;
         using var response = await client.SendAsync(request, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        var responseReceivedAt = DateTimeOffset.UtcNow;
         if (!response.IsSuccessStatusCode)
         {
             throw new SettlementTargetRejectedException(
@@ -263,14 +276,26 @@ public sealed class SettlementLedgerServiceClient
         var postingRequestId = document.RootElement.GetProperty("postingRequestId").GetString()
             ?? throw new SettlementIntegrationException("Ledger Service response did not include postingRequestId.");
 
-        return (new SettlementExternalReferenceDto(
+        return new SettlementTargetExecutionResult(new SettlementExternalReferenceDto(
             context.SettlementRecord.SettlementId.ToString(),
             context.SettlementRecord.TicketId,
             context.SettlementRecord.TicketLineId,
             "ledger_posting_request",
             postingRequestId,
             targetIdempotencyKey,
-            "POSTED"), FinancialInstructionService.HashCanonical(body));
+            "POSTED"), FinancialInstructionService.HashCanonical(body), new SettlementTargetExecutionTiming(
+                requestStartedAt,
+                ReadTimestampHeader(response, "X-Mosera-Service-Received-At"),
+                ReadTimestampHeader(response, "X-Mosera-Service-Completed-At"),
+                responseReceivedAt));
+    }
+
+    private static DateTimeOffset? ReadTimestampHeader(HttpResponseMessage response, string name)
+    {
+        return response.Headers.TryGetValues(name, out var values) &&
+            DateTimeOffset.TryParse(values.FirstOrDefault(), out var timestamp)
+                ? timestamp
+                : null;
     }
 
     public async Task<SettlementExternalReferenceDto> PostLedgerEffectAsync(
